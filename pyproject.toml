@@ -4,12 +4,36 @@ version = "0.1.1"
 description = ""
 authors = ["Lucas S <me@luscasleo.dev>"]
 readme = "README.md"
-packages = [{include = "jararaca", from = "src"}]
+packages = [{ include = "jararaca", from = "src" }]
 
 [tool.poetry.dependencies]
 python = "^3.11"
+uvicorn = "^0.30.6"
+uvloop = "^0.20.0"
+fastapi = "^0.113.0"
+aio-pika = "^9.4.3"
+sqlalchemy = "^2.0.34"
 
+
+[tool.poetry.group.lint.dependencies]
+mypy = "^1.11.2"
+black = "^24.8.0"
+isort = "^5.13.2"
+pre-commit = "^3.8.0"
+autoflake = "^2.3.1"
 
 [build-system]
 requires = ["poetry-core"]
 build-backend = "poetry.core.masonry.api"
+
+
+[tool.isort]
+profile = "black"
+
+[tool.mypy]
+python_version = "3.11"
+strict = true
+
+# JARARACA CONFIG
+[tool.poetry.scripts]
+jararaca = "jararaca.cli:cli"
