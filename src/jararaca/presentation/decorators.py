@@ -4,7 +4,7 @@ from typing import Any, Callable, ParamSpec, TypedDict, TypeVar, cast
 from fastapi import APIRouter
 
 DECORATED_FUNC = TypeVar("DECORATED_FUNC", bound=Callable[..., Any])
-DECORATED_CLASS = TypeVar("DECORATED_CLASS", bound=type)
+DECORATED_CLASS = TypeVar("DECORATED_CLASS", bound=Any)
 
 
 class ControllerOptions(TypedDict): ...
@@ -67,7 +67,7 @@ class RestController:
     def get_controller(cls: type[DECORATED_CLASS]) -> "RestController | None":
         if not hasattr(cls, RestController.REST_CONTROLLER_ATTR):
             return None
-        
+
         return cast(RestController, getattr(cls, RestController.REST_CONTROLLER_ATTR))
 
 

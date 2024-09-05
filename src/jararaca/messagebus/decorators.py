@@ -4,7 +4,7 @@ from typing import Any, Callable, TypeVar, cast
 from jararaca.messagebus import Message
 
 DECORATED_FUNC = TypeVar("DECORATED_FUNC", bound=Callable[..., Any])
-DECORATED_CLASS = TypeVar("DECORATED_CLASS", bound=type)
+DECORATED_CLASS = TypeVar("DECORATED_CLASS", bound=Any)
 
 
 MESSAGEBUS_INCOMING_MAP = dict[str, Callable[[Message[Any]], Any]]
