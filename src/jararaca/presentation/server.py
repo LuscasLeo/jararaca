@@ -1,30 +1,11 @@
-from typing import Any, AsyncGenerator, Callable
+from typing import Any, Callable
 
 from fastapi import Depends, FastAPI
 
+from jararaca.core.uow import UnitOfWorkContextProvider
 from jararaca.di import Container
 from jararaca.microservice import Microservice
 from jararaca.presentation.decorators import RestController
-
-
-class UowDependency:
-
-    def __init__(self, app: Microservice):
-        self.app = app
-
-    # TODO: Guarantee that the context is closed whenever an exception is raised
-    # TODO: Guarantee a unit of work workflow for the whole request, including all the interceptors
-    async def __call__(self) -> AsyncGenerator[None, None]:
-
-        ctxs = [interceptor.intercept() for interceptor in self.app.interceptors]
-
-        for ctx in ctxs:
-            await ctx.__aenter__()
-
-        yield None
-
-        for ctx in reversed(ctxs):
-            await ctx.__aexit__(None, None, None)
 
 
 def create_http_server(
@@ -35,7 +16,7 @@ def create_http_server(
 
     fastapi_app = factory() if factory is not None else FastAPI()
 
-    fastapi_app.router.dependencies.append(Depends(UowDependency(app)))
+    fastapi_app.router.dependencies.append(Depends(UnitOfWorkContextProvider(app)))
 
     for controller_t in app.controllers:
         controller = RestController.get_controller(controller_t)
