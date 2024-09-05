@@ -1,5 +1,5 @@
 import inspect
-from typing import Any, Callable, ParamSpec, TypedDict, TypeVar, cast
+from typing import Any, Callable, TypedDict, TypeVar, cast
 
 from fastapi import APIRouter
 
@@ -34,7 +34,7 @@ class RestController:
                 **(self.options or {}),
             )
 
-            signature = inspect.signature(cls)
+            inspect.signature(cls)
 
             members = inspect.getmembers(cls, predicate=inspect.isfunction)
 

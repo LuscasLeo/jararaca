@@ -13,11 +13,9 @@ MESSAGEBUS_INCOMING_MAP = dict[str, Callable[[Message[Any]], Any]]
 class MessageBusController:
 
     MESSAGEBUS_ATTR = "__messagebus__"
-    
+
     def __init__(self) -> None:
-        self.messagebus_factory: (
-            Callable[[Any], MESSAGEBUS_INCOMING_MAP] | None
-        ) = None
+        self.messagebus_factory: Callable[[Any], MESSAGEBUS_INCOMING_MAP] | None = None
 
     def get_messagebus_factory(
         self,
@@ -32,7 +30,7 @@ class MessageBusController:
             instance: DECORATED_CLASS,
         ) -> MESSAGEBUS_INCOMING_MAP:
             handlers: MESSAGEBUS_INCOMING_MAP = {}
-            signature = inspect.signature(func)
+            inspect.signature(func)
 
             members = inspect.getmembers(func, predicate=inspect.isfunction)
 
@@ -53,7 +51,7 @@ class MessageBusController:
             return handlers
 
         self.messagebus_factory = messagebus_factory
-        
+
         MessageBusController.register(func, self)
 
         return func
@@ -70,7 +68,9 @@ class MessageBusController:
         if not hasattr(func, MessageBusController.MESSAGEBUS_ATTR):
             return None
 
-        return cast(MessageBusController, getattr(func, MessageBusController.MESSAGEBUS_ATTR))
+        return cast(
+            MessageBusController, getattr(func, MessageBusController.MESSAGEBUS_ATTR)
+        )
 
 
 class IncomingHandler:
@@ -96,4 +96,6 @@ class IncomingHandler:
         if not hasattr(func, IncomingHandler.MESSAGE_INCOMING_ATTR):
             return None
 
-        return cast(IncomingHandler, getattr(func, IncomingHandler.MESSAGE_INCOMING_ATTR))
+        return cast(
+            IncomingHandler, getattr(func, IncomingHandler.MESSAGE_INCOMING_ATTR)
+        )

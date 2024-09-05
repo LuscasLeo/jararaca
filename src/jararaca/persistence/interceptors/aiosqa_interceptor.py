@@ -11,7 +11,9 @@ ctx_session_map = ContextVar[dict[str, AsyncSession]]("ctx_session_map", default
 
 
 @contextmanager
-def provide_session(connection_name: str, session: AsyncSession) -> Generator[None, Any, None]:
+def provide_session(
+    connection_name: str, session: AsyncSession
+) -> Generator[None, Any, None]:
     current_map = ctx_session_map.get({})
     current_map[connection_name] = session
 

@@ -3,11 +3,7 @@ import importlib
 import click
 import uvicorn
 
-from jararaca.messagebus.worker import (
-    AioPikaConfig,
-    AioPikaMicroserviceProvider,
-    create_messagebus_worker,
-)
+from jararaca.messagebus.worker import create_messagebus_worker
 from jararaca.microservice import Microservice
 from jararaca.presentation.server import create_http_server
 
