@@ -1,0 +1,77 @@
+# See https://pre-commit.com for more information
+# See https://pre-commit.com/hooks.html for more hooks
+exclude: '^frontend/'
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v3.2.0
+    hooks:
+      - id: trailing-whitespace
+      - id: end-of-file-fixer
+      - id: check-yaml
+      - id: check-added-large-files
+
+  # autofake
+  - repo: local
+    hooks:
+      - id: autoflake
+        name: autoflake
+        entry: autoflake
+        language: python
+        pass_filenames: true
+        args:
+          - "--in-place"
+          - "--expand-star-imports"
+          - "--remove-duplicate-keys"
+          - "--remove-unused-variables"
+          - "--remove-all-unused-imports"
+
+  # mypy
+  - repo: local
+
+    hooks:
+      - id: mypy
+        name: mypy
+        entry: mypy
+        args:
+          - --config-file=pyproject.toml
+          # - --enable-incomplete-feature=TypeVarTuple
+          # - --enable-incomplete-feature=Unpack
+        language: system
+        types: [python]
+        pass_filenames: true
+        # additional_dependencies: [mypy==0.812, types-requests==2.25.6, types-pyyaml==5.4.3]
+
+  # black
+  - repo: local
+    hooks:
+      - id: black
+        name: black
+        entry: black --config pyproject.toml
+        language: system
+        types: [python]
+        pass_filenames: true
+        # additional_dependencies: [black==21.7b0]
+
+  # isort
+  - repo: local
+    hooks:
+      - id: isort
+        name: isort
+        entry: isort
+        stages: [commit, merge-commit, push, manual]
+        language: python
+
+        args:
+          - --settings-path=pyproject.toml
+        pass_filenames: true
+
+        minimum_pre_commit_version: "2.9.2"
+  # -   repo: local
+  #     hooks:
+  #     -   id: codespell
+  #         name: codespell
+  #         description: Checks for common misspellings in text files.
+  #         entry: codespell --ignore-words ignore-spelling-words.txt readme.md code.py
+  #         language: python
+  #         pass_filenames: true
+  #         types: [text]
