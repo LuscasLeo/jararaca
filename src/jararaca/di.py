@@ -1,6 +1,5 @@
 import inspect
-from dataclasses import dataclass
-from typing import Annotated, Any, Callable, Generic, Type, TypeVar, cast, get_origin
+from typing import Annotated, Any, Callable, Type, cast, get_origin
 
 from jararaca.core.providers import ProviderSpec, T, Token
 from jararaca.microservice import Microservice

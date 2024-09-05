@@ -1,5 +1,5 @@
 from dataclasses import dataclass, field
-from typing import Any, AsyncContextManager, Callable, Protocol
+from typing import Any, AsyncContextManager, Protocol
 
 from jararaca.core.providers import ProviderSpec
 

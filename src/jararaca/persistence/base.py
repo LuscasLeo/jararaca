@@ -4,7 +4,6 @@ from functools import reduce
 from typing import Any, Callable, Generic, Literal, Protocol, Self, Tuple, Type, TypeVar
 from uuid import UUID
 
-from click import DateTime
 from pydantic import BaseModel
 from sqlalchemy import Select, delete, select, update
 from sqlalchemy.ext.asyncio import AsyncSession

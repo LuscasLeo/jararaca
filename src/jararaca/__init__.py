@@ -1,13 +1,12 @@
+from .core.providers import ProviderSpec, Token
+from .di import Container
+from .messagebus.worker import create_messagebus_worker
 from .microservice import Microservice
 from .persistence.interceptors.aiosqa_interceptor import (
-    AIOSqlAlchemySessionInterceptor,
     AIOSQAConfig,
+    AIOSqlAlchemySessionInterceptor,
 )
-from .core.providers import ProviderSpec, Token
 from .presentation.server import create_http_server
-from .messagebus.worker import create_messagebus_worker
-from .di import Container
-
 
 __all__ = [
     "Microservice",
