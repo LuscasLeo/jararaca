@@ -87,7 +87,7 @@ class AioPikaMicroserviceProvider:
             return
 
         try:
-            await handler(message)
+            await handler(message)  # type: ignore[arg-type]  # TODO: Transform message from aio_pika to a more generic message
         except:
             logging.exception("deu pau")
         finally:
