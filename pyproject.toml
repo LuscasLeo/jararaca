@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "jararaca"
-version = "0.1.1"
+version = "0.1.2a0"
 description = ""
 authors = ["Lucas S <me@luscasleo.dev>"]
 readme = "README.md"
