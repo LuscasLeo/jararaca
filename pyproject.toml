@@ -1,10 +1,11 @@
 [tool.poetry]
 name = "jararaca"
-version = "0.1.2a0"
+version = "0.1.2a1"
 description = ""
 authors = ["Lucas S <me@luscasleo.dev>"]
 readme = "README.md"
 packages = [{ include = "jararaca", from = "src" }]
+include = ["pyproject.toml", "README.md", "LICENSE", "docs"]
 
 [tool.poetry.dependencies]
 python = "^3.11"
