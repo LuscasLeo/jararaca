@@ -2,31 +2,66 @@ from contextlib import asynccontextmanager
 from typing import Any, AsyncGenerator
 
 from fastapi import Depends, FastAPI
+from starlette.types import ASGIApp
 
 from jararaca.core.uow import UnitOfWorkContextProvider
 from jararaca.di import Container
+from jararaca.lifecycle import AppLifecycle
 from jararaca.presentation.decorators import RestController
 from jararaca.presentation.http_microservice import HttpMicroservice
+from jararaca.presentation.websocket.websocket_interceptor import WebSocketInterceptor
 
 
-@asynccontextmanager
-async def lifespan(api: FastAPI) -> AsyncGenerator[None, None]:
-    yield
+class HttpAppLifecycle:
+
+    def __init__(
+        self, lifecycle: AppLifecycle, uow_provider: UnitOfWorkContextProvider
+    ) -> None:
+        self.lifecycle = lifecycle
+        self.uow_provider = uow_provider
+
+    @asynccontextmanager
+    async def __call__(self, api: FastAPI) -> AsyncGenerator[None, None]:
+
+        websocket_interceptors = [
+            interceptor
+            for interceptor in self.lifecycle.app.interceptors
+            if isinstance(interceptor, WebSocketInterceptor)
+        ]
+
+        for interceptor in websocket_interceptors:
+            router = interceptor.get_ws_router(
+                self.lifecycle.app, self.lifecycle.container, self.uow_provider
+            )
+
+            api.include_router(router)
+
+        async with self.lifecycle():
+            yield
 
 
 def create_http_server(
     http_app: HttpMicroservice,
-) -> FastAPI:
+) -> ASGIApp:
 
     app = http_app.app
     factory = http_app.factory
     container = Container(app)
 
-    fastapi_app = factory(lifespan) if factory is not None else FastAPI()
+    uow_provider = UnitOfWorkContextProvider(app, container)
 
-    fastapi_app.router.dependencies.append(
-        Depends(UnitOfWorkContextProvider(app, container))
+    fastapi_app = (
+        factory(
+            HttpAppLifecycle(
+                AppLifecycle(app, container),
+                uow_provider,
+            )
+        )
+        if factory is not None
+        else FastAPI()
     )
+
+    fastapi_app.router.dependencies.append(Depends(uow_provider))
 
     for controller_t in app.controllers:
         controller = RestController.get_controller(controller_t)

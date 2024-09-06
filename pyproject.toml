@@ -17,6 +17,8 @@ fastapi = "^0.113.0"
 aio-pika = "^9.4.3"
 sqlalchemy = "^2.0.34"
 croniter = "^3.0.3"
+redis = "^5.0.8"
+websockets = "^13.0.1"
 
 
 [tool.poetry.group.lint.dependencies]
@@ -26,6 +28,7 @@ isort = "^5.13.2"
 pre-commit = "^3.8.0"
 autoflake = "^2.3.1"
 types-croniter = "^3.0.3.20240731"
+types-redis = "^4.6.0.20240903"
 
 [build-system]
 requires = ["poetry-core"]

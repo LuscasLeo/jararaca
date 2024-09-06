@@ -10,6 +10,7 @@ from croniter import croniter
 
 from jararaca.core.uow import UnitOfWorkContextProvider
 from jararaca.di import Container
+from jararaca.lifecycle import AppLifecycle
 from jararaca.microservice import Microservice
 from jararaca.scheduler.decorators import ScheduledAction
 
@@ -67,6 +68,8 @@ class Scheduler:
 
         self.last_executions: dict[Callable[..., Any], datetime] = {}
 
+        self.lifceycle = AppLifecycle(app, self.container)
+
     async def process_task(
         self, func: Callable[..., Any], scheduled_action: ScheduledAction
     ) -> None:
@@ -99,14 +102,16 @@ class Scheduler:
     def run(self) -> None:
 
         async def run_scheduled_actions() -> None:
-            while True:
-                for func, scheduled_action in self.scheduled_actions:
-                    if self.shutdown_event.is_set():
-                        break
 
-                    await self.process_task(func, scheduled_action)
+            async with self.lifceycle():
+                while True:
+                    for func, scheduled_action in self.scheduled_actions:
+                        if self.shutdown_event.is_set():
+                            break
 
-                await asyncio.sleep(self.config.interval)
+                        await self.process_task(func, scheduled_action)
+
+                    await asyncio.sleep(self.config.interval)
 
         with asyncio.Runner(loop_factory=uvloop.new_event_loop) as runner:
             runner.run(run_scheduled_actions())
