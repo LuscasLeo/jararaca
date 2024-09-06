@@ -1,12 +1,27 @@
 from dataclasses import dataclass, field
-from typing import Any, AsyncContextManager, Protocol
+from typing import TYPE_CHECKING, Any, AsyncContextManager, Protocol
 
 from jararaca.core.providers import ProviderSpec
+
+if TYPE_CHECKING:
+    from typing_extensions import TypeIs
 
 
 class AppInterceptor(Protocol):
 
     def intercept(self) -> AsyncContextManager[None]: ...
+
+
+class AppInterceptorWithLifecycle(Protocol):
+
+    def lifecycle(self, app: "Microservice") -> AsyncContextManager[None]: ...
+
+
+def is_interceptor_with_lifecycle(
+    interceptor: Any,
+) -> "TypeIs[AppInterceptorWithLifecycle]":
+
+    return hasattr(interceptor, "lifecycle")
 
 
 @dataclass

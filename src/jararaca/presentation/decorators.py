@@ -27,7 +27,6 @@ class RestController:
         return self.router_factory
 
     def __call__(self, cls: type[DECORATED_CLASS]) -> type[DECORATED_CLASS]:
-        # Do something with the function
 
         def router_factory(instance: DECORATED_CLASS) -> APIRouter:
             router = APIRouter(
@@ -35,25 +34,23 @@ class RestController:
                 **(self.options or {}),
             )
 
-            inspect.signature(cls)
-
             members = inspect.getmembers(cls, predicate=inspect.isfunction)
 
             for name, member in members:
-                mapping = HttpMapping.get_http_mapping(member)
 
-                if mapping is None:
-                    continue
+                if (mapping := HttpMapping.get_http_mapping(member)) is not None:
 
-                try:
-                    router.add_api_route(
-                        methods=[mapping.method],
-                        path=mapping.path,
-                        endpoint=getattr(instance, name),
-                        **(mapping.options or {}),
-                    )
-                except FastAPIError as e:
-                    raise Exception(f"Error while adding route {mapping.path}") from e
+                    try:
+                        router.add_api_route(
+                            methods=[mapping.method],
+                            path=mapping.path,
+                            endpoint=getattr(instance, name),
+                            **(mapping.options or {}),
+                        )
+                    except FastAPIError as e:
+                        raise Exception(
+                            f"Error while adding route {mapping.path}"
+                        ) from e
 
             return router
 

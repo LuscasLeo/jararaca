@@ -12,6 +12,7 @@ from pydantic import BaseModel
 
 from jararaca.core.uow import UnitOfWorkContextProvider
 from jararaca.di import Container
+from jararaca.lifecycle import AppLifecycle
 from jararaca.messagebus import Message
 from jararaca.messagebus.decorators import MESSAGEBUS_INCOMING_MAP, MessageBusController
 from jararaca.microservice import Microservice
@@ -78,6 +79,7 @@ class AioPikaMicroserviceProvider:
         config: AioPikaWorkerConfig,
         incoming_map: MESSAGEBUS_INCOMING_MAP,
         uow_context_provider: Callable[..., AsyncContextManager[None]],
+        app_lifetime: AppLifecycle,
     ):
         self.config = config
         self.incoming_map = incoming_map
@@ -85,40 +87,42 @@ class AioPikaMicroserviceProvider:
         self.shutdown_event = asyncio.Event()
         self.lock = asyncio.Lock()
         self.tasks: set[asyncio.Task[Any]] = set()
+        self.app_lifetime = app_lifetime
 
     def start_consumer(self) -> None:
 
         async def consume() -> None:
-            connection = await aio_pika.connect_robust(self.config.url)
+            async with self.app_lifetime():
+                connection = await aio_pika.connect_robust(self.config.url)
 
-            channel = await connection.channel()
+                channel = await connection.channel()
 
-            await channel.set_qos(prefetch_count=self.config.prefetch_count)
+                await channel.set_qos(prefetch_count=self.config.prefetch_count)
 
-            topic_exchange = await channel.declare_exchange(
-                self.config.exchange, type="topic"
-            )
+                topic_exchange = await channel.declare_exchange(
+                    self.config.exchange, type="topic"
+                )
 
-            queue = await channel.declare_queue(self.config.queue)
+                queue = await channel.declare_queue(self.config.queue)
 
-            topics = [*self.incoming_map.keys()]
+                topics = [*self.incoming_map.keys()]
 
-            for topic in topics:
-                await queue.bind(topic_exchange, routing_key=topic)
+                for topic in topics:
+                    await queue.bind(topic_exchange, routing_key=topic)
 
-            await queue.consume(self.message_consumer)
+                await queue.consume(self.message_consumer)
 
-            await self.shutdown_event.wait()
-            print("########Worker shutting down")
+                await self.shutdown_event.wait()
+                print("########Worker shutting down")
 
-            async with self.lock:
-                print("########Stopping task incoming")
+                async with self.lock:
+                    print("########Stopping task incoming")
 
-            print("##########Waiting for all messages to be processed")
-            await asyncio.gather(*self.tasks, return_exceptions=True)
+                print("##########Waiting for all messages to be processed")
+                await asyncio.gather(*self.tasks, return_exceptions=True)
 
-            await channel.close()
-            await connection.close()
+                await channel.close()
+                await connection.close()
 
         def on_shutdown(loop: asyncio.AbstractEventLoop) -> None:
             logging.info("Shutting down")
@@ -240,4 +244,5 @@ def create_messagebus_worker(app: Microservice, config: AioPikaWorkerConfig) -> 
         config=config,
         incoming_map=combined_messagebus_incoming_map,
         uow_context_provider=uow_context_provider,
+        app_lifetime=AppLifecycle(app, container),
     ).start_consumer()
