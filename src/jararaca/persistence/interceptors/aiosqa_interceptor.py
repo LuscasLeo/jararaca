@@ -1,3 +1,4 @@
+import logging
 from contextlib import asynccontextmanager, contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass
@@ -15,14 +16,16 @@ def provide_session(
     connection_name: str, session: AsyncSession
 ) -> Generator[None, Any, None]:
     current_map = ctx_session_map.get({})
-    current_map[connection_name] = session
 
-    token = ctx_session_map.set(current_map)
+    token = ctx_session_map.set({**current_map, connection_name: session})
 
     try:
         yield
     finally:
-        ctx_session_map.reset(token)
+        try:
+            ctx_session_map.reset(token)
+        except ValueError:
+            logging.warning("Session map already reset")
 
 
 def use_session(connection_name: str = "default") -> AsyncSession:

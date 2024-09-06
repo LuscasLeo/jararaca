@@ -1,9 +1,10 @@
 import asyncio
 import inspect
 import logging
+import signal
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
-from typing import Any, AsyncContextManager, Callable, Type, get_origin
+from typing import Any, AsyncContextManager, AsyncGenerator, Callable, Type, get_origin
 
 import aio_pika
 import uvloop
@@ -17,7 +18,7 @@ from jararaca.microservice import Microservice
 
 
 @dataclass
-class AioPikaConfig:
+class AioPikaWorkerConfig:
     url: str
     queue: str
     exchange: str
@@ -47,16 +48,43 @@ class AioPikaMessage(Message[BaseModel]):
         await self.aio_pika_message.nack()
 
 
+class MessageProcessingLocker:
+
+    def __init__(self) -> None:
+        self.messages_lock = asyncio.Lock()
+        self.current_processing_messages_set: set[asyncio.Task[Any]] = set()
+
+    @asynccontextmanager
+    async def lock_message_task(
+        self, task: asyncio.Task[Any]
+    ) -> AsyncGenerator[None, Any]:
+        async with self.messages_lock:
+            self.current_processing_messages_set.add(task)
+            try:
+                yield
+            finally:
+                self.current_processing_messages_set.discard(task)
+
+    async def wait_all_messages_processed(self) -> None:
+        if len(self.current_processing_messages_set) == 0:
+            return
+
+        await asyncio.gather(*self.current_processing_messages_set)
+
+
 class AioPikaMicroserviceProvider:
     def __init__(
         self,
-        config: AioPikaConfig,
+        config: AioPikaWorkerConfig,
         incoming_map: MESSAGEBUS_INCOMING_MAP,
         uow_context_provider: Callable[..., AsyncContextManager[None]],
     ):
         self.config = config
         self.incoming_map = incoming_map
         self.uow_context_provider = uow_context_provider
+        self.shutdown_event = asyncio.Event()
+        self.lock = asyncio.Lock()
+        self.tasks: set[asyncio.Task[Any]] = set()
 
     def start_consumer(self) -> None:
 
@@ -68,7 +96,7 @@ class AioPikaMicroserviceProvider:
             await channel.set_qos(prefetch_count=self.config.prefetch_count)
 
             topic_exchange = await channel.declare_exchange(
-                "%s_topic" % self.config.exchange, type="topic"
+                self.config.exchange, type="topic"
             )
 
             queue = await channel.declare_queue(self.config.queue)
@@ -78,21 +106,50 @@ class AioPikaMicroserviceProvider:
             for topic in topics:
                 await queue.bind(topic_exchange, routing_key=topic)
 
-            await queue.consume(self.on_message)
+            await queue.consume(self.message_consumer)
 
-            try:
-                # Wait until terminate
-                await asyncio.Future()
-            finally:
-                await connection.close()
+            await self.shutdown_event.wait()
+            print("########Worker shutting down")
+
+            async with self.lock:
+                print("########Stopping task incoming")
+
+            print("##########Waiting for all messages to be processed")
+            await asyncio.gather(*self.tasks, return_exceptions=True)
+
+            await channel.close()
+            await connection.close()
+
+        def on_shutdown(loop: asyncio.AbstractEventLoop) -> None:
+            logging.info("Shutting down")
+            self.shutdown_event.set()
 
         with asyncio.Runner(loop_factory=uvloop.new_event_loop) as runner:
+            runner.get_loop().add_signal_handler(
+                signal.SIGINT, on_shutdown, runner.get_loop()
+            )
             runner.run(consume())
 
-    # TODO: Apply Unit of Work Pattern
-    async def on_message(
+    async def message_consumer(
         self, aio_pika_message: aio_pika.abc.AbstractIncomingMessage
     ) -> None:
+        if self.shutdown_event.is_set():
+            return
+
+        await self.process_message(aio_pika_message)
+
+    async def process_message(
+        self, aio_pika_message: aio_pika.abc.AbstractIncomingMessage
+    ) -> None:
+        async with self.lock:
+            task = asyncio.create_task(self.handle_message(aio_pika_message))
+            self.tasks.add(task)
+            task.add_done_callback(self.tasks.discard)
+
+    async def handle_message(
+        self, aio_pika_message: aio_pika.abc.AbstractIncomingMessage
+    ) -> None:
+
         topic = aio_pika_message.routing_key
 
         if topic is None:
@@ -152,7 +209,7 @@ class AioPikaMicroserviceProvider:
             await aio_pika_message.ack()
 
 
-def create_messagebus_worker(app: Microservice) -> None:
+def create_messagebus_worker(app: Microservice, config: AioPikaWorkerConfig) -> None:
     container = Container(app)
 
     combined_messagebus_incoming_map: MESSAGEBUS_INCOMING_MAP = {}
@@ -179,12 +236,7 @@ def create_messagebus_worker(app: Microservice) -> None:
         factory
 
     AioPikaMicroserviceProvider(
-        config=AioPikaConfig(
-            url="amqp://guest:guest@localhost/",
-            exchange="test_exchange",
-            queue="test_queue",
-            prefetch_count=1,
-        ),
+        config=config,
         incoming_map=combined_messagebus_incoming_map,
         uow_context_provider=uow_context_provider,
     ).start_consumer()
