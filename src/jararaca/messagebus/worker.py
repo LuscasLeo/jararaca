@@ -203,10 +203,9 @@ class AioPikaMicroserviceProvider:
         try:
             async with self.uow_context_provider():
                 await handler(builded_message)
+                await aio_pika_message.ack()
         except:
-            logging.exception("deu pau")
-        finally:
-            await aio_pika_message.ack()
+            await aio_pika_message.nack()
 
 
 def create_messagebus_worker(app: Microservice, config: AioPikaWorkerConfig) -> None:

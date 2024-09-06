@@ -71,7 +71,7 @@ def cli() -> None:
 @click.option(
     "--prefetch-count",
     type=int,
-    default=100,
+    default=1,
 )
 def worker(
     app_path: str,

@@ -62,6 +62,15 @@ class AIOPikaConnectionFactory(MessageBusConnectionFactory):
     async def provide_connection(self) -> AsyncGenerator[AIOPikaMessagePublisher, Any]:
         connection = await aio_pika.connect_robust(self.url)
         async with connection:
-            async with connection.channel() as channel:
+            async with connection.channel(publisher_confirms=False) as channel:
 
-                yield AIOPikaMessagePublisher(channel, exchange_name=self.exchange)
+                tx = channel.transaction()
+
+                await tx.select()
+
+                try:
+                    yield AIOPikaMessagePublisher(channel, exchange_name=self.exchange)
+                    await tx.commit()
+                except Exception as e:
+                    await tx.rollback()
+                    raise e
