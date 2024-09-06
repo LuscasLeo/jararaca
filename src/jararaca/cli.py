@@ -7,6 +7,7 @@ import uvicorn
 from jararaca.messagebus.worker import AioPikaWorkerConfig, create_messagebus_worker
 from jararaca.microservice import Microservice
 from jararaca.presentation.server import create_http_server
+from jararaca.scheduler.scheduler import Scheduler, SchedulerBackend, SchedulerConfig
 
 
 def find_app_by_module_path(
@@ -139,3 +140,25 @@ def server(app_path: str, host: str, port: int) -> None:
     asgi_app = create_http_server(app)
 
     uvicorn.run(asgi_app, host=host, port=port)
+
+
+class NullBackend(SchedulerBackend): ...
+
+
+@cli.command()
+@click.argument(
+    "app_path",
+    type=str,
+)
+@click.option(
+    "--interval",
+    type=int,
+    default=1,
+)
+def scheduler(
+    app_path: str,
+    interval: int,
+) -> None:
+    app = find_app_by_module_path(app_path)
+
+    Scheduler(app, NullBackend(), SchedulerConfig(interval=interval)).run()
