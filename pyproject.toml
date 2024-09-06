@@ -16,6 +16,7 @@ uvloop = "^0.20.0"
 fastapi = "^0.113.0"
 aio-pika = "^9.4.3"
 sqlalchemy = "^2.0.34"
+croniter = "^3.0.3"
 
 
 [tool.poetry.group.lint.dependencies]
@@ -24,6 +25,7 @@ black = "^24.8.0"
 isort = "^5.13.2"
 pre-commit = "^3.8.0"
 autoflake = "^2.3.1"
+types-croniter = "^3.0.3.20240731"
 
 [build-system]
 requires = ["poetry-core"]
