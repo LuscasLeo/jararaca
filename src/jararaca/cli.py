@@ -1,4 +1,5 @@
 import importlib
+from typing import Any
 from urllib.parse import urlparse, urlunsplit
 
 import click
@@ -6,13 +7,14 @@ import uvicorn
 
 from jararaca.messagebus.worker import AioPikaWorkerConfig, create_messagebus_worker
 from jararaca.microservice import Microservice
+from jararaca.presentation.http_microservice import HttpMicroservice
 from jararaca.presentation.server import create_http_server
 from jararaca.scheduler.scheduler import Scheduler, SchedulerBackend, SchedulerConfig
 
 
-def find_app_by_module_path(
+def find_item_by_module_path(
     module_path: str,
-) -> Microservice:
+) -> Any:
     if ":" not in module_path:
         raise ValueError("'%s' is not a valid module path" % module_path)
 
@@ -27,6 +29,11 @@ def find_app_by_module_path(
         raise ValueError("module %s has no attribute %s" % (module, app))
 
     app = getattr(module, app)
+
+
+def find_microservice_by_module_path(module_path: str) -> Microservice:
+
+    app = find_item_by_module_path(module_path)
 
     if not isinstance(app, Microservice):
         raise ValueError("App must be an instance of App")
@@ -84,7 +91,7 @@ def worker(
     prefetch_count: int,
 ) -> None:
 
-    app = find_app_by_module_path(app_path)
+    app = find_microservice_by_module_path(app_path)
 
     parsed_url = urlparse(url)
 
@@ -135,7 +142,12 @@ def worker(
 )
 def server(app_path: str, host: str, port: int) -> None:
 
-    app = find_app_by_module_path(app_path)
+    item = find_item_by_module_path(app_path)
+
+    if isinstance(item, Microservice):
+        app = HttpMicroservice(item)
+    elif isinstance(item, HttpMicroservice):
+        app = item
 
     asgi_app = create_http_server(app)
 
@@ -159,6 +171,6 @@ def scheduler(
     app_path: str,
     interval: int,
 ) -> None:
-    app = find_app_by_module_path(app_path)
+    app = find_microservice_by_module_path(app_path)
 
     Scheduler(app, NullBackend(), SchedulerConfig(interval=interval)).run()

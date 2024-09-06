@@ -29,7 +29,10 @@ def provide_message_publisher(
     try:
         yield
     finally:
-        message_publishers_ctx.reset(token)
+        try:
+            message_publishers_ctx.reset(token)
+        except ValueError:
+            pass
 
 
 def use_publisher(connecton_name: str = "default") -> MessagePublisher:

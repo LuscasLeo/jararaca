@@ -1,22 +1,32 @@
-from typing import Any, Callable
+from contextlib import asynccontextmanager
+from typing import Any, AsyncGenerator
 
 from fastapi import Depends, FastAPI
 
 from jararaca.core.uow import UnitOfWorkContextProvider
 from jararaca.di import Container
-from jararaca.microservice import Microservice
 from jararaca.presentation.decorators import RestController
+from jararaca.presentation.http_microservice import HttpMicroservice
+
+
+@asynccontextmanager
+async def lifespan(api: FastAPI) -> AsyncGenerator[None, None]:
+    yield
 
 
 def create_http_server(
-    app: Microservice,
-    factory: Callable[[], FastAPI] | None = None,
+    http_app: HttpMicroservice,
 ) -> FastAPI:
+
+    app = http_app.app
+    factory = http_app.factory
     container = Container(app)
 
-    fastapi_app = factory() if factory is not None else FastAPI()
+    fastapi_app = factory(lifespan) if factory is not None else FastAPI()
 
-    fastapi_app.router.dependencies.append(Depends(UnitOfWorkContextProvider(app)))
+    fastapi_app.router.dependencies.append(
+        Depends(UnitOfWorkContextProvider(app, container))
+    )
 
     for controller_t in app.controllers:
         controller = RestController.get_controller(controller_t)
