@@ -213,7 +213,9 @@ def create_messagebus_worker(app: Microservice, config: AioPikaWorkerConfig) -> 
 
     combined_messagebus_incoming_map: MESSAGEBUS_INCOMING_MAP = {}
 
-    uow_context_provider = asynccontextmanager(UnitOfWorkContextProvider(app))
+    uow_context_provider = asynccontextmanager(
+        UnitOfWorkContextProvider(app=app, container=container)
+    )
 
     for instance_type in app.controllers:
         controller = MessageBusController.get_messagebus(instance_type)

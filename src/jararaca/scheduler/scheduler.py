@@ -57,7 +57,9 @@ class Scheduler:
         self.config = config
         self.container = Container(self.app)
         self.scheduled_actions = extract_scheduled_actions(app, self.container)
-        self.uow_provider = asynccontextmanager(UnitOfWorkContextProvider(app))
+        self.uow_provider = asynccontextmanager(
+            UnitOfWorkContextProvider(app, self.container)
+        )
 
         self.tasks: set[asyncio.Task[Any]] = set()
         self.lock = asyncio.Lock()

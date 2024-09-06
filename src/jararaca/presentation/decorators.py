@@ -2,6 +2,7 @@ import inspect
 from typing import Any, Callable, TypedDict, TypeVar, cast
 
 from fastapi import APIRouter
+from fastapi.exceptions import FastAPIError
 
 DECORATED_FUNC = TypeVar("DECORATED_FUNC", bound=Callable[..., Any])
 DECORATED_CLASS = TypeVar("DECORATED_CLASS", bound=Any)
@@ -44,12 +45,15 @@ class RestController:
                 if mapping is None:
                     continue
 
-                router.add_api_route(
-                    methods=[mapping.method],
-                    path=mapping.path,
-                    endpoint=getattr(instance, name),
-                    **(mapping.options or {}),
-                )
+                try:
+                    router.add_api_route(
+                        methods=[mapping.method],
+                        path=mapping.path,
+                        endpoint=getattr(instance, name),
+                        **(mapping.options or {}),
+                    )
+                except FastAPIError as e:
+                    raise Exception(f"Error while adding route {mapping.path}") from e
 
             return router
 
