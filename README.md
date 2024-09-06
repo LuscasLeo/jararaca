@@ -57,16 +57,17 @@ app = Microservice(
 )
 
 web_app = create_http_server(app)
-messagebus_worker = create_messagebus_worker(app)
 
 ```
 
 ### Run as a Web Server
 ```bash
 uvicorn app:web_app --reload
+# or
+jararaca server app:app
 ```
 
 ### Run as a Message Bus Worker
 ```bash
-jararaca worker app:messagebus_worker
+jararaca worker app:app
 ```
