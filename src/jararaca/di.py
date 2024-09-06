@@ -1,5 +1,7 @@
 import inspect
-from typing import Annotated, Any, Callable, Type, cast, get_origin
+from contextlib import contextmanager
+from contextvars import ContextVar
+from typing import Annotated, Any, Callable, Generator, Type, cast, get_origin
 
 from jararaca.core.providers import ProviderSpec, T, Token
 from jararaca.microservice import Microservice
@@ -29,7 +31,7 @@ class Container:
         dependencies = self.parse_dependencies(type_)
 
         evaluated_dependencies = {
-            name: self.instances_map[dependency]
+            name: self.get_or_instantiate(dependency)
             for name, dependency in dependencies.items()
         }
 
@@ -64,14 +66,43 @@ class Container:
 
         return parameter.annotation
 
-    def get_or_instantiate(self, token: Type[T]) -> T:
-        if token not in self.instances_map:
-            self.instantiate(token, token)
+    def get_or_instantiate(self, token_or_type: Type[T] | Token[T]) -> T:
 
-        return cast(T, self.instances_map[token])
+        item_type: Type[T]
+        bind_to: Token[T] | Type[T]
+
+        if isinstance(token_or_type, Token):
+            item_type = token_or_type.type_
+            bind_to = token_or_type
+        else:
+            item_type = bind_to = token_or_type
+
+        if token_or_type not in self.instances_map:
+            self.instantiate(item_type, bind_to)
+
+        return cast(T, self.instances_map[bind_to])
 
     def get_by_type(self, token: Type[T]) -> T:
         return self.get_or_instantiate(token)
 
     def get_by_token(self, token: Token[T]) -> T:
-        return self.get_or_instantiate(token.token)
+        return self.get_or_instantiate(token)
+
+
+current_container_ctx = ContextVar[Container]("current_container")
+
+
+def use_current_container() -> Container:
+    return current_container_ctx.get()
+
+
+@contextmanager
+def provide_container(container: Container) -> Generator[None, None, None]:
+    token = current_container_ctx.set(container)
+    try:
+        yield
+    finally:
+        try:
+            current_container_ctx.reset(token)
+        except ValueError:
+            pass

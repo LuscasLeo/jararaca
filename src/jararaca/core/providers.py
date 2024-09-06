@@ -6,7 +6,8 @@ T = TypeVar("T")
 
 @dataclass(frozen=True)
 class Token(Generic[T]):
-    token: Type[T]
+    type_: Type[T]
+    name: str
 
 
 @dataclass
