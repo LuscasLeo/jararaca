@@ -1,4 +1,4 @@
-from datetime import date, datetime
+from datetime import UTC, date, datetime
 from functools import reduce
 from typing import Any, Callable, Generic, Literal, Protocol, Self, Tuple, Type, TypeVar
 from uuid import UUID
@@ -22,11 +22,15 @@ T_BASEMODEL = TypeVar("T_BASEMODEL", bound=BaseModel)
 class Base(DeclarativeBase): ...
 
 
+def nowutc() -> datetime:
+    return datetime.now(UTC)
+
+
 class DatedEntity(Base):
     __abstract__ = True
 
-    created_at: Mapped[datetime] = mapped_column(nullable=False)
-    updated_at: Mapped[datetime] = mapped_column(nullable=False)
+    created_at: Mapped[datetime] = mapped_column(nullable=False, default=nowutc)
+    updated_at: Mapped[datetime] = mapped_column(nullable=False, default=nowutc)
 
 
 class IdentifiableEntity(Base):
