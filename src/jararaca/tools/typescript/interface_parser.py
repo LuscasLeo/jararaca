@@ -219,7 +219,9 @@ def write_rest_controller_to_typescript_interface(
 
             return_value_repr = get_field_type_for_ts(return_type)
 
-            arg_params_spec, parametes_mapped_types = extract_parameters(member)
+            arg_params_spec, parametes_mapped_types = extract_parameters(
+                member, rest_controller, mapping
+            )
             mapped_types.update(parametes_mapped_types)
 
             class_buffer.write(
@@ -286,7 +288,7 @@ class HttpParemeterSpec:
 
 def parse_path_with_params(path: str, parameters: list[HttpParemeterSpec]) -> str:
     for parameter in parameters:
-        path = path.replace(f":{parameter.name}", f"${{{parameter.name}}}")
+        path = path.replace(f"{{{parameter.name}}}", f"${{{parameter.name}}}")
     return path
 
 
@@ -296,14 +298,18 @@ def mount_parametes_arguments(parameters: list[HttpParemeterSpec]) -> str:
     )
 
 
-def extract_parameters(member: Any) -> tuple[list[HttpParemeterSpec], set[Any]]:
+def extract_parameters(
+    member: Any, controller: RestController, mapping: HttpMapping
+) -> tuple[list[HttpParemeterSpec], set[Any]]:
     parameters_list: list[HttpParemeterSpec] = []
     mapped_types: set[Any] = set()
     if get_origin(member) is UnionType:
         for arg in member.__args__:
             if is_primitive(arg):
                 continue
-            rec_parameters, rec_mapped_types = extract_parameters(arg)
+            rec_parameters, rec_mapped_types = extract_parameters(
+                arg, controller, mapping
+            )
             mapped_types.update(rec_mapped_types)
             parameters_list.extend(rec_parameters)
         return parameters_list, mapped_types
@@ -375,9 +381,21 @@ def extract_parameters(member: Any) -> tuple[list[HttpParemeterSpec], set[Any]]:
                     ...
 
                 else:
-                    rec_parameters, rec_mapped_types = extract_parameters(depends_hook)
+                    rec_parameters, rec_mapped_types = extract_parameters(
+                        depends_hook, controller, mapping
+                    )
                     mapped_types.update(rec_mapped_types)
                     parameters_list.extend(rec_parameters)
+            elif controller.path.find(f":{parameter_name}") != -1:
+                mapped_types.add(annotated_type)
+                parameters_list.append(
+                    HttpParemeterSpec(
+                        type_="path",
+                        name=parameter_name,
+                        required=True,
+                        argument_type_str=get_field_type_for_ts(annotated_type),
+                    )
+                )
             else:
                 mapped_types.add(annotated_type)
                 parameters_list.append(
@@ -394,6 +412,19 @@ def extract_parameters(member: Any) -> tuple[list[HttpParemeterSpec], set[Any]]:
             parameters_list.append(
                 HttpParemeterSpec(
                     type_="body",
+                    name=parameter_name,
+                    required=True,
+                    argument_type_str=get_field_type_for_ts(parameter_type),
+                )
+            )
+        elif (
+            controller.path.find(f"{{{parameter_name}}}") != -1
+            or mapping.path.find(f"{{{parameter_name}}}") != -1
+        ):
+            mapped_types.add(parameter_type)
+            parameters_list.append(
+                HttpParemeterSpec(
+                    type_="path",
                     name=parameter_name,
                     required=True,
                     argument_type_str=get_field_type_for_ts(parameter_type),
@@ -422,7 +453,9 @@ def extract_parameters(member: Any) -> tuple[list[HttpParemeterSpec], set[Any]]:
                         mapped_types.update(args)
                     else:
                         continue
-                _, types = extract_parameters(parameter_type.annotation)
+                _, types = extract_parameters(
+                    parameter_type.annotation, controller, mapping
+                )
                 mapped_types.update(types)
 
     return parameters_list, mapped_types
