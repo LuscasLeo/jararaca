@@ -204,9 +204,7 @@ def write_rest_controller_to_typescript_interface(
 
     class_buffer = StringIO()
 
-    class_buffer.write(
-        f"export abstract class {controller.__name__} extends HttpService {{\n"
-    )
+    class_buffer.write(f"export class {controller.__name__} extends HttpService {{\n")
 
     mapped_types: set[Any] = set()
 
