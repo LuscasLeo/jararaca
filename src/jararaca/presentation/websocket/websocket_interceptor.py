@@ -49,8 +49,8 @@ class WebSocketConnectionManager:
         self.backend = backend
 
         self.backend.configure(
-            broadcast=self.broadcast_from_backend,
-            send=self.send_from_backend,
+            broadcast=self._broadcast_from_backend,
+            send=self._send_from_backend,
             shutdown_event=shutdown_event,
         )
 
@@ -61,7 +61,7 @@ class WebSocketConnectionManager:
 
         await self.backend.broadcast(message)
 
-    async def broadcast_from_backend(self, message: bytes) -> None:
+    async def _broadcast_from_backend(self, message: bytes) -> None:
         for websocket in self.all_websockets:
             await websocket.send_bytes(message)
 
@@ -72,7 +72,7 @@ class WebSocketConnectionManager:
 
         await self.backend.send(rooms, message)
 
-    async def send_from_backend(self, rooms: list[str], message: bytes) -> None:
+    async def _send_from_backend(self, rooms: list[str], message: bytes) -> None:
         for room in rooms:
             for websocket in self.rooms.get(room, set()):
                 await websocket.send_bytes(message)
