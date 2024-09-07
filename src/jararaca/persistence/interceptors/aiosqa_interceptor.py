@@ -53,4 +53,9 @@ class AIOSqlAlchemySessionInterceptor(AppInterceptor):
     async def intercept(self) -> AsyncGenerator[None, None]:
         async with self.sessionmaker() as session:
             with provide_session(self.config.connection_name, session):
-                yield
+                try:
+                    yield
+                    await session.commit()
+                except Exception as e:
+                    await session.rollback()
+                    raise e

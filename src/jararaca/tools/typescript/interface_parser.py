@@ -106,7 +106,7 @@ def parse_basemodel_to_typescript_interface(
         )
     else:
         string_builder.write(
-            f"interface {basemodel_type.__name__}{extends_expression} {{\n"
+            f"export interface {basemodel_type.__name__}{extends_expression} {{\n"
         )
 
     for field_name, field in basemodel_type.__annotations__.items():
