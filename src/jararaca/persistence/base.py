@@ -9,12 +9,12 @@ from sqlalchemy import Select, delete, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
-IDENTIFIABLE_SHEMA_T = TypeVar("IDENTIFIABLE_SHEMA_T")
+IDENTIFIABLE_SCHEMA_T = TypeVar("IDENTIFIABLE_SCHEMA_T")
 
 
-class Identifiable(BaseModel, Generic[IDENTIFIABLE_SHEMA_T]):
+class Identifiable(BaseModel, Generic[IDENTIFIABLE_SCHEMA_T]):
     id: UUID
-    data: IDENTIFIABLE_SHEMA_T
+    data: IDENTIFIABLE_SCHEMA_T
 
 
 T_BASEMODEL = TypeVar("T_BASEMODEL", bound=BaseModel)
