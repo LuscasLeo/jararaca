@@ -233,9 +233,11 @@ def write_rest_controller_to_typescript_interface(
             )
             class_buffer.write(f'\t\t\tmethod: "{mapping.method}",\n')
 
-            class_buffer.write(
-                f"\t\t\tpath: `{parse_path_with_params(mapping.path, arg_params_spec)}`,\n"
+            endpoint_path = parse_path_with_params(mapping.path, arg_params_spec)
+            final_path = "/".join(
+                s.strip("/") for s in [rest_controller.path, endpoint_path]
             )
+            class_buffer.write(f"\t\t\tpath: `/{final_path}`,\n")
 
             class_buffer.write("\t\t\theaders: {\n")
             for param in arg_params_spec:
