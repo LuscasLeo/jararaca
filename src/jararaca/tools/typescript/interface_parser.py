@@ -8,6 +8,7 @@ from uuid import UUID
 
 from fastapi import Request, Response
 from fastapi.params import Body, Cookie, Depends, Header, Path, Query
+from fastapi.security.http import HTTPBase
 from pydantic import BaseModel
 
 from jararaca.microservice import Microservice
@@ -199,11 +200,25 @@ def write_rest_controller_to_typescript_interface(
             )
 
             class_buffer.write("\t\t\theaders: {\n")
+            for param in arg_params_spec:
+                if param.type_ == "header":
+                    class_buffer.write(f'\t\t\t\t"{param.name}": {param.name},\n')
+
             class_buffer.write("\t\t\t},\n")
             class_buffer.write("\t\t\tquery: {\n")
+
+            for param in arg_params_spec:
+                if param.type_ == "query":
+                    class_buffer.write(f'\t\t\t\t"{param.name}": {param.name},\n')
             class_buffer.write("\t\t\t},\n")
-            class_buffer.write("\t\t\tbody: {\n")
-            class_buffer.write("\t\t\t}\n")
+
+            if (
+                body := next((x for x in arg_params_spec if x.type_ == "body"), None)
+            ) is not None:
+                class_buffer.write(f"\t\t\tbody: {body.name}\n")
+            else:
+                class_buffer.write("\t\t\tbody: undefined\n")
+
             class_buffer.write("\t\t});\n")
             class_buffer.write("\t\treturn response;\n")
 
@@ -299,21 +314,18 @@ def extract_parameters(member: Any) -> tuple[list[HttpParemeterSpec], set[Any]]:
                         argument_type_str=get_field_type_for_ts(parameter_type),
                     )
                 )
+
             elif isinstance(annotated_type_hook, Depends):
                 depends_hook = annotated_type_hook.dependency
-                rec_parameters, rec_mapped_types = extract_parameters(depends_hook)
-                mapped_types.update(rec_mapped_types)
-                parameters_list.extend(rec_parameters)
-                # if callable(depends_hook):
-                #     depends_hook = depends_hook()
-                # parameters_list.append(
-                #     HttpParemeterSpec(
-                #         type_="query",
-                #         name=parameter_name,
-                #         required=True,
-                #         argument_type_str=get_field_type_for_ts(depends_hook),
-                #     )
-                # )
+
+                if isinstance(depends_hook, HTTPBase):
+                    ...
+
+                else:
+                    rec_parameters, rec_mapped_types = extract_parameters(depends_hook)
+                    mapped_types.update(rec_mapped_types)
+                    parameters_list.extend(rec_parameters)
+
         elif issubclass(parameter_type, BaseModel):
             mapped_types.update(extract_all_envolved_types(parameter_type))
             parameters_list.append(
