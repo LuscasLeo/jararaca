@@ -1,4 +1,5 @@
 import importlib
+from codecs import StreamWriter
 from typing import Any
 from urllib.parse import urlparse, urlunsplit
 
@@ -10,6 +11,9 @@ from jararaca.microservice import Microservice
 from jararaca.presentation.http_microservice import HttpMicroservice
 from jararaca.presentation.server import create_http_server
 from jararaca.scheduler.scheduler import Scheduler, SchedulerBackend, SchedulerConfig
+from jararaca.tools.typescript.interface_parser import (
+    write_microservice_to_typescript_interface,
+)
 
 
 def find_item_by_module_path(
@@ -30,13 +34,20 @@ def find_item_by_module_path(
 
     app = getattr(module, app)
 
+    return app
+
 
 def find_microservice_by_module_path(module_path: str) -> Microservice:
 
     app = find_item_by_module_path(module_path)
 
     if not isinstance(app, Microservice):
-        raise ValueError("App must be an instance of App")
+        raise ValueError(
+            (
+                "%s must be an instance of Microservice (it is %s)"
+                % (app, str(type(app)))
+            )
+        )
 
     return app
 
@@ -174,3 +185,21 @@ def scheduler(
     app = find_microservice_by_module_path(app_path)
 
     Scheduler(app, NullBackend(), SchedulerConfig(interval=interval)).run()
+
+
+@cli.command()
+@click.argument(
+    "app_path",
+    type=str,
+)
+@click.argument(
+    "file_path",
+    type=click.File("w"),
+)
+def gen_tsi(app_path: str, file_path: StreamWriter) -> None:
+    print(app_path)
+    app = find_microservice_by_module_path(app_path)
+
+    content = write_microservice_to_typescript_interface(app)
+
+    file_path.write(content)
