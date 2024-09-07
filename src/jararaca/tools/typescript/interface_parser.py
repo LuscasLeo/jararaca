@@ -1,9 +1,10 @@
 import inspect
 from dataclasses import dataclass
+from datetime import date, datetime
 from decimal import Decimal
 from io import StringIO
 from types import NoneType, UnionType
-from typing import Annotated, Any, Literal, Type, TypeVar, get_origin
+from typing import Annotated, Any, Generic, Literal, Type, TypeVar, get_origin
 from uuid import UUID
 
 from fastapi import Request, Response
@@ -21,6 +22,10 @@ def snake_to_camel(snake_str: str) -> str:
 
 
 def get_field_type_for_ts(field_type: Any) -> Any:
+    if field_type == date:
+        return "string"
+    if field_type == datetime:
+        return "string"
     if field_type == NoneType:
         return "null"
     if field_type == UUID:
@@ -79,30 +84,47 @@ def get_generic_args(field_type: Any) -> Any:
     return field_type.__parameters__
 
 
-def parse_basemodel_to_typescript_interface(basemodel_type: Type[BaseModel]) -> str:
+def parse_basemodel_to_typescript_interface(
+    basemodel_type: Type[BaseModel],
+) -> tuple[set[type], str]:
     string_builder = StringIO()
+    mapped_types: set[type] = set()
+
+    inherited_classes = get_inherited_classes(basemodel_type)
+
+    mapped_types.update(inherited_classes)
+
+    extends_expression = (
+        f" extends {', '.join([get_field_type_for_ts(inherited_class) for inherited_class in inherited_classes])}"
+        if len(inherited_classes) > 0
+        else ""
+    )
 
     if is_generic_type(basemodel_type):
         string_builder.write(
-            f"export interface {basemodel_type.__name__}<{', '.join([arg.__name__ for arg in get_generic_args(basemodel_type)])}> {{\n"
+            f"export interface {basemodel_type.__name__}<{', '.join([arg.__name__ for arg in get_generic_args(basemodel_type)])}>{extends_expression} {{\n"
         )
     else:
-        string_builder.write(f"interface {basemodel_type.__name__} {{\n")
+        string_builder.write(
+            f"interface {basemodel_type.__name__}{extends_expression} {{\n"
+        )
 
     for field_name, field in basemodel_type.__annotations__.items():
         string_builder.write(
             f"  {snake_to_camel(field_name)}: {get_field_type_for_ts(field)};\n"
         )
     string_builder.write("}\n")
-    return string_builder.getvalue()
+
+    return mapped_types, string_builder.getvalue()
 
 
-def write_basemodels_to_typescript(types: list[Any]) -> str:
-    buffer = StringIO()
-    for t in types:
-        buffer.write(parse_basemodel_to_typescript_interface(t))
-
-    return buffer.getvalue()
+def get_inherited_classes(basemodel_type: Type[BaseModel]) -> list[Type[BaseModel]]:
+    return [
+        base_class
+        for base_class in basemodel_type.__bases__
+        if get_origin(base_class) is not Generic
+        if base_class is not BaseModel
+    ]
 
 
 def write_microservice_to_typescript_interface(
@@ -145,9 +167,17 @@ export abstract class HttpService {
 """
     )
 
-    for t in mapped_types_set:
+    processed_types: set[Any] = set()
+    backlog: set[Any] = mapped_types_set.copy()
+
+    while len(backlog) > 0:
+        t = backlog.pop()
         if not is_primitive(t):
-            final_buffer.write(parse_basemodel_to_typescript_interface(t))
+            new_types, text = parse_basemodel_to_typescript_interface(t)
+            final_buffer.write(text)
+
+            processed_types.add(t)
+            backlog.update(new_types)
 
     final_buffer.write(rest_controller_buffer.getvalue())
 
@@ -155,7 +185,17 @@ export abstract class HttpService {
 
 
 def is_primitive(field_type: Any) -> bool:
-    return field_type in [str, int, float, bool, NoneType, UUID, Decimal]
+    return field_type in [
+        str,
+        int,
+        float,
+        bool,
+        NoneType,
+        UUID,
+        Decimal,
+        date,
+        datetime,
+    ] or get_origin(field_type) in [list, dict, tuple, Literal, UnionType]
 
 
 def write_rest_controller_to_typescript_interface(
@@ -255,6 +295,14 @@ def mount_parametes_arguments(parameters: list[HttpParemeterSpec]) -> str:
 def extract_parameters(member: Any) -> tuple[list[HttpParemeterSpec], set[Any]]:
     parameters_list: list[HttpParemeterSpec] = []
     mapped_types: set[Any] = set()
+    if get_origin(member) is UnionType:
+        for arg in member.__args__:
+            if is_primitive(arg):
+                continue
+            rec_parameters, rec_mapped_types = extract_parameters(arg)
+            mapped_types.update(rec_mapped_types)
+            parameters_list.extend(rec_parameters)
+        return parameters_list, mapped_types
 
     for parameter_name, parameter_type in member.__annotations__.items():
         if parameter_name == "return":
@@ -326,7 +374,7 @@ def extract_parameters(member: Any) -> tuple[list[HttpParemeterSpec], set[Any]]:
                     mapped_types.update(rec_mapped_types)
                     parameters_list.extend(rec_parameters)
 
-        elif issubclass(parameter_type, BaseModel):
+        elif inspect.isclass(parameter_type) and issubclass(parameter_type, BaseModel):
             mapped_types.update(extract_all_envolved_types(parameter_type))
             parameters_list.append(
                 HttpParemeterSpec(
@@ -346,6 +394,21 @@ def extract_parameters(member: Any) -> tuple[list[HttpParemeterSpec], set[Any]]:
                     argument_type_str=get_field_type_for_ts(parameter_type),
                 )
             )
+
+        if inspect.isclass(parameter_type) and not is_primitive(parameter_type):
+            signature = inspect.signature(parameter_type)
+
+            parameter_members = signature.parameters
+
+            for _, parameter_type in parameter_members.items():
+                if is_primitive(parameter_type.annotation):
+                    if get_origin(parameter_type.annotation) is not None:
+                        args = parameter_type.annotation.__args__
+                        mapped_types.update(args)
+                    else:
+                        continue
+                _, types = extract_parameters(parameter_type.annotation)
+                mapped_types.update(types)
 
     return parameters_list, mapped_types
 
