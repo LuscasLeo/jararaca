@@ -122,11 +122,14 @@ class RedisWebSocketConnectionBackend(WebSocketConnectionBackend):
 
             while not shutdown_event.is_set():
 
-                message = await pubsub.get_message(ignore_subscribe_messages=True)
+                message: dict[str, Any] | None = await pubsub.get_message(
+                    ignore_subscribe_messages=True
+                )
 
                 if message is None:
                     continue
-                send_message = SendToRoomsMessage.decode(message)
+
+                send_message = SendToRoomsMessage.decode(message["data"])
 
                 async with self.lock:
 
