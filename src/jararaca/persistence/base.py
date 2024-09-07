@@ -1,4 +1,3 @@
-from dataclasses import dataclass
 from datetime import date, datetime
 from functools import reduce
 from typing import Any, Callable, Generic, Literal, Protocol, Self, Tuple, Type, TypeVar
@@ -143,8 +142,7 @@ class QueryOperations(Generic[QUERY_FILTER_T, QUERY_ENTITY_T]):
 
 
 # region PaginatedFilter
-@dataclass
-class PaginatedFilter:
+class PaginatedFilter(BaseModel):
     offset: int = 0
     limit: int = 10
 
@@ -164,21 +162,18 @@ class PaginatedQueryInjector(QueryInjector):
 # region Criteria
 
 
-@dataclass
-class StringCriteria:
+class StringCriteria(BaseModel):
     value: str
     is_exact: bool
     case_sensitive: bool
 
 
-@dataclass
-class DateCriteria:
+class DateCriteria(BaseModel):
     value: date
     op: Literal["eq", "gt", "lt", "gte", "lte"]
 
 
-@dataclass
-class DatetimeCriteria:
+class DatetimeCriteria(BaseModel):
     value: datetime
     op: Literal["eq", "gt", "lt", "gte", "lte"]
 
