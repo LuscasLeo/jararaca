@@ -474,7 +474,8 @@ def extract_all_envolved_types(field_type: Any) -> set[Any]:
                 mapped_types.add(metadata.get("origin"))
             else:
                 mapped_types.add(field_type)
-            mapped_types.update(metadata.get("args"))
+            for arg in metadata.get("args"):
+                mapped_types.update(extract_all_envolved_types(arg))
         else:
             mapped_types.add(field_type)
 
