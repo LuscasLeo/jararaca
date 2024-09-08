@@ -72,7 +72,8 @@ def get_field_type_for_ts(field_type: Any) -> Any:
         return " | ".join([f'"{x}"' for x in field_type.__args__])
     if get_origin(field_type) == UnionType:
         return " | ".join([get_field_type_for_ts(x) for x in field_type.__args__])
-
+    if (get_origin(field_type) == Annotated) and (len(field_type.__args__) > 0):
+        return get_field_type_for_ts(field_type.__args__[0])
     return "unknown"
 
 
