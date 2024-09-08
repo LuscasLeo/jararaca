@@ -5,8 +5,8 @@ from contextvars import ContextVar
 from functools import wraps
 from typing import Any, AsyncGenerator, Awaitable, Callable, Generator, Protocol
 
-from fastapi import APIRouter
-from fastapi.websockets import WebSocket
+from fastapi import APIRouter, WebSocketDisconnect
+from fastapi.websockets import WebSocket, WebSocketState
 
 from jararaca.core.uow import UnitOfWorkContextProvider
 from jararaca.di import Container
@@ -47,6 +47,7 @@ class WebSocketConnectionManager:
         self.rooms: dict[str, set[WebSocket]] = {}
         self.all_websockets: set[WebSocket] = set()
         self.backend = backend
+        self.lock = asyncio.Lock()
 
         self.backend.configure(
             broadcast=self._broadcast_from_backend,
@@ -63,7 +64,12 @@ class WebSocketConnectionManager:
 
     async def _broadcast_from_backend(self, message: bytes) -> None:
         for websocket in self.all_websockets:
-            await websocket.send_bytes(message)
+            try:
+                if websocket.client_state == WebSocketState.CONNECTED:
+                    await websocket.send_bytes(message)
+            except WebSocketDisconnect:
+                async with self.lock:  # TODO: check if this can cause concurrency slowdown issues
+                    self.all_websockets.remove(websocket)
 
     async def send(self, rooms: list[str], message: bytes) -> None:
         # for room in rooms:
@@ -73,9 +79,16 @@ class WebSocketConnectionManager:
         await self.backend.send(rooms, message)
 
     async def _send_from_backend(self, rooms: list[str], message: bytes) -> None:
-        for room in rooms:
-            for websocket in self.rooms.get(room, set()):
-                await websocket.send_bytes(message)
+        async with self.lock:
+            for room in rooms:
+                for websocket in self.rooms.get(room, set()):
+                    try:
+                        if websocket.client_state == WebSocketState.CONNECTED:
+                            await websocket.send_bytes(message)
+                    except WebSocketDisconnect:
+                        async with self.lock:
+                            if websocket in self.rooms[room]:
+                                self.rooms[room].remove(websocket)
 
     async def join(self, rooms: list[str], websocket: WebSocket) -> None:
         for room in rooms:
