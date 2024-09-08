@@ -4,7 +4,7 @@ from typing import Any, Callable, Generic, Literal, Protocol, Self, Tuple, Type,
 from uuid import UUID
 
 from pydantic import BaseModel
-from sqlalchemy import Select, delete, select, update
+from sqlalchemy import Select, delete, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
@@ -109,6 +109,26 @@ class QueryInjector(Protocol):
     def inject(self, query: Select[Tuple[Any]], filter: Any) -> Select[Tuple[Any]]: ...
 
 
+TRANSFORM_T = TypeVar("TRANSFORM_T")
+PAGINATED_T = TypeVar("PAGINATED_T", bound=Any)
+
+
+class Paginated(BaseModel, Generic[PAGINATED_T]):
+    items: list[PAGINATED_T]
+    total: int
+    unfiltered_total: int
+
+    def transform(
+        self,
+        transform: Callable[[PAGINATED_T], TRANSFORM_T],
+    ) -> "Paginated[TRANSFORM_T]":
+        return Paginated[TRANSFORM_T](
+            items=[transform(item) for item in self.items],
+            total=self.total,
+            unfiltered_total=self.unfiltered_total,
+        )
+
+
 class QueryOperations(Generic[QUERY_FILTER_T, QUERY_ENTITY_T]):
 
     def __init__(
@@ -125,15 +145,33 @@ class QueryOperations(Generic[QUERY_FILTER_T, QUERY_ENTITY_T]):
     def session(self) -> AsyncSession:
         return self.session_provider()
 
-    async def query(self, filter: QUERY_FILTER_T) -> list[QUERY_ENTITY_T]:
-        return [
-            e
-            for e in (
-                await self.session.execute(
-                    self.generate_filtered_query(filter, select(self.entity_type))
-                )
-            ).scalars()
-        ]
+    async def query(self, filter: QUERY_FILTER_T) -> "Paginated[QUERY_ENTITY_T]":
+        unfiltered_total = (
+            await self.session.execute(
+                select(func.count()).select_from(self.entity_type)
+            )
+        ).scalar_one()
+
+        filtered_query = self.generate_filtered_query(filter, select(self.entity_type))
+
+        filtered_total = (
+            await self.session.execute(
+                select(func.count()).select_from(filtered_query.subquery())
+            )
+        ).scalar_one()
+
+        return Paginated(
+            items=[
+                e
+                for e in (
+                    await self.session.execute(
+                        self.generate_filtered_query(filter, select(self.entity_type))
+                    )
+                ).scalars()
+            ],
+            total=filtered_total,
+            unfiltered_total=unfiltered_total,
+        )
 
     def generate_filtered_query(
         self, filter: QUERY_FILTER_T, select_query: Select[Tuple[QUERY_ENTITY_T]]
