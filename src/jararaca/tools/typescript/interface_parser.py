@@ -195,6 +195,7 @@ def is_primitive(field_type: Any) -> bool:
         Decimal,
         date,
         datetime,
+        object,
     ] or get_origin(field_type) in [list, dict, tuple, Literal, UnionType]
 
 
@@ -313,6 +314,21 @@ def extract_parameters(
             mapped_types.update(rec_mapped_types)
             parameters_list.extend(rec_parameters)
         return parameters_list, mapped_types
+
+    if is_primitive(member):
+        return parameters_list, mapped_types
+
+    if get_origin(member) is Annotated:
+        return extract_parameters(member.__args__[0], controller, mapping)
+
+    if hasattr(member, "__bases__"):
+        for base in member.__bases__:
+            # if base is not BaseModel:
+            rec_parameters, rec_mapped_types = extract_parameters(
+                base, controller, mapping
+            )
+            mapped_types.update(rec_mapped_types)
+            parameters_list.extend(rec_parameters)
 
     for parameter_name, parameter_type in member.__annotations__.items():
         if parameter_name == "return":
