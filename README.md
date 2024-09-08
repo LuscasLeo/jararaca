@@ -1,4 +1,4 @@
-<img src="docs/assets/_f04774c9-7e05-4da4-8b17-8be23f6a1475.jpeg" alt="README.md" width="250" float="right">
+<img src="https://raw.githubusercontent.com/LuscasLeo/jararaca/main/docs/assets/_f04774c9-7e05-4da4-8b17-8be23f6a1475.jpeg" alt="README.md" width="250" float="right">
 
 # Jararaca Microservice Framework
 
