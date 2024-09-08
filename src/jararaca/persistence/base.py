@@ -4,7 +4,7 @@ from typing import Any, Callable, Generic, Literal, Protocol, Self, Tuple, Type,
 from uuid import UUID
 
 from pydantic import BaseModel
-from sqlalchemy import Select, delete, func, select, update
+from sqlalchemy import DateTime, Select, delete, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
@@ -29,8 +29,12 @@ def nowutc() -> datetime:
 class DatedEntity(Base):
     __abstract__ = True
 
-    created_at: Mapped[datetime] = mapped_column(nullable=False, default=nowutc)
-    updated_at: Mapped[datetime] = mapped_column(nullable=False, default=nowutc)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=nowutc
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=nowutc
+    )
 
 
 class IdentifiableEntity(Base):
@@ -199,6 +203,28 @@ class PaginatedQueryInjector(QueryInjector):
 
 
 # endregion
+
+# DateOrderedFilter
+
+
+class DateOrderedFilter(BaseModel):
+    order_by: Literal["asc", "desc"] = "asc"
+
+
+class DateOrderedQueryInjector(QueryInjector):
+
+    def __init__(self, entity_type: Type[DatedEntity]) -> None:
+        self.entity_type = entity_type
+
+    def inject(
+        self,
+        query: Select[Tuple[DatedEntity]],
+        filter: DateOrderedFilter,
+    ) -> Select[Tuple[DatedEntity]]:
+        return query.order_by(getattr(self.entity_type.created_at, filter.order_by)())
+
+
+# region Criteria
 
 
 # region Criteria
