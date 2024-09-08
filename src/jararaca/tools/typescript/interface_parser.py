@@ -43,7 +43,7 @@ def get_field_type_for_ts(field_type: Any) -> Any:
     if get_origin(field_type) == tuple:
         return f"[{', '.join([get_field_type_for_ts(field) for field in field_type.__args__])}]"
     if get_origin(field_type) == list:
-        return f"{get_field_type_for_ts(field_type.__args__[0])}[]"
+        return f"Array<{get_field_type_for_ts(field_type.__args__[0])}>"
     if get_origin(field_type) == dict:
         return f"{{[key: {get_field_type_for_ts(field_type.__args__[0])}]: {get_field_type_for_ts(field_type.__args__[1])}}}"
     if inspect.isclass(field_type):
@@ -186,18 +186,36 @@ export abstract class HttpService {
 
 
 def is_primitive(field_type: Any) -> bool:
-    return field_type in [
-        str,
-        int,
-        float,
-        bool,
-        NoneType,
-        UUID,
-        Decimal,
-        date,
-        datetime,
-        object,
-    ] or get_origin(field_type) in [list, dict, tuple, Literal, UnionType]
+    return (
+        field_type
+        in [
+            str,
+            int,
+            float,
+            bool,
+            NoneType,
+            UUID,
+            Decimal,
+            date,
+            datetime,
+            object,
+        ]
+        or get_origin(field_type) in [list, dict, tuple, Literal, UnionType]
+        or isinstance(
+            field_type,
+            (
+                str,
+                int,
+                float,
+                bool,
+                NoneType,
+                UUID,
+                Decimal,
+                date,
+                datetime,
+            ),
+        )
+    )
 
 
 def write_rest_controller_to_typescript_interface(
@@ -224,7 +242,9 @@ def write_rest_controller_to_typescript_interface(
             arg_params_spec, parametes_mapped_types = extract_parameters(
                 member, rest_controller, mapping
             )
-            mapped_types.update(parametes_mapped_types)
+
+            for param in parametes_mapped_types:
+                mapped_types.update(extract_all_envolved_types(param))
 
             class_buffer.write(
                 f"\tasync {snake_to_camel(name)}({mount_parametes_arguments(arg_params_spec)}): Promise<{return_value_repr}> {{\n"
@@ -484,6 +504,10 @@ def extract_all_envolved_types(field_type: Any) -> set[Any]:
     if field_type is None:
         return mapped_types
 
+    if is_primitive(field_type):
+        if get_origin(field_type) is not None:
+            mapped_types.update(field_type.__args__)
+
     if inspect.isclass(field_type):
         if hasattr(field_type, "__pydantic_generic_metadata__"):
             metadata = getattr(field_type, "__pydantic_generic_metadata__")
@@ -495,6 +519,10 @@ def extract_all_envolved_types(field_type: Any) -> set[Any]:
                 mapped_types.update(extract_all_envolved_types(arg))
         else:
             mapped_types.add(field_type)
+
+        if hasattr(field_type, "__annotations__"):
+            for member in field_type.__annotations__.values():
+                mapped_types.update(extract_all_envolved_types(member))
 
     if hasattr(field_type, "__args__"):
         for arg in field_type.__args__:
