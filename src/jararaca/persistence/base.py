@@ -37,6 +37,17 @@ class DatedEntity(Base):
     )
 
 
+def recursive_get_dict(obj: Any) -> Any:
+    if hasattr(obj, "__dict__"):
+        return {
+            k: recursive_get_dict(v) for k, v in obj.__dict__.items() if k[0] != "_"
+        }
+    elif isinstance(obj, list):
+        return [recursive_get_dict(v) for v in obj]
+    else:
+        return obj
+
+
 class IdentifiableEntity(Base):
     __abstract__ = True
 
@@ -53,11 +64,11 @@ class IdentifiableEntity(Base):
     def to_identifiable(self, MODEL: Type[T_BASEMODEL]) -> Identifiable[T_BASEMODEL]:
 
         return Identifiable[MODEL].model_validate(  # type: ignore[valid-type]
-            {"id": self.id, "data": self.__dict__}
+            {"id": self.id, "data": recursive_get_dict(self)}
         )
 
     def to_basemodel(self, model: Type[T_BASEMODEL]) -> T_BASEMODEL:
-        return model.model_validate(self.__dict__)
+        return model.model_validate(recursive_get_dict(self))
 
 
 IDENTIFIABLE_T = TypeVar("IDENTIFIABLE_T", bound=IdentifiableEntity)
