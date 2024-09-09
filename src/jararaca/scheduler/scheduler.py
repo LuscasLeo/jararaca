@@ -66,7 +66,7 @@ class Scheduler:
         self.lock = asyncio.Lock()
         self.shutdown_event = asyncio.Event()
 
-        self.last_executions: dict[Callable[..., Any], datetime] = {}
+        self.last_checks: dict[Callable[..., Any], datetime] = {}
 
         self.lifceycle = AppLifecycle(app, self.container)
 
@@ -83,13 +83,15 @@ class Scheduler:
         self, func: Callable[..., Any], scheduled_action: ScheduledAction
     ) -> None:
 
-        if func in self.last_executions:
-            last_execution = self.last_executions[func]
-            if scheduled_action.cron:
-                cron = croniter(scheduled_action.cron, last_execution)
-                next_run: datetime = cron.get_next(datetime)
-                if next_run > datetime.now(UTC):
-                    return
+        last_check = self.last_checks.setdefault(func, datetime.now(UTC))
+        if scheduled_action.cron:
+            cron = croniter(scheduled_action.cron, last_check)
+            next_run: datetime = cron.get_next(datetime)
+            if next_run > datetime.now(UTC):
+                print(
+                    f"Skipping {func.__module__}.{func.__qualname__} until {next_run}"
+                )
+                return
 
         try:
             async with self.uow_provider():
@@ -97,7 +99,7 @@ class Scheduler:
         except Exception as e:
             logging.error(f"Error in scheduled action {scheduled_action}: {e}")
 
-        self.last_executions[func] = datetime.now(UTC)
+        self.last_checks[func] = datetime.now(UTC)
 
     def run(self) -> None:
 
