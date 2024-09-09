@@ -3,7 +3,7 @@ import logging
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import Any, Callable
+from typing import Any, AsyncContextManager, AsyncGenerator, Callable
 
 import uvloop
 from croniter import croniter
@@ -84,20 +84,34 @@ class Scheduler:
     ) -> None:
 
         last_check = self.last_checks.setdefault(func, datetime.now(UTC))
-        if scheduled_action.cron:
-            cron = croniter(scheduled_action.cron, last_check)
-            next_run: datetime = cron.get_next(datetime)
-            if next_run > datetime.now(UTC):
-                print(
-                    f"Skipping {func.__module__}.{func.__qualname__} until {next_run}"
-                )
-                return
+
+        cron = croniter(scheduled_action.cron, last_check)
+        next_run: datetime = cron.get_next(datetime)
+        if next_run > datetime.now(UTC):
+            print(f"Skipping {func.__module__}.{func.__qualname__} until {next_run}")
+            return
+
+        action_specs = ScheduledAction.get_scheduled_action(func)
+
+        assert action_specs is not None
+
+        ctx: AsyncContextManager[Any]
+        if action_specs.timeout:
+            ctx = asyncio.timeout(action_specs.timeout)
+        else:
+            ctx = none_context()
 
         try:
             async with self.uow_provider():
-                await func()
+                try:
+                    async with ctx:
+                        await func()
+                except BaseException as e:
+                    if action_specs.exception_handler:
+                        action_specs.exception_handler(e)
+
         except Exception as e:
-            logging.error(f"Error in scheduled action {scheduled_action}: {e}")
+            logging.exception(f"Error in scheduled action {scheduled_action}: {e}")
 
         self.last_checks[func] = datetime.now(UTC)
 
@@ -117,3 +131,8 @@ class Scheduler:
 
         with asyncio.Runner(loop_factory=uvloop.new_event_loop) as runner:
             runner.run(run_scheduled_actions())
+
+
+@asynccontextmanager
+async def none_context() -> AsyncGenerator[None, None]:
+    yield
