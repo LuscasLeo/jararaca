@@ -12,6 +12,8 @@ class ScheduledAction:
         cron: str,
         allow_overlap: bool = False,
         exclusive: bool = False,
+        timeout: int | None = None,
+        exception_handler: Callable[[BaseException], None] | None = None,
     ) -> None:
         """
         :param cron: A string representing the cron expression for the scheduled action.
@@ -21,6 +23,8 @@ class ScheduledAction:
         self.cron = cron
         self.allow_overlap = allow_overlap
         self.exclusive = exclusive
+        self.exception_handler = exception_handler
+        self.timeout = timeout
 
     def __call__(self, func: DECORATED_FUNC) -> DECORATED_FUNC:
         ScheduledAction.register(func, self)
