@@ -16,3 +16,4 @@ class ProviderSpec:
     use_value: Any | Token[Any] | None = None
     use_factory: Callable[..., Any] | None = None
     use_class: type[Any] | None = None
+    after_interceptors: bool = False

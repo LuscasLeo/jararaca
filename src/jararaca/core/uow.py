@@ -1,8 +1,12 @@
 from contextlib import asynccontextmanager
-from typing import AsyncGenerator
+from typing import AsyncGenerator, Sequence
 
-from jararaca.di import Container, provide_container
-from jararaca.microservice import AppInterceptor, Microservice
+from jararaca.microservice import (
+    AppInterceptor,
+    Container,
+    Microservice,
+    provide_container,
+)
 
 
 class ContainerInterceptor(AppInterceptor):
@@ -26,10 +30,28 @@ class UnitOfWorkContextProvider:
 
     # TODO: Guarantee that the context is closed whenever an exception is raised
     # TODO: Guarantee a unit of work workflow for the whole request, including all the interceptors
+
+    def factory_app_interceptors(self) -> Sequence[AppInterceptor]:
+
+        interceptors: list[AppInterceptor] = []
+
+        for interceptor_dep in self.app.interceptors:
+            if not isinstance(interceptor_dep, AppInterceptor):
+                interceptor = self.container.get_or_register_token_or_type(
+                    interceptor_dep
+                )
+                interceptors.append(interceptor)
+            else:
+                interceptors.append(interceptor_dep)
+
+        return interceptors
+
     async def __call__(self) -> AsyncGenerator[None, None]:
 
+        app_interceptors = self.factory_app_interceptors()
+
         ctxs = [self.container_interceptor.intercept()] + [
-            interceptor.intercept() for interceptor in self.app.interceptors
+            interceptor.intercept() for interceptor in app_interceptors
         ]
 
         for ctx in ctxs:

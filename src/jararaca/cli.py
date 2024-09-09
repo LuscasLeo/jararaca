@@ -6,7 +6,7 @@ from urllib.parse import urlparse, urlunsplit
 import click
 import uvicorn
 
-from jararaca.messagebus.worker import AioPikaWorkerConfig, create_messagebus_worker
+from jararaca.messagebus.worker import AioPikaWorkerConfig, MessageBusWorker
 from jararaca.microservice import Microservice
 from jararaca.presentation.http_microservice import HttpMicroservice
 from jararaca.presentation.server import create_http_server
@@ -133,7 +133,7 @@ def worker(
         prefetch_count=prefetch_count,
     )
 
-    create_messagebus_worker(app, config=config)
+    MessageBusWorker(app, config=config).start_sync()
 
 
 @cli.command()
@@ -159,6 +159,13 @@ def server(app_path: str, host: str, port: int) -> None:
         app = HttpMicroservice(item)
     elif isinstance(item, HttpMicroservice):
         app = item
+    else:
+        raise ValueError(
+            (
+                "%s must be an instance of Microservice or HttpMicroservice (it is %s)"
+                % (item, str(type(item)))
+            )
+        )
 
     asgi_app = create_http_server(app)
 

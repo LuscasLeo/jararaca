@@ -141,7 +141,9 @@ pip install jararaca
 
 ```python
 # app.py
+
 from jararaca import Microservice, create_http_server, create_messagebus_worker
+from jararaca.presentation.http_microservice import HttpMicroservice
 
 app = Microservice(
     providers=[
@@ -161,6 +163,10 @@ app = Microservice(
     ],
 )
 
+
+# App for specific Http Configuration Context
+http_app = HttpMicroservice(app)
+
 web_app = create_http_server(app)
 
 ```
@@ -171,6 +177,9 @@ web_app = create_http_server(app)
 uvicorn app:web_app --reload
 # or
 jararaca server app:app
+# or
+jararaca server app:http_app
+
 ```
 
 ### Run as a Message Bus Worker
