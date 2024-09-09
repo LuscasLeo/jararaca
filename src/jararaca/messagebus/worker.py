@@ -14,7 +14,11 @@ from jararaca.core.uow import UnitOfWorkContextProvider
 from jararaca.di import Container
 from jararaca.lifecycle import AppLifecycle
 from jararaca.messagebus import Message
-from jararaca.messagebus.decorators import MESSAGEBUS_INCOMING_MAP, MessageBusController
+from jararaca.messagebus.decorators import (
+    MESSAGEBUS_INCOMING_MAP,
+    IncomingHandler,
+    MessageBusController,
+)
 from jararaca.microservice import Microservice
 
 
@@ -113,12 +117,12 @@ class AioPikaMicroserviceProvider:
                 await queue.consume(self.message_consumer)
 
                 await self.shutdown_event.wait()
-                print("########Worker shutting down")
+                print("Worker shutting down")
 
                 async with self.lock:
-                    print("########Stopping task incoming")
+                    print("Stopping task incoming")
 
-                print("##########Waiting for all messages to be processed")
+                print("Waiting for all messages to be processed")
                 await asyncio.gather(*self.tasks, return_exceptions=True)
 
                 await channel.close()
@@ -204,12 +208,40 @@ class AioPikaMicroserviceProvider:
 
         builded_message = AioPikaMessage(aio_pika_message, message_type)
 
-        try:
-            async with self.uow_context_provider():
-                await handler(builded_message)
-                await aio_pika_message.ack()
-        except:
-            await aio_pika_message.nack()
+        incoming_message_spec = IncomingHandler.get_message_incoming(handler)
+        assert incoming_message_spec is not None
+
+        async with self.uow_context_provider():
+            ctx: AsyncContextManager[Any]
+            if incoming_message_spec.timeout is not None:
+                ctx = asyncio.timeout(incoming_message_spec.timeout)
+            else:
+                ctx = none_context()
+            async with ctx:
+                try:
+                    await handler(builded_message)
+                    if incoming_message_spec.auto_ack:
+                        await aio_pika_message.ack()
+                except BaseException as base_exc:
+                    if incoming_message_spec.exception_handler is not None:
+                        try:
+                            incoming_message_spec.exception_handler(base_exc)
+                        except Exception as nested_exc:
+                            logging.exception(
+                                f"Error processing exception handler: {base_exc} | {nested_exc}"
+                            )
+
+                    if incoming_message_spec.nack_on_exception:
+                        await aio_pika_message.nack()
+                    else:
+                        await aio_pika_message.reject(requeue=False)
+                else:
+                    logging.info("Message processed successfully")
+
+
+@asynccontextmanager
+async def none_context() -> AsyncGenerator[None, None]:
+    yield
 
 
 def create_messagebus_worker(app: Microservice, config: AioPikaWorkerConfig) -> None:

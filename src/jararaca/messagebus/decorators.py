@@ -77,8 +77,19 @@ class IncomingHandler:
 
     MESSAGE_INCOMING_ATTR = "__message_incoming__"
 
-    def __init__(self, topic: str) -> None:
+    def __init__(
+        self,
+        topic: str,
+        timeout: int | None = None,
+        exception_handler: Callable[[BaseException], None] | None = None,
+        nack_on_exception: bool = False,
+        auto_ack: bool = True,
+    ) -> None:
         self.topic = topic
+        self.timeout = timeout
+        self.exception_handler = exception_handler
+        self.nack_on_exception = nack_on_exception
+        self.auto_ack = auto_ack
 
     def __call__(self, func: DECORATED_FUNC) -> DECORATED_FUNC:
 
