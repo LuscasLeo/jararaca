@@ -15,6 +15,7 @@ from jararaca.microservice import (
     AppInterceptorWithLifecycle,
     Microservice,
 )
+from jararaca.presentation.decorators import RestController
 from jararaca.presentation.websocket.decorators import WebSocketEndpoint
 
 
@@ -139,7 +140,9 @@ class WebSocketInterceptor(AppInterceptor, AppInterceptorWithLifecycle):
         )
 
     @asynccontextmanager
-    async def lifecycle(self, app: Microservice) -> AsyncGenerator[None, None]:
+    async def lifecycle(
+        self, app: Microservice, container: Container
+    ) -> AsyncGenerator[None, None]:
 
         yield
         self.shutdown_event.set()
@@ -173,14 +176,21 @@ class WebSocketInterceptor(AppInterceptor, AppInterceptorWithLifecycle):
         )
 
         for controller_type in app.controllers:
+
+            rest_controller = RestController.get_controller(controller_type)
             controller: Any = container.get_by_type(controller_type)
 
             members = inspect.getmembers(controller_type, predicate=inspect.isfunction)
 
             for name, member in members:
                 if (ws_endpoint := WebSocketEndpoint.get(member)) is not None:
+                    final_path = (
+                        rest_controller.path + ws_endpoint.path
+                        if rest_controller
+                        else ws_endpoint.path
+                    )
                     api_router.add_websocket_route(
-                        path=ws_endpoint.path,
+                        path=final_path,
                         endpoint=self.__wrap_with_uow_context_provider(
                             func=getattr(controller, name),
                             uow=uow_provider,

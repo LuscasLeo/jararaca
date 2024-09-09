@@ -77,7 +77,7 @@ class MessageProcessingLocker:
         await asyncio.gather(*self.current_processing_messages_set)
 
 
-class AioPikaMicroserviceProvider:
+class AioPikaMicroserviceConsumer:
     def __init__(
         self,
         config: AioPikaWorkerConfig,
@@ -93,50 +93,40 @@ class AioPikaMicroserviceProvider:
         self.tasks: set[asyncio.Task[Any]] = set()
         self.app_lifetime = app_lifetime
 
-    def start_consumer(self) -> None:
+    # def start_consumer(self) -> None:
 
-        async def consume() -> None:
-            async with self.app_lifetime():
-                connection = await aio_pika.connect_robust(self.config.url)
+    async def consume(self) -> None:
+        async with self.app_lifetime():
+            connection = await aio_pika.connect_robust(self.config.url)
 
-                channel = await connection.channel()
+            channel = await connection.channel()
 
-                await channel.set_qos(prefetch_count=self.config.prefetch_count)
+            await channel.set_qos(prefetch_count=self.config.prefetch_count)
 
-                topic_exchange = await channel.declare_exchange(
-                    self.config.exchange, type="topic"
-                )
-
-                queue = await channel.declare_queue(self.config.queue)
-
-                topics = [*self.incoming_map.keys()]
-
-                for topic in topics:
-                    await queue.bind(topic_exchange, routing_key=topic)
-
-                await queue.consume(self.message_consumer)
-
-                await self.shutdown_event.wait()
-                print("Worker shutting down")
-
-                async with self.lock:
-                    print("Stopping task incoming")
-
-                print("Waiting for all messages to be processed")
-                await asyncio.gather(*self.tasks, return_exceptions=True)
-
-                await channel.close()
-                await connection.close()
-
-        def on_shutdown(loop: asyncio.AbstractEventLoop) -> None:
-            logging.info("Shutting down")
-            self.shutdown_event.set()
-
-        with asyncio.Runner(loop_factory=uvloop.new_event_loop) as runner:
-            runner.get_loop().add_signal_handler(
-                signal.SIGINT, on_shutdown, runner.get_loop()
+            topic_exchange = await channel.declare_exchange(
+                self.config.exchange, type="topic"
             )
-            runner.run(consume())
+
+            queue = await channel.declare_queue(self.config.queue)
+
+            topics = [*self.incoming_map.keys()]
+
+            for topic in topics:
+                await queue.bind(topic_exchange, routing_key=topic)
+
+            await queue.consume(self.message_consumer)
+
+            await self.shutdown_event.wait()
+            print("Worker shutting down")
+
+            async with self.lock:
+                print("Stopping task incoming")
+
+            print("Waiting for all messages to be processed")
+            await asyncio.gather(*self.tasks, return_exceptions=True)
+
+            await channel.close()
+            await connection.close()
 
     async def message_consumer(
         self, aio_pika_message: aio_pika.abc.AbstractIncomingMessage
@@ -244,37 +234,56 @@ async def none_context() -> AsyncGenerator[None, None]:
     yield
 
 
-def create_messagebus_worker(app: Microservice, config: AioPikaWorkerConfig) -> None:
-    container = Container(app)
+class MessageBusWorker:
+    def __init__(self, app: Microservice, config: AioPikaWorkerConfig) -> None:
+        self.app = app
+        self.config = config
+        self.container = Container(app)
+        self.lifecycle = AppLifecycle(app, self.container)
+        self.combined_messagebus_incoming_map: MESSAGEBUS_INCOMING_MAP = {}
 
-    combined_messagebus_incoming_map: MESSAGEBUS_INCOMING_MAP = {}
+        self.uow_context_provider = asynccontextmanager(
+            UnitOfWorkContextProvider(app=app, container=self.container)
+        )
 
-    uow_context_provider = asynccontextmanager(
-        UnitOfWorkContextProvider(app=app, container=container)
-    )
+        self.consumer = AioPikaMicroserviceConsumer(
+            config=self.config,
+            incoming_map=self.combined_messagebus_incoming_map,
+            uow_context_provider=self.uow_context_provider,
+            app_lifetime=self.lifecycle,
+        )
 
-    for instance_type in app.controllers:
-        controller = MessageBusController.get_messagebus(instance_type)
+    async def start_async(self) -> None:
 
-        if controller is None:
-            continue
+        async with self.lifecycle():
+            for instance_type in self.app.controllers:
+                controller = MessageBusController.get_messagebus(instance_type)
 
-        instance: Any = container.get_by_type(instance_type)
+                if controller is None:
+                    continue
 
-        factory = controller.get_messagebus_factory()(instance)
+                instance: Any = self.container.get_by_type(instance_type)
 
-        for topic, handler in factory.items():
-            if topic in combined_messagebus_incoming_map:
-                logging.warning(
-                    "Topic '%s' already registered by another controller" % topic
-                )
-            combined_messagebus_incoming_map[topic] = handler
+                factory = controller.get_messagebus_factory()(instance)
 
-        factory
+                for topic, consumer in factory.items():
+                    if topic in self.combined_messagebus_incoming_map:
+                        logging.warning(
+                            "Topic '%s' already registered by another controller"
+                            % topic
+                        )
+                    self.combined_messagebus_incoming_map[topic] = consumer
 
-    AioPikaMicroserviceProvider(
-        config=config,
-        incoming_map=combined_messagebus_incoming_map,
-        uow_context_provider=uow_context_provider,
-        app_lifetime=AppLifecycle(app, container),
-    ).start_consumer()
+            await self.consumer.consume()
+
+    def start_sync(self) -> None:
+
+        def on_shutdown(loop: asyncio.AbstractEventLoop) -> None:
+            logging.info("Shutting down")
+            self.consumer.shutdown_event.set()
+
+        with asyncio.Runner(loop_factory=uvloop.new_event_loop) as runner:
+            runner.get_loop().add_signal_handler(
+                signal.SIGINT, on_shutdown, runner.get_loop()
+            )
+            runner.run(self.consumer.consume())

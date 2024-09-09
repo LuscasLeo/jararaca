@@ -57,7 +57,6 @@ class Scheduler:
         self.backend = backend
         self.config = config
         self.container = Container(self.app)
-        self.scheduled_actions = extract_scheduled_actions(app, self.container)
         self.uow_provider = asynccontextmanager(
             UnitOfWorkContextProvider(app, self.container)
         )
@@ -120,8 +119,10 @@ class Scheduler:
         async def run_scheduled_actions() -> None:
 
             async with self.lifceycle():
+                scheduled_actions = extract_scheduled_actions(self.app, self.container)
+
                 while True:
-                    for func, scheduled_action in self.scheduled_actions:
+                    for func, scheduled_action in scheduled_actions:
                         if self.shutdown_event.is_set():
                             break
 

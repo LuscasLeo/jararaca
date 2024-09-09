@@ -22,22 +22,34 @@ class HttpAppLifecycle:
 
     @asynccontextmanager
     async def __call__(self, api: FastAPI) -> AsyncGenerator[None, None]:
-
-        websocket_interceptors = [
-            interceptor
-            for interceptor in self.lifecycle.app.interceptors
-            if isinstance(interceptor, WebSocketInterceptor)
-        ]
-
-        for interceptor in websocket_interceptors:
-            router = interceptor.get_ws_router(
-                self.lifecycle.app, self.lifecycle.container, self.uow_provider
-            )
-
-            api.include_router(router)
-
         async with self.lifecycle():
-            yield
+
+            websocket_interceptors = [
+                interceptor
+                for interceptor in self.lifecycle.initialized_interceptors
+                if isinstance(interceptor, WebSocketInterceptor)
+            ]
+
+            for interceptor in websocket_interceptors:
+                router = interceptor.get_ws_router(
+                    self.lifecycle.app, self.lifecycle.container, self.uow_provider
+                )
+
+                api.include_router(router)
+
+                for controller_t in self.lifecycle.app.controllers:
+                    controller = RestController.get_controller(controller_t)
+
+                    if controller is None:
+                        continue
+
+                    instance: Any = self.lifecycle.container.get_by_type(controller_t)
+
+                    router = controller.get_router_factory()(instance)
+
+                    api.include_router(router)
+
+                yield
 
 
 def create_http_server(
@@ -50,29 +62,15 @@ def create_http_server(
 
     uow_provider = UnitOfWorkContextProvider(app, container)
 
+    lifespan = HttpAppLifecycle(
+        AppLifecycle(app, container),
+        uow_provider,
+    )
+
     fastapi_app = (
-        factory(
-            HttpAppLifecycle(
-                AppLifecycle(app, container),
-                uow_provider,
-            )
-        )
-        if factory is not None
-        else FastAPI()
+        factory(lifespan) if factory is not None else FastAPI(lifespan=lifespan)
     )
 
     fastapi_app.router.dependencies.append(Depends(uow_provider))
-
-    for controller_t in app.controllers:
-        controller = RestController.get_controller(controller_t)
-
-        if controller is None:
-            continue
-
-        instance: Any = container.get_by_type(controller_t)
-
-        router = controller.get_router_factory()(instance)
-
-        fastapi_app.include_router(router)
 
     return fastapi_app
