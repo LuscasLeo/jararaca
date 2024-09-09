@@ -37,19 +37,19 @@ class HttpAppLifecycle:
 
                 api.include_router(router)
 
-                for controller_t in self.lifecycle.app.controllers:
-                    controller = RestController.get_controller(controller_t)
+            for controller_t in self.lifecycle.app.controllers:
+                controller = RestController.get_controller(controller_t)
 
-                    if controller is None:
-                        continue
+                if controller is None:
+                    continue
 
-                    instance: Any = self.lifecycle.container.get_by_type(controller_t)
+                instance: Any = self.lifecycle.container.get_by_type(controller_t)
 
-                    router = controller.get_router_factory()(instance)
+                router = controller.get_router_factory()(instance)
 
-                    api.include_router(router)
+                api.include_router(router)
 
-                yield
+            yield
 
 
 def create_http_server(
