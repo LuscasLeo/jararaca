@@ -2,6 +2,15 @@ from jararaca.observability.interceptor import (
     ObservabilityInterceptor,
     OtelObservabilityProvider,
 )
+from jararaca.rpc.http.decorators import Body
+from jararaca.rpc.http.decorators import Delete as HttpDelete
+from jararaca.rpc.http.decorators import Get as HttpGet
+from jararaca.rpc.http.decorators import Header, HttpMapping
+from jararaca.rpc.http.decorators import Patch as HttpPatch
+from jararaca.rpc.http.decorators import PathParam
+from jararaca.rpc.http.decorators import Post as HttpPost
+from jararaca.rpc.http.decorators import Put as HttpPut
+from jararaca.rpc.http.decorators import Query, RequestAttribute, RestClient
 
 from .core.providers import ProviderSpec, Token
 from .di import Container
@@ -50,6 +59,18 @@ from .scheduler.decorators import ScheduledAction
 from .tools.app_config.interceptor import AppConfigurationInterceptor
 
 __all__ = [
+    "HttpMapping",
+    "RequestAttribute",
+    "Body",
+    "Query",
+    "Header",
+    "PathParam",
+    "RestClient",
+    "HttpPost",
+    "HttpGet",
+    "HttpPatch",
+    "HttpPut",
+    "HttpDelete",
     "ObservabilityInterceptor",
     "OtelObservabilityProvider",
     "QueryInjector",
