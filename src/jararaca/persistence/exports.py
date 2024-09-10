@@ -1,5 +1,5 @@
-from .base import Base
+from .base import BaseEntity
 
 __all__ = [
-    "Base",
+    "BaseEntity",
 ]
