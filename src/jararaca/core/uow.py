@@ -2,6 +2,7 @@ from contextlib import asynccontextmanager
 from typing import AsyncGenerator, Sequence
 
 from jararaca.microservice import (
+    AppContext,
     AppInterceptor,
     Container,
     Microservice,
@@ -15,7 +16,7 @@ class ContainerInterceptor(AppInterceptor):
         self.container = container
 
     @asynccontextmanager
-    async def intercept(self) -> AsyncGenerator[None, None]:
+    async def intercept(self, app_context: AppContext) -> AsyncGenerator[None, None]:
 
         with provide_container(self.container):
             yield None
@@ -46,12 +47,13 @@ class UnitOfWorkContextProvider:
 
         return interceptors
 
-    async def __call__(self) -> AsyncGenerator[None, None]:
+    @asynccontextmanager
+    async def __call__(self, app_context: AppContext) -> AsyncGenerator[None, None]:
 
         app_interceptors = self.factory_app_interceptors()
 
-        ctxs = [self.container_interceptor.intercept()] + [
-            interceptor.intercept() for interceptor in app_interceptors
+        ctxs = [self.container_interceptor.intercept(app_context)] + [
+            interceptor.intercept(app_context) for interceptor in app_interceptors
         ]
 
         for ctx in ctxs:

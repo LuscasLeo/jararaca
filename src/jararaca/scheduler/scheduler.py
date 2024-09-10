@@ -11,7 +11,7 @@ from croniter import croniter
 from jararaca.core.uow import UnitOfWorkContextProvider
 from jararaca.di import Container
 from jararaca.lifecycle import AppLifecycle
-from jararaca.microservice import Microservice
+from jararaca.microservice import Microservice, SchedulerAppContext
 from jararaca.scheduler.decorators import ScheduledAction
 
 
@@ -57,9 +57,7 @@ class Scheduler:
         self.backend = backend
         self.config = config
         self.container = Container(self.app)
-        self.uow_provider = asynccontextmanager(
-            UnitOfWorkContextProvider(app, self.container)
-        )
+        self.uow_provider = UnitOfWorkContextProvider(app, self.container)
 
         self.tasks: set[asyncio.Task[Any]] = set()
         self.lock = asyncio.Lock()
@@ -101,7 +99,14 @@ class Scheduler:
             ctx = none_context()
 
         try:
-            async with self.uow_provider():
+            async with self.uow_provider(
+                SchedulerAppContext(
+                    action=func,
+                    scheduled_to=next_run,
+                    cron_expression=scheduled_action.cron,
+                    triggered_at=datetime.now(UTC),
+                )
+            ):
                 try:
                     async with ctx:
                         await func()

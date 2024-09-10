@@ -19,6 +19,11 @@ sqlalchemy = "^2.0.34"
 croniter = "^3.0.3"
 redis = "^5.0.8"
 websockets = "^13.0.1"
+opentelemetry-exporter-otlp-proto-http = "^1.27.0"
+opentelemetry-api = "^1.27.0"
+opentelemetry-sdk = "^1.27.0"
+opentelemetry-distro = "^0.48b0"
+opentelemetry-exporter-otlp = "^1.27.0"
 
 
 [tool.poetry.group.lint.dependencies]
@@ -37,6 +42,7 @@ mkdocs-material = "^9.5.34"
 
 [tool.poetry.group.dev.dependencies]
 httptools = "^0.6.1"
+httpx = "^0.27.2"
 
 [build-system]
 requires = ["poetry-core"]
@@ -49,6 +55,8 @@ profile = "black"
 [tool.mypy]
 python_version = "3.11"
 strict = true
+# mypy_path = "src"
+
 
 # JARARACA CONFIG
 [tool.poetry.scripts]

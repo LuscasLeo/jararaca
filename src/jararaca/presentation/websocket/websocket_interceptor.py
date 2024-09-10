@@ -11,9 +11,11 @@ from fastapi.websockets import WebSocket, WebSocketState
 from jararaca.core.uow import UnitOfWorkContextProvider
 from jararaca.di import Container
 from jararaca.microservice import (
+    AppContext,
     AppInterceptor,
     AppInterceptorWithLifecycle,
     Microservice,
+    WebSocketAppContext,
 )
 from jararaca.presentation.decorators import RestController
 from jararaca.presentation.websocket.decorators import WebSocketEndpoint
@@ -148,20 +150,20 @@ class WebSocketInterceptor(AppInterceptor, AppInterceptorWithLifecycle):
         self.shutdown_event.set()
 
     @asynccontextmanager
-    async def intercept(self) -> AsyncGenerator[None, None]:
+    async def intercept(self, app_context: AppContext) -> AsyncGenerator[None, None]:
 
         with provide_ws_manager(self.connection_manager):
             yield
 
     def __wrap_with_uow_context_provider(
         self, uow: UnitOfWorkContextProvider, func: Callable[..., Any]
-    ) -> Callable[..., Awaitable[Any]]:
-        ctx_manager = asynccontextmanager(uow)
+    ) -> Callable[[WebSocket], Awaitable[Any]]:
+        ctx_manager = uow
 
         @wraps(func)
-        async def wrapper(*args: Any, **kwargs: Any) -> Any:
-            async with ctx_manager():
-                return await func(*args, **kwargs)
+        async def wrapper(ws: WebSocket) -> Any:
+            async with ctx_manager(WebSocketAppContext(websocket=ws)):
+                return await func(ws)
 
         return wrapper
 
