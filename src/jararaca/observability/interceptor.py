@@ -115,12 +115,14 @@ class OtelObservabilityProvider(ObservabilityProvider):
         logs_exporter: LogExporter,
         span_exporter: SpanExporter,
         meter_exporter: MeterExporter,
+        meter_export_interval: int = 5000,
     ) -> None:
         self.app_name = app_name
         self.logs_exporter = logs_exporter
         self.span_exporter = span_exporter
         self.meter_exporter = meter_exporter
         self.tracing_provider = OtelTracingContextProviderFactory()
+        self.meter_export_interval = meter_export_interval
 
     @asynccontextmanager
     async def setup(
@@ -163,7 +165,7 @@ class OtelObservabilityProvider(ObservabilityProvider):
 
         ### Setup Metrics
         metric_reader = PeriodicExportingMetricReader(
-            self.meter_exporter, export_interval_millis=1000
+            self.meter_exporter, export_interval_millis=self.meter_export_interval
         )
         meter_provider = MeterProvider(metric_readers=[metric_reader])
 
