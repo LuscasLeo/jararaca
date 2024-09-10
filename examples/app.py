@@ -3,7 +3,10 @@ import logging
 from examples.client import HelloRPC
 from examples.controller import MyController
 from jararaca import Microservice, ProviderSpec, Token
-from jararaca.observability.interceptor import ObservabilityInterceptor
+from jararaca.observability.interceptor import (
+    ObservabilityInterceptor,
+    OtelObservabilityProvider,
+)
 from jararaca.presentation.http_microservice import HttpMicroservice
 from jararaca.presentation.server import create_http_server
 from jararaca.rpc.http.decorators import (
@@ -28,7 +31,11 @@ app = Microservice(
         )
     ],
     controllers=[MyController],
-    interceptors=[ObservabilityInterceptor()],
+    interceptors=[
+        ObservabilityInterceptor(
+            OtelObservabilityProvider.from_url("App-example", "http://localhost:4318")
+        )
+    ],
 )
 
 
