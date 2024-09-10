@@ -19,14 +19,14 @@ class Identifiable(BaseModel, Generic[IDENTIFIABLE_SCHEMA_T]):
 T_BASEMODEL = TypeVar("T_BASEMODEL", bound=BaseModel)
 
 
-class Base(DeclarativeBase): ...
+class BaseEntity(DeclarativeBase): ...
 
 
 def nowutc() -> datetime:
     return datetime.now(UTC)
 
 
-class DatedEntity(Base):
+class DatedEntity(BaseEntity):
     __abstract__ = True
 
     created_at: Mapped[datetime] = mapped_column(
@@ -48,7 +48,7 @@ def recursive_get_dict(obj: Any) -> Any:
         return obj
 
 
-class IdentifiableEntity(Base):
+class IdentifiableEntity(BaseEntity):
     __abstract__ = True
 
     id: Mapped[UUID] = mapped_column(primary_key=True)
@@ -115,7 +115,7 @@ class CRUDOperations(Generic[IDENTIFIABLE_T]):
         )
 
 
-QUERY_ENTITY_T = TypeVar("QUERY_ENTITY_T", bound=Base)
+QUERY_ENTITY_T = TypeVar("QUERY_ENTITY_T", bound=BaseEntity)
 QUERY_FILTER_T = TypeVar("QUERY_FILTER_T")
 
 
@@ -207,9 +207,9 @@ class PaginatedFilter(BaseModel):
 class PaginatedQueryInjector(QueryInjector):
     def inject(
         self,
-        query: Select[Tuple[Base]],
+        query: Select[Tuple[BaseEntity]],
         filter: PaginatedFilter,
-    ) -> Select[Tuple[Base]]:
+    ) -> Select[Tuple[BaseEntity]]:
         return query.offset(filter.offset).limit(filter.limit)
 
 
@@ -259,10 +259,12 @@ class DatetimeCriteria(BaseModel):
 
 class CriteriaBasedAttributeQueryInjector(QueryInjector):
 
-    def __init__(self, entity_type: Type[Base]) -> None:
+    def __init__(self, entity_type: Type[BaseEntity]) -> None:
         self.entity_type = entity_type
 
-    def inject(self, query: Select[Tuple[Base]], filter: Any) -> Select[Tuple[Base]]:
+    def inject(
+        self, query: Select[Tuple[BaseEntity]], filter: Any
+    ) -> Select[Tuple[BaseEntity]]:
 
         attrs = filter.__dict__
 
