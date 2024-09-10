@@ -1,0 +1,18 @@
+{
+    "configurations": [
+        {
+            "name": "Python Debugger: Module",
+            "type": "debugpy",
+            "request": "launch",
+            "module": "uvicorn",
+            "args": [
+                "examples.app:http_app",
+                "--host",
+                "0.0.0.0",
+            ],
+            "env": {
+                "PYTHONPATH": "${workspaceFolder}"
+            }
+        }
+    ]
+}
