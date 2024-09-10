@@ -1,29 +1,49 @@
-from fastapi import Request
-from pydantic import BaseModel
-from jararaca import Microservice, RestController, Get
-from jararaca.observability.decorators import TracedFunc
+import logging
+
+from examples.client import HelloRPC
+from examples.controller import MyController
+from jararaca import Microservice, ProviderSpec, Token
+from jararaca.observability.interceptor import ObservabilityInterceptor
 from jararaca.presentation.http_microservice import HttpMicroservice
 from jararaca.presentation.server import create_http_server
+from jararaca.rpc.http.decorators import (
+    HttpRpcClientBuilder,
+    HTTPXHttpRPCAsyncBackend,
+    TracedRequestMiddleware,
+)
 
-
-class HelloResponse(BaseModel):
-    message: str
-
-
-@RestController("/my")
-class MyController:
-
-    @TracedFunc("hello")
-    @Get("/hello")
-    async def hello(self, request: Request) -> HelloResponse:
-        return HelloResponse(
-            message="Hello %s" % request.query_params.get("name") or "World"
-        )
+logger = logging.getLogger(__name__)
 
 
 app = Microservice(
+    providers=[
+        ProviderSpec(
+            provide=Token(HelloRPC, "HELLO_RPC"),
+            use_value=HttpRpcClientBuilder(
+                HTTPXHttpRPCAsyncBackend(prefix_url="http://localhost:8000"),
+                middlewares=[TracedRequestMiddleware()],
+            ).build(
+                HelloRPC  # type: ignore[type-abstract]
+            ),
+        )
+    ],
     controllers=[MyController],
+    interceptors=[ObservabilityInterceptor()],
 )
 
 
 http_app = create_http_server(HttpMicroservice(app))
+
+
+loggers = logging.root.manager.loggerDict.get("examples")
+
+if isinstance(loggers, logging.PlaceHolder):
+
+    for logger_name in loggers.loggerMap.keys():
+        formatter = logging.Formatter(
+            "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+        )
+        stream_handler = logging.StreamHandler()
+        stream_handler.setFormatter(formatter)
+        logger_name.addHandler(stream_handler)
+        logger_name.setLevel(logging.DEBUG)

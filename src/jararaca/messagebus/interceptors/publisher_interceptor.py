@@ -5,7 +5,7 @@ import aio_pika
 from pydantic import BaseModel
 
 from jararaca.messagebus.publisher import MessagePublisher, provide_message_publisher
-from jararaca.microservice import AppInterceptor
+from jararaca.microservice import AppContext, AppInterceptor
 
 
 class MessageBusConnectionFactory(Protocol):
@@ -24,7 +24,7 @@ class MessageBusPublisherInterceptor(AppInterceptor):
         self.connection_name = connection_name
 
     @asynccontextmanager
-    async def intercept(self) -> AsyncGenerator[None, None]:
+    async def intercept(self, app_context: AppContext) -> AsyncGenerator[None, None]:
         async with self.connection_factory.provide_connection() as connection:
             with provide_message_publisher(self.connection_name, connection):
                 yield

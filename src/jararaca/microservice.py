@@ -2,6 +2,7 @@ import inspect
 from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass, field
+from datetime import datetime
 from typing import (
     TYPE_CHECKING,
     Annotated,
@@ -9,6 +10,7 @@ from typing import (
     AsyncContextManager,
     Callable,
     Generator,
+    Literal,
     Protocol,
     Type,
     cast,
@@ -16,16 +18,53 @@ from typing import (
     runtime_checkable,
 )
 
+from fastapi import Request, WebSocket
+from pydantic import BaseModel
+
 from jararaca.core.providers import ProviderSpec, T, Token
+from jararaca.messagebus import Message
 
 if TYPE_CHECKING:
     from typing_extensions import TypeIs
 
 
+@dataclass
+class SchedulerAppContext:
+    triggered_at: datetime
+    scheduled_to: datetime
+    cron_expression: str
+    action: Callable[..., Any]
+    context_type: Literal["scheduler"] = "scheduler"
+
+
+@dataclass
+class HttpAppContext:
+    request: Request
+    context_type: Literal["http"] = "http"
+
+
+@dataclass
+class MessageBusAppContext:
+    topic: str
+    message: Message[BaseModel]
+    context_type: Literal["message_bus"] = "message_bus"
+
+
+@dataclass
+class WebSocketAppContext:
+    websocket: WebSocket
+    context_type: Literal["websocket"] = "websocket"
+
+
+AppContext = (
+    MessageBusAppContext | HttpAppContext | SchedulerAppContext | WebSocketAppContext
+)
+
+
 @runtime_checkable
 class AppInterceptor(Protocol):
 
-    def intercept(self) -> AsyncContextManager[None]: ...
+    def intercept(self, app_context: AppContext) -> AsyncContextManager[None]: ...
 
 
 class AppInterceptorWithLifecycle(Protocol):

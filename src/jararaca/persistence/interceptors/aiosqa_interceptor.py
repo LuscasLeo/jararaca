@@ -6,7 +6,7 @@ from typing import Any, AsyncGenerator, Generator
 
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
-from jararaca.microservice import AppInterceptor
+from jararaca.microservice import AppContext, AppInterceptor
 
 ctx_session_map = ContextVar[dict[str, AsyncSession]]("ctx_session_map", default={})
 
@@ -50,7 +50,7 @@ class AIOSqlAlchemySessionInterceptor(AppInterceptor):
         self.sessionmaker = async_sessionmaker(self.engine)
 
     @asynccontextmanager
-    async def intercept(self) -> AsyncGenerator[None, None]:
+    async def intercept(self, app_context: AppContext) -> AsyncGenerator[None, None]:
         async with self.sessionmaker() as session:
             with provide_session(self.config.connection_name, session):
                 try:

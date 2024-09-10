@@ -1,14 +1,24 @@
 {
     "configurations": [
         {
+            "name": "Python Debugger: Current File",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${file}",
+            "console": "integratedTerminal"
+        },
+        {
             "name": "Python Debugger: Module",
             "type": "debugpy",
             "request": "launch",
             "module": "uvicorn",
+            "justMyCode": false,
             "args": [
                 "examples.app:http_app",
                 "--host",
                 "0.0.0.0",
+                "--no-access-log",
+                "--log-level=error",
             ],
             "env": {
                 "PYTHONPATH": "${workspaceFolder}"

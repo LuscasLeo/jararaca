@@ -4,7 +4,7 @@ import logging
 import signal
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
-from typing import Any, AsyncContextManager, AsyncGenerator, Callable, Type, get_origin
+from typing import Any, AsyncContextManager, AsyncGenerator, Type, get_origin
 
 import aio_pika
 import uvloop
@@ -19,7 +19,7 @@ from jararaca.messagebus.decorators import (
     IncomingHandler,
     MessageBusController,
 )
-from jararaca.microservice import Microservice
+from jararaca.microservice import MessageBusAppContext, Microservice
 
 
 @dataclass
@@ -82,7 +82,7 @@ class AioPikaMicroserviceConsumer:
         self,
         config: AioPikaWorkerConfig,
         incoming_map: MESSAGEBUS_INCOMING_MAP,
-        uow_context_provider: Callable[..., AsyncContextManager[None]],
+        uow_context_provider: UnitOfWorkContextProvider,
         app_lifetime: AppLifecycle,
     ):
         self.config = config
@@ -201,7 +201,12 @@ class AioPikaMicroserviceConsumer:
         incoming_message_spec = IncomingHandler.get_message_incoming(handler)
         assert incoming_message_spec is not None
 
-        async with self.uow_context_provider():
+        async with self.uow_context_provider(
+            MessageBusAppContext(
+                message=builded_message,
+                topic=topic,
+            )
+        ):
             ctx: AsyncContextManager[Any]
             if incoming_message_spec.timeout is not None:
                 ctx = asyncio.timeout(incoming_message_spec.timeout)
@@ -242,8 +247,8 @@ class MessageBusWorker:
         self.lifecycle = AppLifecycle(app, self.container)
         self.combined_messagebus_incoming_map: MESSAGEBUS_INCOMING_MAP = {}
 
-        self.uow_context_provider = asynccontextmanager(
-            UnitOfWorkContextProvider(app=app, container=self.container)
+        self.uow_context_provider = UnitOfWorkContextProvider(
+            app=app, container=self.container
         )
 
         self.consumer = AioPikaMicroserviceConsumer(

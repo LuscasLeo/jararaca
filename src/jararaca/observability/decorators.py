@@ -3,6 +3,7 @@ from contextvars import ContextVar
 from functools import wraps
 from typing import (
     Any,
+    AsyncContextManager,
     Awaitable,
     Callable,
     ContextManager,
@@ -12,10 +13,24 @@ from typing import (
     TypeVar,
 )
 
+from jararaca.microservice import AppContext
+
+P = ParamSpec("P")
+R = TypeVar("R")
+
 
 class TracingContextProvider(Protocol):
 
-    def __call__(self) -> ContextManager[Any]: ...
+    def __call__(
+        self, trace_name: str, context_attributes: dict[str, str]
+    ) -> ContextManager[Any]: ...
+
+
+class TracingContextProviderFactory(Protocol):
+
+    def root_setup(self, app_context: AppContext) -> AsyncContextManager[None]: ...
+
+    def provide_provider(self, app_context: AppContext) -> TracingContextProvider: ...
 
 
 tracing_ctx_provider_ctxv = ContextVar[TracingContextProvider]("tracing_ctx_provider")
@@ -40,10 +55,6 @@ def get_tracing_ctx_provider() -> TracingContextProvider | None:
     return tracing_ctx_provider_ctxv.get(None)
 
 
-P = ParamSpec("P")
-R = TypeVar("R")
-
-
 def default_trace_mapper(*args: Any, **kwargs: Any) -> dict[str, str]:
     return {
         "args": str(args),
@@ -56,7 +67,7 @@ class TracedFunc:
     def __init__(
         self,
         trace_name: str,
-        trace_mapper: Callable[P, dict[str, str]] = default_trace_mapper,
+        trace_mapper: Callable[..., dict[str, str]] = default_trace_mapper,
     ):
         self.trace_name = trace_name
         self.trace_mapper = trace_mapper
@@ -73,7 +84,10 @@ class TracedFunc:
         ) -> R:
 
             if ctx_provider := get_tracing_ctx_provider():
-                with ctx_provider():
+                with ctx_provider(
+                    self.trace_name,
+                    self.trace_mapper(**kwargs),
+                ):
                     return await decorated(*args, **kwargs)
 
             return await decorated(*args, **kwargs)

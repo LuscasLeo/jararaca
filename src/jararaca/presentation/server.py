@@ -1,12 +1,13 @@
 from contextlib import asynccontextmanager
 from typing import Any, AsyncGenerator
 
-from fastapi import Depends, FastAPI
+from fastapi import Depends, FastAPI, Request
 from starlette.types import ASGIApp
 
 from jararaca.core.uow import UnitOfWorkContextProvider
 from jararaca.di import Container
 from jararaca.lifecycle import AppLifecycle
+from jararaca.microservice import HttpAppContext
 from jararaca.presentation.decorators import RestController
 from jararaca.presentation.http_microservice import HttpMicroservice
 from jararaca.presentation.websocket.websocket_interceptor import WebSocketInterceptor
@@ -52,6 +53,16 @@ class HttpAppLifecycle:
             yield
 
 
+class HttpUowContextProviderDependency:
+
+    def __init__(self, uow_provider: UnitOfWorkContextProvider) -> None:
+        self.uow_provider = uow_provider
+
+    async def __call__(self, request: Request) -> AsyncGenerator[None, None]:
+        async with self.uow_provider(HttpAppContext(request=request)):
+            yield
+
+
 def create_http_server(
     http_app: HttpMicroservice,
 ) -> ASGIApp:
@@ -61,6 +72,9 @@ def create_http_server(
     container = Container(app)
 
     uow_provider = UnitOfWorkContextProvider(app, container)
+    http_uow_context_provider_dependency = HttpUowContextProviderDependency(
+        uow_provider
+    )
 
     lifespan = HttpAppLifecycle(
         AppLifecycle(app, container),
@@ -71,6 +85,8 @@ def create_http_server(
         factory(lifespan) if factory is not None else FastAPI(lifespan=lifespan)
     )
 
-    fastapi_app.router.dependencies.append(Depends(uow_provider))
+    fastapi_app.router.dependencies.append(
+        Depends(http_uow_context_provider_dependency)
+    )
 
     return fastapi_app
