@@ -129,6 +129,44 @@ You can setup a scheduled routine that runs a specific task at a specific time o
         )
 ```
 
+### Observability
+
+You can setup Observability Interceptors for logs, traces and metric collection with [OpenTelemetry](https://opentelemetry.io/docs)-based Protocols
+
+```python
+class HelloService:
+    def __init__(
+        self,
+        hello_rpc: Annotated[HelloRPC, Token(HelloRPC, "HELLO_RPC")],
+    ):
+        self.hello_rpc = hello_rpc
+
+    @TracedFunc("ping") # Decorator for tracing
+    async def ping(self) -> HelloResponse:
+        return await self.hello_rpc.ping()
+
+    @TracedFunc("hello-service")
+    async def hello(
+        self,
+        gather: bool,
+    ) -> HelloResponse:
+        now = asyncio.get_event_loop().time()
+        if gather:
+            await asyncio.gather(*[self.random_await(a) for a in range(10)])
+        else:
+            for a in range(10):
+                await self.random_await(a)
+        return HelloResponse(
+            message="Elapsed time: {}".format(asyncio.get_event_loop().time() - now)
+        )
+
+    @TracedFunc("random-await")
+    async def random_await(self, index: int) -> None:
+        logger.info("Random await %s", index, extra={"index": index})
+        await asyncio.sleep(random.randint(1, 3))
+        logger.info("Random await %s done", index, extra={"index": index})
+```
+
 ## Installation
 
 ```bash
