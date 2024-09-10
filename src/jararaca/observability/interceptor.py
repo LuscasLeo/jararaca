@@ -211,29 +211,5 @@ class ObservabilityInterceptor(AppInterceptor, AppInterceptorWithLifecycle):
         self, app: Microservice, container: Container
     ) -> AsyncGenerator[None, None]:
 
-        # resource = Resource(attributes={SERVICE_NAME: "jararaca-example"})
-        # span_exporter = SpanExporter(endpoint="http://localhost:4318/v1/traces")
-
-        # provider = TracerProvider(resource=resource)
-        # trace.set_tracer_provider(provider)
-
-        # span_processor = BatchSpanProcessor(span_exporter)
-
-        # provider.add_span_processor(span_processor)
-
-        # ####
-
-        # logs_exporter = LogExporter(endpoint="http://localhost:4318/v1/logs")
-        # set_logger_provider(logger_provider := LoggerProvider(resource=resource))
-        # logger_provider.add_log_record_processor(BatchLogRecordProcessor(logs_exporter))
-
-        # logging_handler = LoggingHandler(
-        #     level=logging.DEBUG, logger_provider=logger_provider
-        # )
-
-        # logging.getLogger().addHandler(logging_handler)
-        # logging.getLogger().addHandler(logging.StreamHandler())
-        # logging.getLogger().setLevel(logging.DEBUG)
-        # logging.getLogger().info("Logging initialized")
         async with self.observability_provider.setup(app, container):
             yield
