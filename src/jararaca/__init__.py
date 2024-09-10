@@ -1,3 +1,8 @@
+from jararaca.observability.interceptor import (
+    ObservabilityInterceptor,
+    OtelObservabilityProvider,
+)
+
 from .core.providers import ProviderSpec, Token
 from .di import Container
 from .messagebus import Message
@@ -45,6 +50,8 @@ from .scheduler.decorators import ScheduledAction
 from .tools.app_config.interceptor import AppConfigurationInterceptor
 
 __all__ = [
+    "ObservabilityInterceptor",
+    "OtelObservabilityProvider",
     "QueryInjector",
     "HttpMicroservice",
     "use_current_container",
