@@ -199,3 +199,7 @@ jararaca scheduler app:app
 ```bash
 jararaca gen-tsi app.main:app app.ts
 ```
+
+### Documentation
+
+Documentation is under construction [here](https://luscasleo.github.io/jararaca/).
