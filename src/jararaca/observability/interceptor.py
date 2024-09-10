@@ -161,10 +161,6 @@ class OtelObservabilityProvider(ObservabilityProvider):
             "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
         )
 
-        stream_handler = logging.StreamHandler()
-        stream_handler.setFormatter(formatter)
-        logging.getLogger().addHandler(stream_handler)
-
         ### Setup Metrics
         metric_reader = PeriodicExportingMetricReader(
             self.meter_exporter, export_interval_millis=1000
