@@ -89,4 +89,8 @@ def create_http_server(
         Depends(http_uow_context_provider_dependency)
     )
 
+    for middleware in http_app.middlewares:
+        middleware_instance = container.get_by_type(middleware)
+        fastapi_app.router.dependencies.append(Depends(middleware_instance.intercept))
+
     return fastapi_app
