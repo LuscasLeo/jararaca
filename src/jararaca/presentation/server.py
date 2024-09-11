@@ -17,10 +17,14 @@ from jararaca.presentation.websocket.websocket_interceptor import WebSocketInter
 class HttpAppLifecycle:
 
     def __init__(
-        self, lifecycle: AppLifecycle, uow_provider: UnitOfWorkContextProvider
+        self,
+        http_app: HttpMicroservice,
+        lifecycle: AppLifecycle,
+        uow_provider: UnitOfWorkContextProvider,
     ) -> None:
         self.lifecycle = lifecycle
         self.uow_provider = uow_provider
+        self.http_app = http_app
 
     @asynccontextmanager
     async def __call__(self, api: FastAPI) -> AsyncGenerator[None, None]:
@@ -58,6 +62,14 @@ class HttpAppLifecycle:
 
                 api.include_router(router)
 
+                for middleware in self.http_app.middlewares:
+                    middleware_instance = self.lifecycle.container.get_by_type(
+                        middleware
+                    )
+                    api.router.dependencies.append(
+                        Depends(middleware_instance.intercept)
+                    )
+
             yield
 
 
@@ -85,6 +97,7 @@ def create_http_server(
     )
 
     lifespan = HttpAppLifecycle(
+        http_app,
         AppLifecycle(app, container),
         uow_provider,
     )
@@ -96,9 +109,5 @@ def create_http_server(
     fastapi_app.router.dependencies.append(
         Depends(http_uow_context_provider_dependency)
     )
-
-    for middleware in http_app.middlewares:
-        middleware_instance = container.get_by_type(middleware)
-        fastapi_app.router.dependencies.append(Depends(middleware_instance.intercept))
 
     return fastapi_app
