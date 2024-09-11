@@ -2,7 +2,7 @@ import asyncio
 import logging
 import os
 import random
-from typing import Annotated
+from typing import Annotated, Any, AsyncGenerator
 
 from fastapi import Request
 from opentelemetry import metrics
@@ -12,6 +12,7 @@ from examples.schemas import HelloResponse
 from jararaca import Get, RestController, Token
 from jararaca.observability.decorators import TracedFunc
 from jararaca.presentation.decorators import Post
+from jararaca.presentation.http_microservice import HttpMiddleware
 
 logger = logging.getLogger(__name__)
 
@@ -58,7 +59,19 @@ class HelloService:
         logger.info("Random await %s done", index, extra={"index": index})
 
 
-@RestController("/my")
+class AuthMiddleware(HttpMiddleware):
+
+    async def intercept(
+        self,
+    ) -> AsyncGenerator[None, Any]:
+        logger.info("AuthMiddleware")
+        yield
+
+
+@RestController(
+    "/my",
+    middlewares=[AuthMiddleware],
+)
 class MyController:
 
     def __init__(
