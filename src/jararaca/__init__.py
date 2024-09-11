@@ -1,7 +1,4 @@
-from jararaca.observability.interceptor import (
-    ObservabilityInterceptor,
-    OtelObservabilityProvider,
-)
+from jararaca.observability.interceptor import ObservabilityInterceptor
 from jararaca.rpc.http.decorators import Body
 from jararaca.rpc.http.decorators import Delete as HttpDelete
 from jararaca.rpc.http.decorators import Get as HttpGet
@@ -47,7 +44,7 @@ from .persistence.interceptors.aiosqa_interceptor import (
     use_session,
 )
 from .presentation.decorators import Delete, Get, Patch, Post, Put, RestController
-from .presentation.http_microservice import HttpMicroservice
+from .presentation.http_microservice import HttpMicroservice, HttpMiddleware
 from .presentation.server import create_http_server
 from .presentation.websocket.decorators import WebSocketEndpoint
 from .presentation.websocket.redis import RedisWebSocketConnectionBackend
@@ -59,6 +56,7 @@ from .scheduler.decorators import ScheduledAction
 from .tools.app_config.interceptor import AppConfigurationInterceptor
 
 __all__ = [
+    "HttpMiddleware",
     "HttpMapping",
     "RequestAttribute",
     "Body",
@@ -72,7 +70,6 @@ __all__ = [
     "HttpPut",
     "HttpDelete",
     "ObservabilityInterceptor",
-    "OtelObservabilityProvider",
     "QueryInjector",
     "HttpMicroservice",
     "use_current_container",
