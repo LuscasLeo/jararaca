@@ -139,11 +139,6 @@ class OtelObservabilityProvider(ObservabilityProvider):
             and "localhost" not in record.message
         )
         logging.getLogger().addHandler(logging_handler)
-        logging.getLogger().setLevel(logging.DEBUG)
-
-        formatter = logging.Formatter(
-            "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
-        )
 
         ### Setup Metrics
         metric_reader = PeriodicExportingMetricReader(
