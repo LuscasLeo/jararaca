@@ -3,6 +3,9 @@ from typing import Any, Callable, TypedDict, TypeVar, cast
 
 from fastapi import APIRouter
 from fastapi.exceptions import FastAPIError
+from fastapi.params import Depends
+
+from jararaca.presentation.http_microservice import HttpMiddleware
 
 DECORATED_FUNC = TypeVar("DECORATED_FUNC", bound=Callable[..., Any])
 DECORATED_CLASS = TypeVar("DECORATED_CLASS", bound=Any)
@@ -15,22 +18,32 @@ class RestController:
     REST_CONTROLLER_ATTR = "__rest_controller__"
 
     def __init__(
-        self, path: str = "", options: ControllerOptions | None = None
+        self,
+        path: str = "",
+        options: ControllerOptions | None = None,
+        middlewares: list[type[HttpMiddleware]] = [],
+        router_factory: Callable[[Any, list[Depends]], APIRouter] | None = None,
     ) -> None:
         self.path = path
         self.options = options
-        self.router_factory: Callable[[Any], APIRouter] | None = None
+        self.router_factory = router_factory
+        self.middlewares = middlewares
 
-    def get_router_factory(self) -> Callable[[DECORATED_CLASS], APIRouter]:
+    def get_router_factory(
+        self,
+    ) -> Callable[[DECORATED_CLASS, list[Depends]], APIRouter]:
         if self.router_factory is None:
             raise Exception("Router factory is not set")
         return self.router_factory
 
     def __call__(self, cls: type[DECORATED_CLASS]) -> type[DECORATED_CLASS]:
 
-        def router_factory(instance: DECORATED_CLASS) -> APIRouter:
+        def router_factory(
+            instance: DECORATED_CLASS, dependencies: list[Depends]
+        ) -> APIRouter:
             router = APIRouter(
                 prefix=self.path,
+                dependencies=dependencies,
                 **(self.options or {}),
             )
 
