@@ -1,5 +1,5 @@
 from dataclasses import dataclass, field
-from typing import Any, AsyncContextManager, Callable, Protocol
+from typing import Any, AsyncGenerator, Callable, Protocol
 
 from fastapi import FastAPI
 from starlette.types import Lifespan
@@ -9,7 +9,7 @@ from jararaca.microservice import Microservice
 
 class HttpMiddleware(Protocol):
 
-    def intercept(self, *args: Any, **kwargs: Any) -> AsyncContextManager[None]: ...
+    def intercept(self, *args: Any, **kwargs: Any) -> AsyncGenerator[None, Any]: ...
 
 
 @dataclass
