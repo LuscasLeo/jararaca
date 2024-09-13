@@ -1,4 +1,5 @@
 import inspect
+import typing
 from dataclasses import dataclass
 from datetime import date, datetime
 from decimal import Decimal
@@ -71,7 +72,7 @@ def get_field_type_for_ts(field_type: Any) -> Any:
         return field_type.__name__
     if get_origin(field_type) == Literal:
         return " | ".join([f'"{x}"' for x in field_type.__args__])
-    if get_origin(field_type) == UnionType:
+    if get_origin(field_type) == UnionType or get_origin(field_type) == typing.Union:
         return " | ".join([get_field_type_for_ts(x) for x in field_type.__args__])
     if (get_origin(field_type) == Annotated) and (len(field_type.__args__) > 0):
         return get_field_type_for_ts(field_type.__args__[0])
