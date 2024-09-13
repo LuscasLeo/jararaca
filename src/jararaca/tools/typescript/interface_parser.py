@@ -2,6 +2,7 @@ import inspect
 from dataclasses import dataclass
 from datetime import date, datetime
 from decimal import Decimal
+from enum import Enum
 from io import StringIO
 from types import NoneType, UnionType
 from typing import Annotated, Any, Generic, Literal, Type, TypeVar, get_origin
@@ -85,8 +86,8 @@ def get_generic_args(field_type: Any) -> Any:
     return field_type.__parameters__
 
 
-def parse_basemodel_to_typescript_interface(
-    basemodel_type: Type[BaseModel],
+def parse_type_to_typescript_interface(
+    basemodel_type: Type[Any],
 ) -> tuple[set[type], str]:
     string_builder = StringIO()
     mapped_types: set[type] = set()
@@ -94,6 +95,14 @@ def parse_basemodel_to_typescript_interface(
     inherited_classes = get_inherited_classes(basemodel_type)
 
     mapped_types.update(inherited_classes)
+
+    if Enum in inherited_classes:
+        return (
+            set(),
+            f"export enum {basemodel_type.__name__} {{\n"
+            + "\n ".join([f'\t{x.value} = "{x.value}",' for x in basemodel_type])
+            + "\n}\n",
+        )
 
     extends_expression = (
         f" extends {', '.join([get_field_type_for_ts(inherited_class) for inherited_class in inherited_classes])}"
@@ -114,12 +123,13 @@ def parse_basemodel_to_typescript_interface(
         string_builder.write(
             f"  {snake_to_camel(field_name)}: {get_field_type_for_ts(field)};\n"
         )
+
     string_builder.write("}\n")
 
     return mapped_types, string_builder.getvalue()
 
 
-def get_inherited_classes(basemodel_type: Type[BaseModel]) -> list[Type[BaseModel]]:
+def get_inherited_classes(basemodel_type: Type[Any]) -> list[Type[Any]]:
     return [
         base_class
         for base_class in basemodel_type.__bases__
@@ -174,7 +184,7 @@ export abstract class HttpService {
     while len(backlog) > 0:
         t = backlog.pop()
         if not is_primitive(t):
-            new_types, text = parse_basemodel_to_typescript_interface(t)
+            new_types, text = parse_type_to_typescript_interface(t)
             final_buffer.write(text)
 
             processed_types.add(t)
@@ -199,6 +209,7 @@ def is_primitive(field_type: Any) -> bool:
             date,
             datetime,
             object,
+            Enum,
         ]
         or get_origin(field_type) in [list, dict, tuple, Literal, UnionType]
         or isinstance(
@@ -213,6 +224,7 @@ def is_primitive(field_type: Any) -> bool:
                 Decimal,
                 date,
                 datetime,
+                Enum,
             ),
         )
     )
@@ -529,3 +541,15 @@ def extract_all_envolved_types(field_type: Any) -> set[Any]:
             mapped_types.update(extract_all_envolved_types(arg))
 
     return mapped_types
+
+
+class TableType(str, Enum):
+    PORTABILIDADE = "PORTABILIDADE"
+    PORT_MAIS_REFINANCIAMENTO = "PORT_MAIS_REFINANCIAMENTO"
+
+
+@RestController("/test")
+class TestController:
+    @HttpMapping(method="GET", path="/test/{id}")
+    def get_test(self, test: TableType) -> TableType:
+        raise NotImplementedError()
