@@ -21,6 +21,8 @@ from jararaca.messagebus.decorators import (
 )
 from jararaca.microservice import MessageBusAppContext, Microservice
 
+logger = logging.getLogger(__name__)
+
 
 @dataclass
 class AioPikaWorkerConfig:
@@ -83,7 +85,6 @@ class AioPikaMicroserviceConsumer:
         config: AioPikaWorkerConfig,
         incoming_map: MESSAGEBUS_INCOMING_MAP,
         uow_context_provider: UnitOfWorkContextProvider,
-        app_lifetime: AppLifecycle,
     ):
         self.config = config
         self.incoming_map = incoming_map
@@ -91,42 +92,39 @@ class AioPikaMicroserviceConsumer:
         self.shutdown_event = asyncio.Event()
         self.lock = asyncio.Lock()
         self.tasks: set[asyncio.Task[Any]] = set()
-        self.app_lifetime = app_lifetime
-
-    # def start_consumer(self) -> None:
 
     async def consume(self) -> None:
-        async with self.app_lifetime():
-            connection = await aio_pika.connect_robust(self.config.url)
 
-            channel = await connection.channel()
+        connection = await aio_pika.connect_robust(self.config.url)
 
-            await channel.set_qos(prefetch_count=self.config.prefetch_count)
+        channel = await connection.channel()
 
-            topic_exchange = await channel.declare_exchange(
-                self.config.exchange, type="topic"
-            )
+        await channel.set_qos(prefetch_count=self.config.prefetch_count)
 
-            queue = await channel.declare_queue(self.config.queue)
+        topic_exchange = await channel.declare_exchange(
+            self.config.exchange, type="topic"
+        )
 
-            topics = [*self.incoming_map.keys()]
+        queue = await channel.declare_queue(self.config.queue)
 
-            for topic in topics:
-                await queue.bind(topic_exchange, routing_key=topic)
+        topics = [*self.incoming_map.keys()]
 
-            await queue.consume(self.message_consumer)
+        for topic in topics:
+            await queue.bind(topic_exchange, routing_key=topic)
 
-            await self.shutdown_event.wait()
-            print("Worker shutting down")
+        await queue.consume(self.message_consumer)
 
-            async with self.lock:
-                print("Stopping task incoming")
+        await self.shutdown_event.wait()
+        logger.info("Worker shutting down")
 
-            print("Waiting for all messages to be processed")
-            await asyncio.gather(*self.tasks, return_exceptions=True)
+        async with self.lock:
+            logger.info("Stopping task incoming")
 
-            await channel.close()
-            await connection.close()
+        logger.info("Waiting for all messages to be processed")
+        await asyncio.gather(*self.tasks, return_exceptions=True)
+
+        await channel.close()
+        await connection.close()
 
     async def message_consumer(
         self, aio_pika_message: aio_pika.abc.AbstractIncomingMessage
@@ -245,21 +243,21 @@ class MessageBusWorker:
         self.config = config
         self.container = Container(app)
         self.lifecycle = AppLifecycle(app, self.container)
-        self.combined_messagebus_incoming_map: MESSAGEBUS_INCOMING_MAP = {}
 
         self.uow_context_provider = UnitOfWorkContextProvider(
             app=app, container=self.container
         )
 
-        self.consumer = AioPikaMicroserviceConsumer(
-            config=self.config,
-            incoming_map=self.combined_messagebus_incoming_map,
-            uow_context_provider=self.uow_context_provider,
-            app_lifetime=self.lifecycle,
-        )
+        self._consumer: AioPikaMicroserviceConsumer | None = None
+
+    @property
+    def consumer(self) -> AioPikaMicroserviceConsumer:
+        if self._consumer is None:
+            raise RuntimeError("Consumer not started")
+        return self._consumer
 
     async def start_async(self) -> None:
-
+        combined_messagebus_incoming_map: MESSAGEBUS_INCOMING_MAP = {}
         async with self.lifecycle():
             for instance_type in self.app.controllers:
                 controller = MessageBusController.get_messagebus(instance_type)
@@ -271,15 +269,21 @@ class MessageBusWorker:
 
                 factory = controller.get_messagebus_factory()(instance)
 
-                for topic, consumer in factory.items():
-                    if topic in self.combined_messagebus_incoming_map:
+                for topic, consumer_func in factory.items():
+                    if topic in combined_messagebus_incoming_map:
                         logging.warning(
                             "Topic '%s' already registered by another controller"
                             % topic
                         )
-                    self.combined_messagebus_incoming_map[topic] = consumer
+                    combined_messagebus_incoming_map[topic] = consumer_func
 
-            await self.consumer.consume()
+            consumer = self._consumer = AioPikaMicroserviceConsumer(
+                config=self.config,
+                incoming_map=combined_messagebus_incoming_map,
+                uow_context_provider=self.uow_context_provider,
+            )
+
+            await consumer.consume()
 
     def start_sync(self) -> None:
 
@@ -291,4 +295,4 @@ class MessageBusWorker:
             runner.get_loop().add_signal_handler(
                 signal.SIGINT, on_shutdown, runner.get_loop()
             )
-            runner.run(self.consumer.consume())
+            runner.run(self.start_async())
