@@ -204,7 +204,6 @@ def scheduler(
     type=click.File("w"),
 )
 def gen_tsi(app_path: str, file_path: StreamWriter) -> None:
-    print(app_path)
     app = find_microservice_by_module_path(app_path)
 
     content = write_microservice_to_typescript_interface(app)

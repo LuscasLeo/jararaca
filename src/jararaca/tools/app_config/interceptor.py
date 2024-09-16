@@ -1,3 +1,4 @@
+import logging
 import os
 from contextlib import asynccontextmanager
 from typing import Any, AsyncGenerator, Protocol, Sequence, Tuple, Type
@@ -13,6 +14,8 @@ from jararaca.microservice import (
     Microservice,
 )
 from jararaca.tools.app_config.decorators import RequiresConfig
+
+logger = logging.getLogger(__name__)
 
 
 class ConfigParser(Protocol):
@@ -85,7 +88,7 @@ class AppConfigurationInterceptor(AppInterceptor, AppInterceptorWithLifecycle):
 
         yield
 
-        print("finalizando")
+        logger.info("finalizando")
 
 
 class AppConfigValidationError(Exception):

@@ -14,6 +14,8 @@ from jararaca.lifecycle import AppLifecycle
 from jararaca.microservice import Microservice, SchedulerAppContext
 from jararaca.scheduler.decorators import ScheduledAction
 
+logger = logging.getLogger(__name__)
+
 
 @dataclass
 class SchedulerConfig:
@@ -85,7 +87,9 @@ class Scheduler:
         cron = croniter(scheduled_action.cron, last_check)
         next_run: datetime = cron.get_next(datetime)
         if next_run > datetime.now(UTC):
-            print(f"Skipping {func.__module__}.{func.__qualname__} until {next_run}")
+            logger.info(
+                f"Skipping {func.__module__}.{func.__qualname__} until {next_run}"
+            )
             return
 
         action_specs = ScheduledAction.get_scheduled_action(func)

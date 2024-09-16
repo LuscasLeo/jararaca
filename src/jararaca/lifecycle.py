@@ -1,3 +1,4 @@
+import logging
 from contextlib import asynccontextmanager
 from typing import AsyncContextManager, AsyncGenerator, Sequence
 
@@ -7,6 +8,8 @@ from jararaca.microservice import (
     Microservice,
     is_interceptor_with_lifecycle,
 )
+
+logger = logging.getLogger(__name__)
 
 
 class AppLifecycle:
@@ -30,7 +33,7 @@ class AppLifecycle:
         self.container.fill_providers(False)
         lifecycle_ctxs: list[AsyncContextManager[None]] = []
 
-        print("Initializing interceptors lifecycle")
+        logger.info("Initializing interceptors lifecycle")
         for interceptor_dep in self.app.interceptors:
             interceptor: AppInterceptor
             if not isinstance(interceptor_dep, AppInterceptor):
@@ -54,6 +57,6 @@ class AppLifecycle:
 
         yield
 
-        print("Finalizing interceptors lifecycle")
+        logger.info("Finalizing interceptors lifecycle")
         for ctx in lifecycle_ctxs:
             await ctx.__aexit__(None, None, None)
