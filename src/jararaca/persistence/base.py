@@ -19,7 +19,25 @@ class Identifiable(BaseModel, Generic[IDENTIFIABLE_SCHEMA_T]):
 T_BASEMODEL = TypeVar("T_BASEMODEL", bound=BaseModel)
 
 
-class BaseEntity(DeclarativeBase): ...
+def recursive_get_dict(obj: Any) -> Any:
+    if hasattr(obj, "__dict__"):
+        return {
+            k: recursive_get_dict(v) for k, v in obj.__dict__.items() if k[0] != "_"
+        }
+    elif isinstance(obj, list):
+        return [recursive_get_dict(v) for v in obj]
+    else:
+        return obj
+
+
+class BaseEntity(DeclarativeBase):
+
+    @classmethod
+    def from_basemodel(cls, mutation: T_BASEMODEL) -> "Self":
+        return cls(**mutation.model_dump())
+
+    def to_basemodel(self, model: Type[T_BASEMODEL]) -> T_BASEMODEL:
+        return model.model_validate(recursive_get_dict(self))
 
 
 def nowutc() -> datetime:
@@ -37,17 +55,6 @@ class DatedEntity(BaseEntity):
     )
 
 
-def recursive_get_dict(obj: Any) -> Any:
-    if hasattr(obj, "__dict__"):
-        return {
-            k: recursive_get_dict(v) for k, v in obj.__dict__.items() if k[0] != "_"
-        }
-    elif isinstance(obj, list):
-        return [recursive_get_dict(v) for v in obj]
-    else:
-        return obj
-
-
 class IdentifiableEntity(BaseEntity):
     __abstract__ = True
 
@@ -57,18 +64,11 @@ class IdentifiableEntity(BaseEntity):
     def from_identifiable(cls, model: Identifiable[T_BASEMODEL]) -> "Self":
         return cls(**{"id": model.id, **model.data.model_dump()})
 
-    @classmethod
-    def from_basemodel(cls, mutation: T_BASEMODEL) -> "Self":
-        return cls(**mutation.model_dump())
-
     def to_identifiable(self, MODEL: Type[T_BASEMODEL]) -> Identifiable[T_BASEMODEL]:
 
         return Identifiable[MODEL].model_validate(  # type: ignore[valid-type]
             {"id": self.id, "data": recursive_get_dict(self)}
         )
-
-    def to_basemodel(self, model: Type[T_BASEMODEL]) -> T_BASEMODEL:
-        return model.model_validate(recursive_get_dict(self))
 
 
 IDENTIFIABLE_T = TypeVar("IDENTIFIABLE_T", bound=IdentifiableEntity)
