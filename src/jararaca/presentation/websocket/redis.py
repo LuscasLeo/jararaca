@@ -53,6 +53,8 @@ class RedisWebSocketConnectionBackend(WebSocketConnectionBackend):
         conn: "Redis[bytes]",
         broadcast_pubsub_channel: str,
         send_pubsub_channel: str,
+        consume_broadcast_timeout: int = 1,
+        consume_send_timeout: int = 1,
     ) -> None:
 
         self.redis = conn
@@ -61,6 +63,9 @@ class RedisWebSocketConnectionBackend(WebSocketConnectionBackend):
 
         self.lock = asyncio.Lock()
         self.tasks: set[asyncio.Task[Any]] = set()
+
+        self.consume_broadcast_timeout = consume_broadcast_timeout
+        self.consume_send_timeout = consume_send_timeout
 
     async def broadcast(self, message: bytes) -> None:
         await self.redis.publish(
@@ -98,7 +103,8 @@ class RedisWebSocketConnectionBackend(WebSocketConnectionBackend):
 
             while not shutdown_event.is_set():
                 message: dict[str, Any] | None = await pubsub.get_message(
-                    ignore_subscribe_messages=True
+                    ignore_subscribe_messages=True,
+                    timeout=self.consume_broadcast_timeout,
                 )
 
                 if message is None:
@@ -123,7 +129,7 @@ class RedisWebSocketConnectionBackend(WebSocketConnectionBackend):
             while not shutdown_event.is_set():
 
                 message: dict[str, Any] | None = await pubsub.get_message(
-                    ignore_subscribe_messages=True
+                    ignore_subscribe_messages=True, timeout=self.consume_send_timeout
                 )
 
                 if message is None:
