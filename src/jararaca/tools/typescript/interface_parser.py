@@ -237,8 +237,10 @@ def is_primitive(field_type: Any) -> bool:
             datetime,
             object,
             Enum,
+            set,
         ]
-        or get_origin(field_type) in [list, dict, tuple, Literal, UnionType, Annotated]
+        or get_origin(field_type)
+        in [list, dict, tuple, Literal, UnionType, Annotated, set]
         or isinstance(
             field_type,
             (
@@ -253,6 +255,7 @@ def is_primitive(field_type: Any) -> bool:
                 datetime,
                 Enum,
                 TypeVar,
+                set,
             ),
         )
     )
