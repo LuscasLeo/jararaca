@@ -46,6 +46,8 @@ def get_field_type_for_ts(field_type: Any) -> Any:
         return f"[{', '.join([get_field_type_for_ts(field) for field in field_type.__args__])}]"
     if get_origin(field_type) == list:
         return f"Array<{get_field_type_for_ts(field_type.__args__[0])}>"
+    if get_origin(field_type) == set:
+        return f"Array<{get_field_type_for_ts(field_type.__args__[0])}> // Set"
     if get_origin(field_type) == dict:
         return f"{{[key: {get_field_type_for_ts(field_type.__args__[0])}]: {get_field_type_for_ts(field_type.__args__[1])}}}"
     if inspect.isclass(field_type):
