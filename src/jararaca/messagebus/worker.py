@@ -223,7 +223,8 @@ class AioPikaMicroserviceConsumer:
                             logging.exception(
                                 f"Error processing exception handler: {base_exc} | {nested_exc}"
                             )
-
+                    else:
+                        logging.exception(f"Error processing message on topic {topic}")
                     if incoming_message_spec.nack_on_exception:
                         await aio_pika_message.nack()
                     else:
