@@ -124,6 +124,32 @@ def parse_type_to_typescript_interface(
         string_builder.write(
             f"  {snake_to_camel(field_name)}: {get_field_type_for_ts(field)};\n"
         )
+        mapped_types.update(extract_all_envolved_types(field))
+        mapped_types.add(field)
+
+    ## Loop over computed fields
+    members = inspect.getmembers(basemodel_type, lambda a: isinstance(a, property))
+    for field_name, field in members:
+        if hasattr(field, "fget"):
+            module_func_name = field.fget.__module__ + "." + field.fget.__qualname__
+            if (
+                module_func_name
+                == basemodel_type.__module__
+                + "."
+                + basemodel_type.__name__
+                + "."
+                + field_name
+            ):
+
+                return_type = field.fget.__annotations__.get("return")
+                if return_type is None:
+                    return_type = NoneType
+
+                string_builder.write(
+                    f"  {snake_to_camel(field_name)}: {get_field_type_for_ts(return_type)};\n"
+                )
+                mapped_types.update(extract_all_envolved_types(return_type))
+                mapped_types.add(return_type)
 
     string_builder.write("}\n")
 
@@ -212,7 +238,7 @@ def is_primitive(field_type: Any) -> bool:
             object,
             Enum,
         ]
-        or get_origin(field_type) in [list, dict, tuple, Literal, UnionType]
+        or get_origin(field_type) in [list, dict, tuple, Literal, UnionType, Annotated]
         or isinstance(
             field_type,
             (
@@ -226,6 +252,7 @@ def is_primitive(field_type: Any) -> bool:
                 date,
                 datetime,
                 Enum,
+                TypeVar,
             ),
         )
     )
