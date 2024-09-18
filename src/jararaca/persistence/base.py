@@ -34,7 +34,10 @@ class BaseEntity(DeclarativeBase):
 
     @classmethod
     def from_basemodel(cls, mutation: T_BASEMODEL) -> "Self":
-        return cls(**mutation.model_dump())
+        intersection = set(cls.__annotations__.keys()) & set(
+            mutation.model_fields.keys()
+        )
+        return cls(**{k: getattr(mutation, k) for k in intersection})
 
     def to_basemodel(self, model: Type[T_BASEMODEL]) -> T_BASEMODEL:
         return model.model_validate(recursive_get_dict(self))
