@@ -117,6 +117,10 @@ class Scheduler:
                 except BaseException as e:
                     if action_specs.exception_handler:
                         action_specs.exception_handler(e)
+                    else:
+                        logging.exception(
+                            f"Error in scheduled action {scheduled_action}: {e}"
+                        )
 
         except Exception as e:
             logging.exception(f"Error in scheduled action {scheduled_action}: {e}")
