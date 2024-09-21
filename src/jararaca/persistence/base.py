@@ -1,6 +1,17 @@
 from datetime import UTC, date, datetime
 from functools import reduce
-from typing import Any, Callable, Generic, Literal, Protocol, Self, Tuple, Type, TypeVar
+from typing import (
+    Any,
+    Callable,
+    Generic,
+    Iterable,
+    Literal,
+    Protocol,
+    Self,
+    Tuple,
+    Type,
+    TypeVar,
+)
 from uuid import UUID
 
 from pydantic import BaseModel
@@ -99,6 +110,11 @@ class CRUDOperations(Generic[IDENTIFIABLE_T]):
     async def get(self, id: UUID) -> IDENTIFIABLE_T:
         return await self.session.get_one(self.entity_type, id)
 
+    async def get_many(self, ids: Iterable[UUID]) -> Iterable[IDENTIFIABLE_T]:
+        return await self.session.scalars(
+            select(self.entity_type).where(self.entity_type.id.in_(ids))
+        )
+
     async def update(self, entity: IDENTIFIABLE_T) -> None:
         await self.session.merge(entity)
 
@@ -125,6 +141,45 @@ class CRUDOperations(Generic[IDENTIFIABLE_T]):
                 )
             )
         ).scalar_one()
+
+    async def exists_some(self, ids: Iterable[UUID]) -> bool:
+        return (
+            await self.session.execute(
+                select(
+                    select(self.entity_type)
+                    .where(self.entity_type.id.in_(ids))
+                    .exists()
+                )
+            )
+        ).scalar_one()
+
+    async def exists_all(self, ids: set[UUID]) -> bool:
+
+        return (
+            await self.session.execute(
+                select(func.count())
+                .select_from(self.entity_type)
+                .where(self.entity_type.id.in_(ids))
+            )
+        ).scalar_one() >= len(ids)
+
+    async def intersects(self, ids: set[UUID]) -> set[UUID]:
+        return set(
+            (
+                await self.session.execute(
+                    select(self.entity_type.id).where(self.entity_type.id.in_(ids))
+                )
+            ).scalars()
+        )
+
+    async def difference(self, ids: set[UUID]) -> set[UUID]:
+        return set(
+            (
+                await self.session.execute(
+                    select(self.entity_type.id).where(self.entity_type.id.in_(ids))
+                )
+            ).scalars()
+        ) - set(ids)
 
 
 QUERY_ENTITY_T = TypeVar("QUERY_ENTITY_T", bound=BaseEntity)
