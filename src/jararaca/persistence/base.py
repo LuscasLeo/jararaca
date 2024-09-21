@@ -117,6 +117,15 @@ class CRUDOperations(Generic[IDENTIFIABLE_T]):
             .values(entity.__dict__)
         )
 
+    async def exists(self, id: UUID) -> bool:
+        return (
+            await self.session.execute(
+                select(
+                    select(self.entity_type).where(self.entity_type.id == id).exists()
+                )
+            )
+        ).scalar_one()
+
 
 QUERY_ENTITY_T = TypeVar("QUERY_ENTITY_T", bound=BaseEntity)
 QUERY_FILTER_T = TypeVar("QUERY_FILTER_T")
