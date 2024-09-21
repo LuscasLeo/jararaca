@@ -173,13 +173,13 @@ class CRUDOperations(Generic[IDENTIFIABLE_T]):
         )
 
     async def difference(self, ids: set[UUID]) -> set[UUID]:
-        return set(
+        return ids - set(
             (
                 await self.session.execute(
                     select(self.entity_type.id).where(self.entity_type.id.in_(ids))
                 )
             ).scalars()
-        ) - set(ids)
+        )
 
 
 QUERY_ENTITY_T = TypeVar("QUERY_ENTITY_T", bound=BaseEntity)
