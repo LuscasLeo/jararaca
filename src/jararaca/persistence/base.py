@@ -4,7 +4,7 @@ from typing import Any, Callable, Generic, Literal, Protocol, Self, Tuple, Type,
 from uuid import UUID
 
 from pydantic import BaseModel
-from sqlalchemy import DateTime, Select, delete, func, select, update
+from sqlalchemy import DateTime, Result, Select, delete, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
@@ -154,10 +154,12 @@ class QueryOperations(Generic[QUERY_FILTER_T, QUERY_ENTITY_T]):
         entity_type: Type[QUERY_ENTITY_T],
         session_provider: Callable[[], AsyncSession],
         filters_functions: list[QueryInjector],
+        unique: bool = False,
     ) -> None:
         self.entity_type: type[QUERY_ENTITY_T] = entity_type
         self.session_provider = session_provider
         self.filters_functions = filters_functions
+        self.unique = unique
 
     @property
     def session(self) -> AsyncSession:
@@ -181,7 +183,7 @@ class QueryOperations(Generic[QUERY_FILTER_T, QUERY_ENTITY_T]):
         return Paginated(
             items=[
                 e
-                for e in (
+                for e in self.judge_unique(
                     await self.session.execute(
                         self.generate_filtered_query(filter, select(self.entity_type))
                     )
@@ -190,6 +192,13 @@ class QueryOperations(Generic[QUERY_FILTER_T, QUERY_ENTITY_T]):
             total=filtered_total,
             unfiltered_total=unfiltered_total,
         )
+
+    def judge_unique(
+        self, result: Result[Tuple[QUERY_ENTITY_T]]
+    ) -> Result[Tuple[QUERY_ENTITY_T]]:
+        if self.unique:
+            return result.unique()
+        return result
 
     def generate_filtered_query(
         self, filter: QUERY_FILTER_T, select_query: Select[Tuple[QUERY_ENTITY_T]]
