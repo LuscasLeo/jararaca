@@ -97,6 +97,21 @@ def parse_type_to_typescript_interface(
 
     inherited_classes = get_inherited_classes(basemodel_type)
 
+    if (orig_type := get_origin(basemodel_type)) is not None:
+        mapped_types.update(basemodel_type.__args__)
+        mapped_types.add(orig_type)
+        return mapped_types, ""
+
+    if hasattr(basemodel_type, "__pydantic_generic_metadata__"):
+        metadata = getattr(basemodel_type, "__pydantic_generic_metadata__")
+        if metadata.get("origin") is not None:
+            mapped_types.add(metadata.get("origin"))
+
+            for arg in metadata.get("args"):
+                mapped_types.update(extract_all_envolved_types(arg))
+
+            return mapped_types, ""
+
     mapped_types.update(inherited_classes)
 
     if Enum in inherited_classes:
@@ -574,15 +589,3 @@ def extract_all_envolved_types(field_type: Any) -> set[Any]:
             mapped_types.update(extract_all_envolved_types(arg))
 
     return mapped_types
-
-
-class TableType(str, Enum):
-    PORTABILIDADE = "PORTABILIDADE"
-    PORT_MAIS_REFINANCIAMENTO = "PORT_MAIS_REFINANCIAMENTO"
-
-
-@RestController("/test")
-class TestController:
-    @HttpMapping(method="GET", path="/test/{id}")
-    def get_test(self, test: TableType) -> TableType:
-        raise NotImplementedError()
