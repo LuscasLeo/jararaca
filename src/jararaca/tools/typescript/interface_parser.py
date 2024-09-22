@@ -151,12 +151,13 @@ def parse_type_to_typescript_interface(
             f"export interface {basemodel_type.__name__}{extends_expression} {{\n"
         )
 
-    for field_name, field in basemodel_type.__annotations__.items():
-        string_builder.write(
-            f"  {snake_to_camel(field_name)}: {get_field_type_for_ts(field)};\n"
-        )
-        mapped_types.update(extract_all_envolved_types(field))
-        mapped_types.add(field)
+    if hasattr(basemodel_type, "__annotations__"):
+        for field_name, field in basemodel_type.__annotations__.items():
+            string_builder.write(
+                f"  {snake_to_camel(field_name)}: {get_field_type_for_ts(field)};\n"
+            )
+            mapped_types.update(extract_all_envolved_types(field))
+            mapped_types.add(field)
 
     ## Loop over computed fields
     members = inspect.getmembers(basemodel_type, lambda a: isinstance(a, property))
@@ -188,6 +189,8 @@ def parse_type_to_typescript_interface(
 
 
 def get_inherited_classes(basemodel_type: Type[Any]) -> list[Type[Any]]:
+    if not hasattr(basemodel_type, "__bases__"):
+        return []
     return [
         base_class
         for base_class in basemodel_type.__bases__
@@ -629,7 +632,9 @@ def extract_all_envolved_types(field_type: Any) -> set[Any]:
                 mapped_types.add(plain_validator.json_schema_input_type)
                 return mapped_types
             else:
-                mapped_types.update(field_type.__args__)
+                mapped_types.update(
+                    *[extract_all_envolved_types(arg) for arg in field_type.__args__]
+                )
                 return mapped_types
 
     if inspect.isclass(field_type):
