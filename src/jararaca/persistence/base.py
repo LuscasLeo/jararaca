@@ -1,3 +1,4 @@
+import logging
 from datetime import UTC, date, datetime
 from functools import reduce
 from typing import (
@@ -14,12 +15,13 @@ from typing import (
 )
 from uuid import UUID
 
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError
 from sqlalchemy import DateTime, Result, Select, delete, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 IDENTIFIABLE_SCHEMA_T = TypeVar("IDENTIFIABLE_SCHEMA_T")
+logger = logging.getLogger(__name__)
 
 
 class Identifiable(BaseModel, Generic[IDENTIFIABLE_SCHEMA_T]):
@@ -79,10 +81,18 @@ class IdentifiableEntity(BaseEntity):
         return cls(**{"id": model.id, **model.data.model_dump()})
 
     def to_identifiable(self, MODEL: Type[T_BASEMODEL]) -> Identifiable[T_BASEMODEL]:
-
-        return Identifiable[MODEL].model_validate(  # type: ignore[valid-type]
-            {"id": self.id, "data": recursive_get_dict(self)}
-        )
+        try:
+            return Identifiable[MODEL].model_validate(  # type: ignore[valid-type]
+                {"id": self.id, "data": recursive_get_dict(self)}
+            )
+        except ValidationError:
+            logger.critical(
+                "Error on to_identifiable for identifiable id %s of class %s table '%s'",
+                self.id,
+                self.__class__,
+                self.__tablename__,
+            )
+            raise
 
 
 IDENTIFIABLE_T = TypeVar("IDENTIFIABLE_T", bound=IdentifiableEntity)
