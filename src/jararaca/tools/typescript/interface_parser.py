@@ -12,7 +12,7 @@ from uuid import UUID
 from fastapi import Request, Response
 from fastapi.params import Body, Cookie, Depends, Header, Path, Query
 from fastapi.security.http import HTTPBase
-from pydantic import BaseModel
+from pydantic import BaseModel, PlainValidator
 
 from jararaca.microservice import Microservice
 from jararaca.presentation.decorators import HttpMapping, RestController
@@ -77,6 +77,13 @@ def get_field_type_for_ts(field_type: Any) -> Any:
     if get_origin(field_type) == UnionType or get_origin(field_type) == typing.Union:
         return " | ".join([get_field_type_for_ts(x) for x in field_type.__args__])
     if (get_origin(field_type) == Annotated) and (len(field_type.__args__) > 0):
+        if (
+            plain_validator := next(
+                (x for x in field_type.__metadata__ if isinstance(x, PlainValidator)),
+                None,
+            )
+        ) is not None:
+            return get_field_type_for_ts(plain_validator.json_schema_input_type)
         return get_field_type_for_ts(field_type.__args__[0])
     return "unknown"
 
@@ -122,9 +129,16 @@ def parse_type_to_typescript_interface(
             + "\n}\n",
         )
 
+    valid_inherited_classes = [
+        inherited_class
+        for inherited_class in inherited_classes
+        if inherited_class is not BaseModel
+        if not is_primitive(inherited_class)
+    ]
+
     extends_expression = (
-        f" extends {', '.join([get_field_type_for_ts(inherited_class) for inherited_class in inherited_classes])}"
-        if len(inherited_classes) > 0
+        f" extends {', '.join([get_field_type_for_ts(inherited_class) for inherited_class in valid_inherited_classes])}"
+        if len(valid_inherited_classes) > 0
         else ""
     )
 
@@ -225,14 +239,22 @@ export abstract class HttpService {
     processed_types: set[Any] = set()
     backlog: set[Any] = mapped_types_set.copy()
 
+    unordered_types_buffer: list[tuple[type, str]] = []
+
     while len(backlog) > 0:
         t = backlog.pop()
         if not is_primitive(t):
             new_types, text = parse_type_to_typescript_interface(t)
-            final_buffer.write(text)
+            # final_buffer.write(text)
+            unordered_types_buffer.append((t, text))
 
+            backlog.update(new_types - processed_types)
             processed_types.add(t)
-            backlog.update(new_types)
+
+    ordered_types_buffer = sorted(unordered_types_buffer, key=lambda x: x[0].__name__)
+
+    for _, text in ordered_types_buffer:
+        final_buffer.write(text)
 
     final_buffer.write(rest_controller_buffer.getvalue())
 
@@ -400,6 +422,14 @@ def extract_parameters(
         return parameters_list, mapped_types
 
     if get_origin(member) is Annotated:
+        if (
+            plain_validator := next(
+                (x for x in member.__metadata__ if isinstance(x, PlainValidator)),
+                None,
+            )
+        ) is not None:
+            mapped_types.add(plain_validator.json_schema_input_type)
+            return parameters_list, mapped_types
         return extract_parameters(member.__args__[0], controller, mapping)
 
     if hasattr(member, "__bases__"):
@@ -546,8 +576,24 @@ def extract_parameters(
             for _, parameter_type in parameter_members.items():
                 if is_primitive(parameter_type.annotation):
                     if get_origin(parameter_type.annotation) is not None:
-                        args = parameter_type.annotation.__args__
-                        mapped_types.update(args)
+                        if (
+                            get_origin(parameter_type.annotation) == Annotated
+                            and (
+                                plain_validator := next(
+                                    (
+                                        x
+                                        for x in parameter_type.annotation.__metadata__
+                                        if isinstance(x, PlainValidator)
+                                    ),
+                                    None,
+                                )
+                            )
+                            is not None
+                        ):
+                            mapped_types.add(plain_validator.json_schema_input_type)
+                        else:
+                            args = parameter_type.annotation.__args__
+                            mapped_types.update(args)
                     else:
                         continue
                 _, types = extract_parameters(
@@ -566,7 +612,25 @@ def extract_all_envolved_types(field_type: Any) -> set[Any]:
 
     if is_primitive(field_type):
         if get_origin(field_type) is not None:
-            mapped_types.update(field_type.__args__)
+            if (
+                get_origin(field_type) == Annotated
+                and (
+                    plain_validator := next(
+                        (
+                            x
+                            for x in field_type.__metadata__
+                            if isinstance(x, PlainValidator)
+                        ),
+                        None,
+                    )
+                )
+                is not None
+            ):
+                mapped_types.add(plain_validator.json_schema_input_type)
+                return mapped_types
+            else:
+                mapped_types.update(field_type.__args__)
+                return mapped_types
 
     if inspect.isclass(field_type):
         if hasattr(field_type, "__pydantic_generic_metadata__"):
