@@ -92,7 +92,9 @@ class HttpMapping:
 
     HTTP_MAPPING_ATTR = "__http_mapping__"
 
-    def __init__(self, method: str, path: str, options: Options | None = None) -> None:
+    def __init__(
+        self, method: str, path: str = "/", options: Options | None = None
+    ) -> None:
         self.method = method
         self.path = path
         self.options = options
@@ -119,29 +121,29 @@ class HttpMapping:
 
 class Post(HttpMapping):
 
-    def __init__(self, path: str, options: Options | None = None) -> None:
+    def __init__(self, path: str = "/", options: Options | None = None) -> None:
         super().__init__("POST", path, options)
 
 
 class Get(HttpMapping):
 
-    def __init__(self, path: str, options: Options | None = None) -> None:
+    def __init__(self, path: str = "/", options: Options | None = None) -> None:
         super().__init__("GET", path, options)
 
 
 class Put(HttpMapping):
 
-    def __init__(self, path: str, options: Options | None = None) -> None:
+    def __init__(self, path: str = "/", options: Options | None = None) -> None:
         super().__init__("PUT", path, options)
 
 
 class Delete(HttpMapping):
 
-    def __init__(self, path: str, options: Options | None = None) -> None:
+    def __init__(self, path: str = "/", options: Options | None = None) -> None:
         super().__init__("DELETE", path, options)
 
 
 class Patch(HttpMapping):
 
-    def __init__(self, path: str, options: Options | None = None) -> None:
+    def __init__(self, path: str = "/", options: Options | None = None) -> None:
         super().__init__("PATCH", path, options)
