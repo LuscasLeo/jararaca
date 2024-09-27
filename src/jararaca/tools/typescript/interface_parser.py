@@ -225,7 +225,7 @@ export interface HttpBackendRequest {
   method: string;
   path: string;
   headers: { [key: string]: string };
-  query: { [key: string]: string };
+  query: { [key: string]: unknown };
   body: unknown;
 }
 
