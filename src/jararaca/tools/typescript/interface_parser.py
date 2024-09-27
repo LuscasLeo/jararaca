@@ -351,18 +351,14 @@ def write_rest_controller_to_typescript_interface(
             class_buffer.write("\t\t\theaders: {\n")
             for param in arg_params_spec:
                 if param.type_ == "header":
-                    class_buffer.write(
-                        f'\t\t\t\t"{param.name}": String({param.name}),\n'
-                    )
+                    class_buffer.write(f'\t\t\t\t"{param.name}": {param.name},\n')
 
             class_buffer.write("\t\t\t},\n")
             class_buffer.write("\t\t\tquery: {\n")
 
             for param in arg_params_spec:
                 if param.type_ == "query":
-                    class_buffer.write(
-                        f'\t\t\t\t"{param.name}": String({param.name}),\n'
-                    )
+                    class_buffer.write(f'\t\t\t\t"{param.name}": {param.name},\n')
             class_buffer.write("\t\t\t},\n")
 
             if (
