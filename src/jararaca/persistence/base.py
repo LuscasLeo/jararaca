@@ -239,14 +239,26 @@ class QueryOperations(Generic[QUERY_FILTER_T, QUERY_ENTITY_T]):
     def session(self) -> AsyncSession:
         return self.session_provider()
 
-    async def query(self, filter: QUERY_FILTER_T) -> "Paginated[QUERY_ENTITY_T]":
+    async def query(
+        self,
+        filter: QUERY_FILTER_T,
+        interceptors: list[
+            Callable[[Select[Tuple[QUERY_ENTITY_T]]], Select[Tuple[QUERY_ENTITY_T]]]
+        ] = [],
+    ) -> "Paginated[QUERY_ENTITY_T]":
         unfiltered_total = (
             await self.session.execute(
                 select(func.count()).select_from(self.entity_type)
             )
         ).scalar_one()
 
-        filtered_query = self.generate_filtered_query(filter, select(self.entity_type))
+        query = reduce(
+            lambda query, interceptor: interceptor(query),
+            interceptors,
+            select(self.entity_type),
+        )
+
+        filtered_query = self.generate_filtered_query(filter, query)
 
         filtered_total = (
             await self.session.execute(
@@ -259,7 +271,7 @@ class QueryOperations(Generic[QUERY_FILTER_T, QUERY_ENTITY_T]):
                 e
                 for e in self.judge_unique(
                     await self.session.execute(
-                        self.generate_filtered_query(filter, select(self.entity_type))
+                        self.generate_filtered_query(filter, filtered_query)
                     )
                 ).scalars()
             ],
