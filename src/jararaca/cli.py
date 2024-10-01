@@ -201,7 +201,7 @@ def scheduler(
 
 @cli.command()
 @click.argument(
-    "entity_name",
+    "app_path",
     type=str,
 )
 @click.argument(
