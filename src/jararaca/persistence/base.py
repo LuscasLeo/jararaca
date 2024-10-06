@@ -33,12 +33,12 @@ T_BASEMODEL = TypeVar("T_BASEMODEL", bound=BaseModel)
 
 
 def recursive_get_dict(obj: Any) -> Any:
-    if hasattr(obj, "__dict__"):
+    if isinstance(obj, list):
+        return [recursive_get_dict(v) for v in obj]
+    elif hasattr(obj, "__dict__"):
         return {
             k: recursive_get_dict(v) for k, v in obj.__dict__.items() if k[0] != "_"
         }
-    elif isinstance(obj, list):
-        return [recursive_get_dict(v) for v in obj]
     else:
         return obj
 

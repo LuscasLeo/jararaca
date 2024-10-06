@@ -1,4 +1,14 @@
 from jararaca.observability.interceptor import ObservabilityInterceptor
+from jararaca.presentation.hooks import (
+    raises_200_on,
+    raises_400_on,
+    raises_401_on,
+    raises_403_on,
+    raises_404_on,
+    raises_422_on,
+    raises_500_on,
+    raises_http_exception_on,
+)
 from jararaca.rpc.http.decorators import Body
 from jararaca.rpc.http.decorators import Delete as HttpDelete
 from jararaca.rpc.http.decorators import Get as HttpGet
@@ -56,6 +66,14 @@ from .scheduler.decorators import ScheduledAction
 from .tools.app_config.interceptor import AppConfigurationInterceptor
 
 __all__ = [
+    "raises_http_exception_on",
+    "raises_200_on",
+    "raises_422_on",
+    "raises_404_on",
+    "raises_400_on",
+    "raises_401_on",
+    "raises_403_on",
+    "raises_500_on",
     "HttpMiddleware",
     "HttpMapping",
     "RequestAttribute",
