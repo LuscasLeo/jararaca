@@ -418,18 +418,18 @@ def extract_parameters(
         return parameters_list, mapped_types
 
     if is_primitive(member):
-        return parameters_list, mapped_types
 
-    if get_origin(member) is Annotated:
-        if (
-            plain_validator := next(
-                (x for x in member.__metadata__ if isinstance(x, PlainValidator)),
-                None,
-            )
-        ) is not None:
-            mapped_types.add(plain_validator.json_schema_input_type)
-            return parameters_list, mapped_types
-        return extract_parameters(member.__args__[0], controller, mapping)
+        if get_origin(member) is Annotated:
+            if (
+                plain_validator := next(
+                    (x for x in member.__metadata__ if isinstance(x, PlainValidator)),
+                    None,
+                )
+            ) is not None:
+                mapped_types.add(plain_validator.json_schema_input_type)
+                return parameters_list, mapped_types
+            return extract_parameters(member.__args__[0], controller, mapping)
+        return parameters_list, mapped_types
 
     if hasattr(member, "__bases__"):
         for base in member.__bases__:
@@ -440,36 +440,103 @@ def extract_parameters(
             mapped_types.update(rec_mapped_types)
             parameters_list.extend(rec_parameters)
 
-    for parameter_name, parameter_type in member.__annotations__.items():
-        if parameter_name == "return":
-            continue
-        if parameter_type in EXCLUDED_REQUESTS_TYPES:
-            continue
+    if hasattr(member, "__annotations__"):
+        for parameter_name, parameter_type in member.__annotations__.items():
+            if parameter_name == "return":
+                continue
+            if parameter_type in EXCLUDED_REQUESTS_TYPES:
+                continue
 
-        if get_origin(parameter_type) == Annotated:
-            annotated_type_hook = parameter_type.__metadata__[0]
-            annotated_type = parameter_type.__args__[0]
-            if isinstance(annotated_type_hook, Header):
-                mapped_types.add(str)
-                parameters_list.append(
-                    HttpParemeterSpec(
-                        type_="header",
-                        name=parameter_name,
-                        required=True,
-                        argument_type_str=get_field_type_for_ts(str),
+            if get_origin(parameter_type) == Annotated:
+                annotated_type_hook = parameter_type.__metadata__[0]
+                annotated_type = parameter_type.__args__[0]
+                if isinstance(annotated_type_hook, Header):
+                    mapped_types.add(str)
+                    parameters_list.append(
+                        HttpParemeterSpec(
+                            type_="header",
+                            name=parameter_name,
+                            required=True,
+                            argument_type_str=get_field_type_for_ts(str),
+                        )
                     )
-                )
-            elif isinstance(annotated_type_hook, Cookie):
-                mapped_types.add(str)
-                parameters_list.append(
-                    HttpParemeterSpec(
-                        type_="cookie",
-                        name=parameter_name,
-                        required=True,
-                        argument_type_str=get_field_type_for_ts(str),
+                elif isinstance(annotated_type_hook, Cookie):
+                    mapped_types.add(str)
+                    parameters_list.append(
+                        HttpParemeterSpec(
+                            type_="cookie",
+                            name=parameter_name,
+                            required=True,
+                            argument_type_str=get_field_type_for_ts(str),
+                        )
                     )
-                )
-            elif isinstance(annotated_type_hook, Body):
+                elif isinstance(annotated_type_hook, Body):
+                    mapped_types.update(extract_all_envolved_types(parameter_type))
+                    parameters_list.append(
+                        HttpParemeterSpec(
+                            type_="body",
+                            name=parameter_name,
+                            required=True,
+                            argument_type_str=get_field_type_for_ts(parameter_type),
+                        )
+                    )
+                elif isinstance(annotated_type_hook, Query):
+                    mapped_types.add(parameter_type)
+                    parameters_list.append(
+                        HttpParemeterSpec(
+                            type_="query",
+                            name=parameter_name,
+                            required=True,
+                            argument_type_str=get_field_type_for_ts(parameter_type),
+                        )
+                    )
+                elif isinstance(annotated_type_hook, Path):
+                    mapped_types.add(parameter_type)
+                    parameters_list.append(
+                        HttpParemeterSpec(
+                            type_="path",
+                            name=parameter_name,
+                            required=True,
+                            argument_type_str=get_field_type_for_ts(parameter_type),
+                        )
+                    )
+
+                elif isinstance(annotated_type_hook, Depends):
+                    depends_hook = annotated_type_hook.dependency
+
+                    if isinstance(depends_hook, HTTPBase):
+                        ...
+
+                    else:
+                        rec_parameters, rec_mapped_types = extract_parameters(
+                            depends_hook, controller, mapping
+                        )
+                        mapped_types.update(rec_mapped_types)
+                        parameters_list.extend(rec_parameters)
+                elif controller.path.find(f":{parameter_name}") != -1:
+                    mapped_types.add(annotated_type)
+                    parameters_list.append(
+                        HttpParemeterSpec(
+                            type_="path",
+                            name=parameter_name,
+                            required=True,
+                            argument_type_str=get_field_type_for_ts(annotated_type),
+                        )
+                    )
+                else:
+                    mapped_types.add(annotated_type)
+                    parameters_list.append(
+                        HttpParemeterSpec(
+                            type_="query",
+                            name=parameter_name,
+                            required=True,
+                            argument_type_str=get_field_type_for_ts(annotated_type),
+                        )
+                    )
+
+            elif inspect.isclass(parameter_type) and issubclass(
+                parameter_type, BaseModel
+            ):
                 mapped_types.update(extract_all_envolved_types(parameter_type))
                 parameters_list.append(
                     HttpParemeterSpec(
@@ -479,17 +546,10 @@ def extract_parameters(
                         argument_type_str=get_field_type_for_ts(parameter_type),
                     )
                 )
-            elif isinstance(annotated_type_hook, Query):
-                mapped_types.add(parameter_type)
-                parameters_list.append(
-                    HttpParemeterSpec(
-                        type_="query",
-                        name=parameter_name,
-                        required=True,
-                        argument_type_str=get_field_type_for_ts(parameter_type),
-                    )
-                )
-            elif isinstance(annotated_type_hook, Path):
+            elif (
+                controller.path.find(f"{{{parameter_name}}}") != -1
+                or mapping.path.find(f"{{{parameter_name}}}") != -1
+            ):
                 mapped_types.add(parameter_type)
                 parameters_list.append(
                     HttpParemeterSpec(
@@ -497,108 +557,60 @@ def extract_parameters(
                         name=parameter_name,
                         required=True,
                         argument_type_str=get_field_type_for_ts(parameter_type),
-                    )
-                )
-
-            elif isinstance(annotated_type_hook, Depends):
-                depends_hook = annotated_type_hook.dependency
-
-                if isinstance(depends_hook, HTTPBase):
-                    ...
-
-                else:
-                    rec_parameters, rec_mapped_types = extract_parameters(
-                        depends_hook, controller, mapping
-                    )
-                    mapped_types.update(rec_mapped_types)
-                    parameters_list.extend(rec_parameters)
-            elif controller.path.find(f":{parameter_name}") != -1:
-                mapped_types.add(annotated_type)
-                parameters_list.append(
-                    HttpParemeterSpec(
-                        type_="path",
-                        name=parameter_name,
-                        required=True,
-                        argument_type_str=get_field_type_for_ts(annotated_type),
                     )
                 )
             else:
-                mapped_types.add(annotated_type)
+                mapped_types.add(parameter_type)
                 parameters_list.append(
                     HttpParemeterSpec(
                         type_="query",
                         name=parameter_name,
                         required=True,
-                        argument_type_str=get_field_type_for_ts(annotated_type),
+                        argument_type_str=get_field_type_for_ts(parameter_type),
                     )
                 )
 
-        elif inspect.isclass(parameter_type) and issubclass(parameter_type, BaseModel):
-            mapped_types.update(extract_all_envolved_types(parameter_type))
-            parameters_list.append(
-                HttpParemeterSpec(
-                    type_="body",
-                    name=parameter_name,
-                    required=True,
-                    argument_type_str=get_field_type_for_ts(parameter_type),
-                )
-            )
-        elif (
-            controller.path.find(f"{{{parameter_name}}}") != -1
-            or mapping.path.find(f"{{{parameter_name}}}") != -1
-        ):
-            mapped_types.add(parameter_type)
-            parameters_list.append(
-                HttpParemeterSpec(
-                    type_="path",
-                    name=parameter_name,
-                    required=True,
-                    argument_type_str=get_field_type_for_ts(parameter_type),
-                )
-            )
-        else:
-            mapped_types.add(parameter_type)
-            parameters_list.append(
-                HttpParemeterSpec(
-                    type_="query",
-                    name=parameter_name,
-                    required=True,
-                    argument_type_str=get_field_type_for_ts(parameter_type),
-                )
-            )
+            if inspect.isclass(parameter_type) and not is_primitive(parameter_type):
+                signature = inspect.signature(parameter_type)
 
-        if inspect.isclass(parameter_type) and not is_primitive(parameter_type):
-            signature = inspect.signature(parameter_type)
+                parameter_members = signature.parameters
 
-            parameter_members = signature.parameters
-
-            for _, parameter_type in parameter_members.items():
-                if is_primitive(parameter_type.annotation):
-                    if get_origin(parameter_type.annotation) is not None:
-                        if (
-                            get_origin(parameter_type.annotation) == Annotated
-                            and (
-                                plain_validator := next(
-                                    (
-                                        x
-                                        for x in parameter_type.annotation.__metadata__
-                                        if isinstance(x, PlainValidator)
-                                    ),
-                                    None,
+                for _, parameter_type in parameter_members.items():
+                    if is_primitive(parameter_type.annotation):
+                        if get_origin(parameter_type.annotation) is not None:
+                            if (
+                                get_origin(parameter_type.annotation) == Annotated
+                                and (
+                                    plain_validator := next(
+                                        (
+                                            x
+                                            for x in parameter_type.annotation.__metadata__
+                                            if isinstance(x, PlainValidator)
+                                        ),
+                                        None,
+                                    )
                                 )
-                            )
-                            is not None
-                        ):
-                            mapped_types.add(plain_validator.json_schema_input_type)
+                                is not None
+                            ):
+                                mapped_types.add(plain_validator.json_schema_input_type)
+                            else:
+                                args = parameter_type.annotation.__args__
+                                mapped_types.update(args)
                         else:
-                            args = parameter_type.annotation.__args__
-                            mapped_types.update(args)
-                    else:
-                        continue
-                _, types = extract_parameters(
-                    parameter_type.annotation, controller, mapping
-                )
-                mapped_types.update(types)
+                            continue
+                    _, types = extract_parameters(
+                        parameter_type.annotation, controller, mapping
+                    )
+                    mapped_types.update(types)
+
+    if hasattr(member, "__args__"):
+        for arg in member.__args__:
+
+            rec_parameters, rec_mapped_types = extract_parameters(
+                arg, controller, mapping
+            )
+            mapped_types.update(rec_mapped_types)
+            parameters_list.extend(rec_parameters)
 
     return parameters_list, mapped_types
 
