@@ -6,10 +6,10 @@ from decimal import Decimal
 from enum import Enum
 from io import StringIO
 from types import NoneType, UnionType
-from typing import Annotated, Any, Generic, Literal, Type, TypeVar, get_origin
+from typing import IO, Annotated, Any, Generic, Literal, Type, TypeVar, get_origin
 from uuid import UUID
 
-from fastapi import Request, Response
+from fastapi import Request, Response, UploadFile
 from fastapi.params import Body, Cookie, Depends, Header, Path, Query
 from fastapi.security.http import HTTPBase
 from pydantic import BaseModel, PlainValidator
@@ -24,6 +24,8 @@ def snake_to_camel(snake_str: str) -> str:
 
 
 def get_field_type_for_ts(field_type: Any) -> Any:
+    if field_type == UploadFile:
+        return "File"
     if field_type == date:
         return "string"
     if field_type == datetime:
@@ -280,6 +282,8 @@ def is_primitive(field_type: Any) -> bool:
             object,
             Enum,
             set,
+            UploadFile,
+            IO,
         ]
         or get_origin(field_type)
         in [list, dict, tuple, Literal, UnionType, Annotated, set]
