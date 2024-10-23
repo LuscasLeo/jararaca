@@ -1,4 +1,4 @@
-from contextlib import contextmanager
+from contextlib import contextmanager, suppress
 from contextvars import ContextVar
 from typing import Any, Awaitable, Callable, TypeVar, Union, cast
 
@@ -21,10 +21,8 @@ def provide_metadata(metadata: dict[str, Any]) -> Any:
     try:
         yield
     finally:
-        try:
+        with suppress(ValueError):
             metadata_context.reset(token)
-        except ValueError:
-            pass
 
 
 class SetMetadata:

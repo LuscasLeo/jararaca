@@ -1,4 +1,4 @@
-from contextlib import contextmanager
+from contextlib import contextmanager, suppress
 from contextvars import ContextVar
 from typing import Any, Generator, Protocol
 
@@ -29,10 +29,8 @@ def provide_message_publisher(
     try:
         yield
     finally:
-        try:
+        with suppress(ValueError):
             message_publishers_ctx.reset(token)
-        except ValueError:
-            pass
 
 
 def use_publisher(connecton_name: str = "default") -> MessagePublisher:

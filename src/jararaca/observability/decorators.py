@@ -1,4 +1,4 @@
-from contextlib import contextmanager
+from contextlib import contextmanager, suppress
 from contextvars import ContextVar
 from functools import wraps
 from typing import (
@@ -45,10 +45,8 @@ def provide_tracing_ctx_provider(
     try:
         yield
     finally:
-        try:
+        with suppress(ValueError):
             tracing_ctx_provider_ctxv.reset(token)
-        except ValueError:
-            pass
 
 
 def get_tracing_ctx_provider() -> TracingContextProvider | None:

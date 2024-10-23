@@ -1,6 +1,6 @@
 import asyncio
 import inspect
-from contextlib import asynccontextmanager, contextmanager
+from contextlib import asynccontextmanager, contextmanager, suppress
 from contextvars import ContextVar
 from functools import wraps
 from typing import Any, AsyncGenerator, Awaitable, Callable, Generator, Protocol
@@ -126,10 +126,8 @@ def provide_ws_manager(
     try:
         yield
     finally:
-        try:
+        with suppress(ValueError):
             _ws_manage_ctx.reset(token)
-        except ValueError:
-            pass
 
 
 class WebSocketInterceptor(AppInterceptor, AppInterceptorWithLifecycle):

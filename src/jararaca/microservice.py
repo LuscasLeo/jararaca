@@ -1,5 +1,5 @@
 import inspect
-from contextlib import contextmanager
+from contextlib import contextmanager, suppress
 from contextvars import ContextVar
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -206,7 +206,5 @@ def provide_container(container: Container) -> Generator[None, None, None]:
     try:
         yield
     finally:
-        try:
+        with suppress(ValueError):
             current_container_ctx.reset(token)
-        except ValueError:
-            pass
