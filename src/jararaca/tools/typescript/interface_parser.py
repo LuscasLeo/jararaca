@@ -1,7 +1,7 @@
 import inspect
 import typing
 from dataclasses import dataclass
-from datetime import date, datetime
+from datetime import date, datetime, time
 from decimal import Decimal
 from enum import Enum
 from io import StringIO
@@ -25,25 +25,27 @@ def snake_to_camel(snake_str: str) -> str:
 
 def get_field_type_for_ts(field_type: Any) -> Any:
     if field_type == UploadFile:
-        return "File"
+        return "File // UploadFile"
+    if field_type == time:
+        return "string // Time"
     if field_type == date:
-        return "string"
+        return "string // Date"
     if field_type == datetime:
-        return "string"
+        return "string // DateTime"
     if field_type == NoneType:
         return "null"
     if field_type == UUID:
-        return "string"
+        return "string // UUID"
     if field_type == str:
-        return "string"
+        return "string // String"
     if field_type == int:
-        return "number"
+        return "number  // Integer"
     if field_type == float:
-        return "number"
+        return "number // Float"
     if field_type == bool:
         return "boolean"
     if field_type == Decimal:
-        return "number"
+        return "number // Decimal"
     if get_origin(field_type) == tuple:
         return f"[{', '.join([get_field_type_for_ts(field) for field in field_type.__args__])}]"
     if get_origin(field_type) == list:
@@ -284,6 +286,7 @@ def is_primitive(field_type: Any) -> bool:
             set,
             UploadFile,
             IO,
+            time,
         ]
         or get_origin(field_type)
         in [list, dict, tuple, Literal, UnionType, Annotated, set]
