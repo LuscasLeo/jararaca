@@ -25,27 +25,27 @@ def snake_to_camel(snake_str: str) -> str:
 
 def get_field_type_for_ts(field_type: Any) -> Any:
     if field_type == UploadFile:
-        return "File // UploadFile"
+        return "File"
     if field_type == time:
-        return "string // Time"
+        return "string"
     if field_type == date:
-        return "string // Date"
+        return "string"
     if field_type == datetime:
-        return "string // DateTime"
+        return "string"
     if field_type == NoneType:
         return "null"
     if field_type == UUID:
-        return "string // UUID"
+        return "string"
     if field_type == str:
-        return "string // String"
+        return "string"
     if field_type == int:
-        return "number  // Integer"
+        return "number"
     if field_type == float:
-        return "number // Float"
+        return "number"
     if field_type == bool:
         return "boolean"
     if field_type == Decimal:
-        return "number // Decimal"
+        return "number"
     if get_origin(field_type) == tuple:
         return f"[{', '.join([get_field_type_for_ts(field) for field in field_type.__args__])}]"
     if get_origin(field_type) == list:
