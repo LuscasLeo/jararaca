@@ -246,17 +246,18 @@ class QueryOperations(Generic[QUERY_FILTER_T, QUERY_ENTITY_T]):
             Callable[[Select[Tuple[QUERY_ENTITY_T]]], Select[Tuple[QUERY_ENTITY_T]]]
         ] = [],
     ) -> "Paginated[QUERY_ENTITY_T]":
-        unfiltered_total = (
-            await self.session.execute(
-                select(func.count()).select_from(self.entity_type)
-            )
-        ).scalar_one()
 
         query = reduce(
             lambda query, interceptor: interceptor(query),
             interceptors,
             select(self.entity_type),
         )
+
+        unfiltered_total = (
+            await self.session.execute(
+                select(func.count()).select_from(query.subquery())
+            )
+        ).scalar_one()
 
         filtered_query = self.generate_filtered_query(filter, query)
 
