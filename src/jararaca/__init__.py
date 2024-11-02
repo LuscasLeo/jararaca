@@ -53,7 +53,15 @@ from .persistence.interceptors.aiosqa_interceptor import (
     AIOSqlAlchemySessionInterceptor,
     use_session,
 )
-from .presentation.decorators import Delete, Get, Patch, Post, Put, RestController
+from .presentation.decorators import (
+    Delete,
+    Get,
+    Patch,
+    Post,
+    Put,
+    RestController,
+    UseMiddleware,
+)
 from .presentation.http_microservice import HttpMicroservice, HttpMiddleware
 from .presentation.server import create_http_server
 from .presentation.websocket.decorators import WebSocketEndpoint
@@ -133,4 +141,5 @@ __all__ = [
     "MessageBusPublisherInterceptor",
     "RedisWebSocketConnectionBackend",
     "AppConfigurationInterceptor",
+    "UseMiddleware",
 ]

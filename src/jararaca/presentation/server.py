@@ -2,7 +2,6 @@ from contextlib import asynccontextmanager
 from typing import Any, AsyncGenerator
 
 from fastapi import Depends, FastAPI, Request
-from fastapi.params import Depends as DependsCls
 from starlette.types import ASGIApp
 
 from jararaca.core.uow import UnitOfWorkContextProvider
@@ -51,14 +50,14 @@ class HttpAppLifecycle:
 
                 instance: Any = self.lifecycle.container.get_by_type(controller_t)
 
-                dependencies: list[DependsCls] = []
-                for middleware in controller.middlewares:
-                    middleware_instance = self.lifecycle.container.get_by_type(
-                        middleware
-                    )
-                    dependencies.append(Depends(middleware_instance.intercept))
+                # dependencies: list[DependsCls] = []
+                # for middleware in controller.middlewares:
+                #     middleware_instance = self.lifecycle.container.get_by_type(
+                #         middleware
+                #     )
+                #     dependencies.append(Depends(middleware_instance.intercept))
 
-                router = controller.get_router_factory()(instance, dependencies)
+                router = controller.get_router_factory()(self.lifecycle, instance)
 
                 api.include_router(router)
 

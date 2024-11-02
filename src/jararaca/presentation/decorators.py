@@ -1,17 +1,24 @@
 import inspect
-from typing import Any, Callable, TypedDict, TypeVar, cast
+from typing import Any, Callable, Protocol, TypeVar, cast
 
 from fastapi import APIRouter
+from fastapi import Depends as DependsF
 from fastapi.exceptions import FastAPIError
 from fastapi.params import Depends
 
+from jararaca.lifecycle import AppLifecycle
 from jararaca.presentation.http_microservice import HttpMiddleware
 
 DECORATED_FUNC = TypeVar("DECORATED_FUNC", bound=Callable[..., Any])
 DECORATED_CLASS = TypeVar("DECORATED_CLASS", bound=Any)
 
 
-class ControllerOptions(TypedDict): ...
+ControllerOptions = dict[str, Any]
+
+
+class RouterFactory(Protocol):
+
+    def __call__(self, lifecycle: AppLifecycle, instance: Any) -> APIRouter: ...
 
 
 class RestController:
@@ -22,7 +29,7 @@ class RestController:
         path: str = "",
         options: ControllerOptions | None = None,
         middlewares: list[type[HttpMiddleware]] = [],
-        router_factory: Callable[[Any, list[Depends]], APIRouter] | None = None,
+        router_factory: RouterFactory | None = None,
     ) -> None:
         self.path = path
         self.options = options
@@ -31,7 +38,7 @@ class RestController:
 
     def get_router_factory(
         self,
-    ) -> Callable[[DECORATED_CLASS, list[Depends]], APIRouter]:
+    ) -> RouterFactory:
         if self.router_factory is None:
             raise Exception("Router factory is not set")
         return self.router_factory
@@ -39,8 +46,26 @@ class RestController:
     def __call__(self, cls: type[DECORATED_CLASS]) -> type[DECORATED_CLASS]:
 
         def router_factory(
-            instance: DECORATED_CLASS, dependencies: list[Depends]
+            lifecycle: AppLifecycle,
+            instance: DECORATED_CLASS,
         ) -> APIRouter:
+            dependencies: list[Depends] = []
+
+            for self_middleware_type in self.middlewares:
+                middleware_instance = lifecycle.container.get_by_type(
+                    self_middleware_type
+                )
+                dependencies.append(Depends(middleware_instance.intercept))
+
+            for middlewares_by_hook in UseMiddleware.get_middlewares(instance):
+                middleware_instance = lifecycle.container.get_by_type(
+                    middlewares_by_hook.middleware
+                )
+                dependencies.append(Depends(middleware_instance.intercept))
+
+            for dependency in UseDependency.get_dependencies(instance):
+                dependencies.append(DependsF(dependency.dependency))
+
             router = APIRouter(
                 prefix=self.path,
                 dependencies=dependencies,
@@ -49,21 +74,39 @@ class RestController:
 
             members = inspect.getmembers(cls, predicate=inspect.isfunction)
 
-            for name, member in members:
+            router_members = [
+                (name, mapping)
+                for name, member in members
+                if (mapping := HttpMapping.get_http_mapping(member)) is not None
+            ]
 
-                if (mapping := HttpMapping.get_http_mapping(member)) is not None:
+            router_members.sort(key=lambda x: x[1].order)
 
-                    try:
-                        router.add_api_route(
-                            methods=[mapping.method],
-                            path=mapping.path,
-                            endpoint=getattr(instance, name),
-                            **(mapping.options or {}),
-                        )
-                    except FastAPIError as e:
-                        raise Exception(
-                            f"Error while adding route {mapping.path}"
-                        ) from e
+            for name, mapping in router_members:
+                route_dependencies: list[Depends] = []
+                for middlewares_by_hook in UseMiddleware.get_middlewares(
+                    getattr(instance, name)
+                ):
+                    middleware_instance = lifecycle.container.get_by_type(
+                        middlewares_by_hook.middleware
+                    )
+                    route_dependencies.append(Depends(middleware_instance.intercept))
+
+                for dependency in UseDependency.get_dependencies(
+                    getattr(instance, name)
+                ):
+                    route_dependencies.append(DependsF(dependency.dependency))
+
+                try:
+                    router.add_api_route(
+                        methods=[mapping.method],
+                        path=mapping.path,
+                        endpoint=getattr(instance, name),
+                        dependencies=route_dependencies,
+                        **(mapping.options or {}),
+                    )
+                except FastAPIError as e:
+                    raise Exception(f"Error while adding route {mapping.path}") from e
 
             return router
 
@@ -85,12 +128,13 @@ class RestController:
         return cast(RestController, getattr(cls, RestController.REST_CONTROLLER_ATTR))
 
 
-class Options(TypedDict): ...
+Options = dict[str, Any]
 
 
 class HttpMapping:
 
     HTTP_MAPPING_ATTR = "__http_mapping__"
+    ORDER_COUNTER = 0
 
     def __init__(
         self, method: str, path: str = "/", options: Options | None = None
@@ -98,6 +142,9 @@ class HttpMapping:
         self.method = method
         self.path = path
         self.options = options
+
+        HttpMapping.ORDER_COUNTER += 1
+        self.order = HttpMapping.ORDER_COUNTER
 
     def __call__(self, func: DECORATED_FUNC) -> DECORATED_FUNC:
 
@@ -147,3 +194,51 @@ class Patch(HttpMapping):
 
     def __init__(self, path: str = "/", options: Options | None = None) -> None:
         super().__init__("PATCH", path, options)
+
+
+class UseMiddleware:
+
+    __MIDDLEWARES_ATTR__ = "__middlewares__"
+
+    def __init__(self, middleware: type[HttpMiddleware]) -> None:
+        self.middleware = middleware
+
+    def __call__(self, subject: DECORATED_FUNC) -> DECORATED_FUNC:
+
+        UseMiddleware.register(subject, self)
+
+        return subject
+
+    @staticmethod
+    def register(subject: DECORATED_FUNC, middleware: "UseMiddleware") -> None:
+        middlewares = getattr(subject, UseMiddleware.__MIDDLEWARES_ATTR__, [])
+        middlewares.append(middleware)
+        setattr(subject, UseMiddleware.__MIDDLEWARES_ATTR__, middlewares)
+
+    @staticmethod
+    def get_middlewares(subject: DECORATED_FUNC) -> list["UseMiddleware"]:
+        return getattr(subject, UseMiddleware.__MIDDLEWARES_ATTR__, [])
+
+
+class UseDependency:
+
+    __DEPENDENCY_ATTR__ = "__dependencies__"
+
+    def __init__(self, dependency: Any) -> None:
+        self.dependency = dependency
+
+    def __call__(self, subject: DECORATED_FUNC) -> DECORATED_FUNC:
+
+        UseDependency.register(subject, self)
+
+        return subject
+
+    @staticmethod
+    def register(subject: DECORATED_FUNC, dependency: "UseDependency") -> None:
+        dependencies = getattr(subject, UseDependency.__DEPENDENCY_ATTR__, [])
+        dependencies.append(dependency)
+        setattr(subject, UseDependency.__DEPENDENCY_ATTR__, dependencies)
+
+    @staticmethod
+    def get_dependencies(subject: DECORATED_FUNC) -> list["UseDependency"]:
+        return getattr(subject, UseDependency.__DEPENDENCY_ATTR__, [])
