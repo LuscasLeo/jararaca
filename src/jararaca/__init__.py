@@ -60,6 +60,7 @@ from .presentation.decorators import (
     Post,
     Put,
     RestController,
+    UseDependency,
     UseMiddleware,
 )
 from .presentation.http_microservice import HttpMicroservice, HttpMiddleware
@@ -142,4 +143,5 @@ __all__ = [
     "RedisWebSocketConnectionBackend",
     "AppConfigurationInterceptor",
     "UseMiddleware",
+    "UseDependency",
 ]
