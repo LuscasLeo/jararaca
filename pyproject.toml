@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "jararaca"
-version = "0.1.59"
+version = "0.1.60"
 description = "A simple and fast API framework for Python"
 authors = ["Lucas S <me@luscasleo.dev>"]
 readme = "README.md"
