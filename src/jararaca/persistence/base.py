@@ -28,6 +28,12 @@ class Identifiable(BaseModel, Generic[IDENTIFIABLE_SCHEMA_T]):
     id: UUID
     data: IDENTIFIABLE_SCHEMA_T
 
+    @staticmethod
+    def instance(
+        id: UUID, data: IDENTIFIABLE_SCHEMA_T
+    ) -> "Identifiable[IDENTIFIABLE_SCHEMA_T]":
+        return Identifiable[IDENTIFIABLE_SCHEMA_T](id=id, data=data)
+
 
 T_BASEMODEL = TypeVar("T_BASEMODEL", bound=BaseModel)
 
