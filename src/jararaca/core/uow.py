@@ -6,6 +6,7 @@ from jararaca.microservice import (
     AppInterceptor,
     Container,
     Microservice,
+    provide_app_context,
     provide_container,
 )
 
@@ -18,7 +19,7 @@ class ContainerInterceptor(AppInterceptor):
     @asynccontextmanager
     async def intercept(self, app_context: AppContext) -> AsyncGenerator[None, None]:
 
-        with provide_container(self.container):
+        with provide_app_context(app_context), provide_container(self.container):
             yield None
 
 

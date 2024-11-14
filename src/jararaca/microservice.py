@@ -60,6 +60,22 @@ AppContext = (
     MessageBusAppContext | HttpAppContext | SchedulerAppContext | WebSocketAppContext
 )
 
+app_context_ctxvar = ContextVar[AppContext]("app_context")
+
+
+def use_app_context() -> AppContext:
+    return app_context_ctxvar.get()
+
+
+@contextmanager
+def provide_app_context(app_context: AppContext) -> Generator[None, None, None]:
+    token = app_context_ctxvar.set(app_context)
+    try:
+        yield
+    finally:
+        with suppress(ValueError):
+            app_context_ctxvar.reset(token)
+
 
 @runtime_checkable
 class AppInterceptor(Protocol):

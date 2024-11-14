@@ -2,10 +2,12 @@ import asyncio
 import inspect
 from contextlib import asynccontextmanager, contextmanager, suppress
 from contextvars import ContextVar
-from functools import wraps
-from typing import Any, AsyncGenerator, Awaitable, Callable, Generator, Protocol
+from typing import Any, AsyncGenerator, Generator, Protocol
 
-from fastapi import APIRouter, WebSocketDisconnect
+from fastapi import APIRouter
+from fastapi import Depends as DependsF
+from fastapi import WebSocketDisconnect
+from fastapi.params import Depends
 from fastapi.websockets import WebSocket, WebSocketState
 
 from jararaca.core.uow import UnitOfWorkContextProvider
@@ -15,9 +17,12 @@ from jararaca.microservice import (
     AppInterceptor,
     AppInterceptorWithLifecycle,
     Microservice,
-    WebSocketAppContext,
 )
-from jararaca.presentation.decorators import RestController
+from jararaca.presentation.decorators import (
+    RestController,
+    UseDependency,
+    UseMiddleware,
+)
 from jararaca.presentation.websocket.decorators import WebSocketEndpoint
 
 
@@ -131,6 +136,30 @@ def provide_ws_manager(
 
 
 class WebSocketInterceptor(AppInterceptor, AppInterceptorWithLifecycle):
+    """
+    @Deprecated
+    WebSocketInterceptor is responsible for managing WebSocket connections and
+    intercepting WebSocket requests within the application. It integrates with
+    the application's lifecycle and provides a router for WebSocket endpoints.
+
+    Attributes:
+        backend (WebSocketConnectionBackend): The backend for managing WebSocket connections.
+        shutdown_event (asyncio.Event): Event to signal shutdown.
+        connection_manager (WebSocketConnectionManager): Manages WebSocket connections.
+
+    Methods:
+        lifecycle(app: Microservice, container: Container) -> AsyncGenerator[None, None]:
+            Manages the lifecycle of the WebSocket interceptor.
+
+        intercept(app_context: AppContext) -> AsyncGenerator[None, None]:
+            Intercepts WebSocket requests within the application context.
+
+        get_ws_router(app: Microservice, container: Container, uow_provider: UnitOfWorkContextProvider) -> APIRouter:
+            Generates an API router for WebSocket endpoints.
+
+    Note:
+        This class is deprecated and may be removed in future versions.
+    """
 
     def __init__(self, backend: WebSocketConnectionBackend) -> None:
         self.backend = backend
@@ -153,17 +182,17 @@ class WebSocketInterceptor(AppInterceptor, AppInterceptorWithLifecycle):
         with provide_ws_manager(self.connection_manager):
             yield
 
-    def __wrap_with_uow_context_provider(
-        self, uow: UnitOfWorkContextProvider, func: Callable[..., Any]
-    ) -> Callable[[WebSocket], Awaitable[Any]]:
-        ctx_manager = uow
+    # def __wrap_with_uow_context_provider(
+    #     self, uow: UnitOfWorkContextProvider, func: Callable[..., Any]
+    # ) -> Callable[[WebSocket], Awaitable[Any]]:
+    #     ctx_manager = uow
 
-        @wraps(func)
-        async def wrapper(ws: WebSocket) -> Any:
-            async with ctx_manager(WebSocketAppContext(websocket=ws)):
-                return await func(ws)
+    #     @wraps(func)
+    #     async def wrapper(ws: WebSocket) -> Any:
+    #         async with ctx_manager(WebSocketAppContext(websocket=ws)):
+    #             return await func(ws)
 
-        return wrapper
+    #     return wrapper
 
     def get_ws_router(
         self,
@@ -189,12 +218,27 @@ class WebSocketInterceptor(AppInterceptor, AppInterceptorWithLifecycle):
                         if rest_controller
                         else ws_endpoint.path
                     )
-                    api_router.add_websocket_route(
+
+                    route_dependencies: list[Depends] = []
+                    for middlewares_by_hook in UseMiddleware.get_middlewares(
+                        getattr(controller_type, name)
+                    ):
+                        middleware_instance = container.get_by_type(
+                            middlewares_by_hook.middleware
+                        )
+                        route_dependencies.append(
+                            Depends(middleware_instance.intercept)
+                        )
+
+                    for dependency in UseDependency.get_dependencies(
+                        getattr(controller_type, name)
+                    ):
+                        route_dependencies.append(DependsF(dependency.dependency))
+
+                    api_router.add_api_websocket_route(
                         path=final_path,
-                        endpoint=self.__wrap_with_uow_context_provider(
-                            func=getattr(controller, name),
-                            uow=uow_provider,
-                        ),
+                        endpoint=getattr(controller, name),
+                        dependencies=route_dependencies,
                         **(ws_endpoint.options or {}),
                     )
 
