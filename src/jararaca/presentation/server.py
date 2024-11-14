@@ -1,16 +1,15 @@
 from contextlib import asynccontextmanager
 from typing import Any, AsyncGenerator
 
-from fastapi import Depends, FastAPI, Request
+from fastapi import Depends, FastAPI, Request, WebSocket
 from starlette.types import ASGIApp
 
 from jararaca.core.uow import UnitOfWorkContextProvider
 from jararaca.di import Container
 from jararaca.lifecycle import AppLifecycle
-from jararaca.microservice import HttpAppContext
+from jararaca.microservice import HttpAppContext, WebSocketAppContext
 from jararaca.presentation.decorators import RestController
 from jararaca.presentation.http_microservice import HttpMicroservice
-from jararaca.presentation.websocket.websocket_interceptor import WebSocketInterceptor
 
 
 class HttpAppLifecycle:
@@ -29,18 +28,18 @@ class HttpAppLifecycle:
     async def __call__(self, api: FastAPI) -> AsyncGenerator[None, None]:
         async with self.lifecycle():
 
-            websocket_interceptors = [
-                interceptor
-                for interceptor in self.lifecycle.initialized_interceptors
-                if isinstance(interceptor, WebSocketInterceptor)
-            ]
+            # websocket_interceptors = [
+            #     interceptor
+            #     for interceptor in self.lifecycle.initialized_interceptors
+            #     if isinstance(interceptor, WebSocketInterceptor)
+            # ]
 
-            for interceptor in websocket_interceptors:
-                router = interceptor.get_ws_router(
-                    self.lifecycle.app, self.lifecycle.container, self.uow_provider
-                )
+            # for interceptor in websocket_interceptors:
+            #     router = interceptor.get_ws_router(
+            #         self.lifecycle.app, self.lifecycle.container, self.uow_provider
+            #     )
 
-                api.include_router(router)
+            #     api.include_router(router)
 
             for controller_t in self.lifecycle.app.controllers:
                 controller = RestController.get_controller(controller_t)
@@ -77,8 +76,14 @@ class HttpUowContextProviderDependency:
     def __init__(self, uow_provider: UnitOfWorkContextProvider) -> None:
         self.uow_provider = uow_provider
 
-    async def __call__(self, request: Request) -> AsyncGenerator[None, None]:
-        async with self.uow_provider(HttpAppContext(request=request)):
+    async def __call__(
+        self, websocket: WebSocket = None, request: Request = None  # type: ignore
+    ) -> AsyncGenerator[None, None]:
+        async with self.uow_provider(
+            HttpAppContext(request=request)
+            if request
+            else WebSocketAppContext(websocket=websocket)
+        ):
             yield
 
 

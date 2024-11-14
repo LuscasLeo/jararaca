@@ -9,10 +9,13 @@ class WebSocketEndpointOptions(TypedDict): ...
 class WebSocketEndpoint:
 
     WEBSOCKET_ENDPOINT_ATTR = "__websocket_endpoint__"
+    ORDER_COUNTER = 0
 
     def __init__(self, path: str, options: WebSocketEndpointOptions = {}) -> None:
         self.path = path
         self.options = options
+        WebSocketEndpoint.ORDER_COUNTER += 1
+        self.order = WebSocketEndpoint.ORDER_COUNTER
 
     @staticmethod
     def register(cls: DECORATED_CLASS, instance: "WebSocketEndpoint") -> None:

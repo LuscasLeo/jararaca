@@ -8,6 +8,7 @@ from fastapi.params import Depends
 
 from jararaca.lifecycle import AppLifecycle
 from jararaca.presentation.http_microservice import HttpMiddleware
+from jararaca.presentation.websocket.decorators import WebSocketEndpoint
 
 DECORATED_FUNC = TypeVar("DECORATED_FUNC", bound=Callable[..., Any])
 DECORATED_CLASS = TypeVar("DECORATED_CLASS", bound=Any)
@@ -77,7 +78,13 @@ class RestController:
             router_members = [
                 (name, mapping)
                 for name, member in members
-                if (mapping := HttpMapping.get_http_mapping(member)) is not None
+                if (
+                    mapping := (
+                        HttpMapping.get_http_mapping(member)
+                        or WebSocketEndpoint.get(member)
+                    )
+                )
+                is not None
             ]
 
             router_members.sort(key=lambda x: x[1].order)
@@ -97,16 +104,26 @@ class RestController:
                 ):
                     route_dependencies.append(DependsF(dependency.dependency))
 
-                try:
-                    router.add_api_route(
-                        methods=[mapping.method],
+                if isinstance(mapping, HttpMapping):
+                    try:
+                        router.add_api_route(
+                            methods=[mapping.method],
+                            path=mapping.path,
+                            endpoint=getattr(instance, name),
+                            dependencies=route_dependencies,
+                            **(mapping.options or {}),
+                        )
+                    except FastAPIError as e:
+                        raise Exception(
+                            f"Error while adding route {mapping.path}"
+                        ) from e
+                else:
+                    router.add_api_websocket_route(
                         path=mapping.path,
                         endpoint=getattr(instance, name),
                         dependencies=route_dependencies,
                         **(mapping.options or {}),
                     )
-                except FastAPIError as e:
-                    raise Exception(f"Error while adding route {mapping.path}") from e
 
             return router
 
