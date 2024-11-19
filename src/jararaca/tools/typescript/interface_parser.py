@@ -23,6 +23,22 @@ def snake_to_camel(snake_str: str) -> str:
     return components[0] + "".join(x.title() for x in components[1:])
 
 
+def parse_literal_value(value: Any) -> str:
+    if value is None:
+        return "null"
+    if isinstance(value, Enum):
+        return f"{value.__class__.__name__}.{value.name}"
+    if isinstance(value, str):
+        return f'"{value}"'
+    if isinstance(value, int):
+        return str(value)
+    if isinstance(value, float):
+        return str(value)
+    if isinstance(value, bool):
+        return str(value).lower()
+    return "unknown"
+
+
 def get_field_type_for_ts(field_type: Any) -> Any:
     if field_type == UploadFile:
         return "File"
@@ -77,7 +93,7 @@ def get_field_type_for_ts(field_type: Any) -> Any:
     if hasattr(field_type, "__class__") and field_type.__class__ is TypeVar:
         return field_type.__name__
     if get_origin(field_type) == Literal:
-        return " | ".join([f'"{x}"' for x in field_type.__args__])
+        return " | ".join([parse_literal_value(x) for x in field_type.__args__])
     if get_origin(field_type) == UnionType or get_origin(field_type) == typing.Union:
         return " | ".join([get_field_type_for_ts(x) for x in field_type.__args__])
     if (get_origin(field_type) == Annotated) and (len(field_type.__args__) > 0):
