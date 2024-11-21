@@ -525,7 +525,9 @@ def extract_parameters(
                     )
 
                 elif isinstance(annotated_type_hook, Depends):
-                    depends_hook = annotated_type_hook.dependency
+                    depends_hook = (
+                        annotated_type_hook.dependency or parameter_type.__args__[0]
+                    )
 
                     if isinstance(depends_hook, HTTPBase):
                         ...
