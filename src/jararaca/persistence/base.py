@@ -1,8 +1,11 @@
+import asyncio
 import logging
 from datetime import UTC, date, datetime
 from functools import reduce
 from typing import (
+    Annotated,
     Any,
+    Awaitable,
     Callable,
     Generic,
     Iterable,
@@ -15,7 +18,7 @@ from typing import (
 )
 from uuid import UUID
 
-from pydantic import BaseModel, ValidationError
+from pydantic import BaseModel, Field, ValidationError
 from sqlalchemy import DateTime, Result, Select, delete, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
@@ -214,7 +217,7 @@ PAGINATED_T = TypeVar("PAGINATED_T", bound=Any)
 class Paginated(BaseModel, Generic[PAGINATED_T]):
     items: list[PAGINATED_T]
     total: int
-    unfiltered_total: int
+    unpaginated_total: int
 
     def transform(
         self,
@@ -223,7 +226,32 @@ class Paginated(BaseModel, Generic[PAGINATED_T]):
         return Paginated[TRANSFORM_T](
             items=[transform(item) for item in self.items],
             total=self.total,
-            unfiltered_total=self.unfiltered_total,
+            unpaginated_total=self.unpaginated_total,
+        )
+
+    async def transform_async(
+        self,
+        transform: Callable[[PAGINATED_T], Awaitable[TRANSFORM_T]],
+        gather: bool = False,
+    ) -> "Paginated[TRANSFORM_T]":
+        """
+        Transform the items of the paginated result asynchronously.
+
+        Args:
+            transform: The transformation function.
+            gather: If the items should be gathered in a single async call.
+            SQL Alchemy async session queries may cannot be gathered. Use this option with caution.
+        """
+
+        items = (
+            await asyncio.gather(*[transform(item) for item in self.items])
+            if gather
+            else [await transform(item) for item in self.items]
+        )
+        return Paginated[TRANSFORM_T](
+            items=items,
+            total=self.total,
+            unpaginated_total=self.unpaginated_total,
         )
 
 
@@ -259,7 +287,7 @@ class QueryOperations(Generic[QUERY_FILTER_T, QUERY_ENTITY_T]):
             select(self.entity_type),
         )
 
-        unfiltered_total = (
+        unpaginated_total = (
             await self.session.execute(
                 select(func.count()).select_from(query.subquery())
             )
@@ -283,7 +311,7 @@ class QueryOperations(Generic[QUERY_FILTER_T, QUERY_ENTITY_T]):
                 ).scalars()
             ],
             total=filtered_total,
-            unfiltered_total=unfiltered_total,
+            unpaginated_total=unpaginated_total,
         )
 
     def judge_unique(
@@ -305,8 +333,8 @@ class QueryOperations(Generic[QUERY_FILTER_T, QUERY_ENTITY_T]):
 
 # region PaginatedFilter
 class PaginatedFilter(BaseModel):
-    offset: int = 0
-    limit: int = 10
+    page: Annotated[int, Field(gt=0)] = 1
+    page_size: int = 10
 
 
 class PaginatedQueryInjector(QueryInjector):
@@ -315,7 +343,9 @@ class PaginatedQueryInjector(QueryInjector):
         query: Select[Tuple[BaseEntity]],
         filter: PaginatedFilter,
     ) -> Select[Tuple[BaseEntity]]:
-        return query.offset(filter.offset).limit(filter.limit)
+        return query.offset((filter.page - 1) * filter.page_size).limit(
+            filter.page_size
+        )
 
 
 # endregion
