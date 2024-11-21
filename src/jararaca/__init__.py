@@ -43,7 +43,6 @@ from .persistence.base import (
     IdentifiableEntity,
     Paginated,
     PaginatedFilter,
-    PaginatedQueryInjector,
     QueryInjector,
     QueryOperations,
     StringCriteria,

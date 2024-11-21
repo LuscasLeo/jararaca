@@ -129,6 +129,8 @@ class AioPikaMicroserviceConsumer:
     async def message_consumer(
         self, aio_pika_message: aio_pika.abc.AbstractIncomingMessage
     ) -> None:
+        logger.info("Message received from %s", aio_pika_message.routing_key)
+
         if self.shutdown_event.is_set():
             return
 

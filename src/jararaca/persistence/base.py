@@ -16,7 +16,7 @@ from typing import (
     Type,
     TypeVar,
 )
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from pydantic import BaseModel, Field, ValidationError
 from sqlalchemy import DateTime, Result, Select, delete, func, select, update
@@ -83,7 +83,7 @@ class DatedEntity(BaseEntity):
 class IdentifiableEntity(BaseEntity):
     __abstract__ = True
 
-    id: Mapped[UUID] = mapped_column(primary_key=True)
+    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
 
     @classmethod
     def from_identifiable(cls, model: Identifiable[T_BASEMODEL]) -> "Self":
@@ -201,13 +201,22 @@ class CRUDOperations(Generic[IDENTIFIABLE_T]):
         )
 
 
-QUERY_ENTITY_T = TypeVar("QUERY_ENTITY_T", bound=BaseEntity)
-QUERY_FILTER_T = TypeVar("QUERY_FILTER_T")
+# region PaginatedFilter
+class PaginatedFilter(BaseModel):
+    page: Annotated[int, Field(gt=-1)] = 1
+    page_size: int = 10
 
 
 class QueryInjector(Protocol):
 
     def inject(self, query: Select[Tuple[Any]], filter: Any) -> Select[Tuple[Any]]: ...
+
+
+# endregion
+
+
+QUERY_ENTITY_T = TypeVar("QUERY_ENTITY_T", bound=BaseEntity)
+QUERY_FILTER_T = TypeVar("QUERY_FILTER_T", bound=PaginatedFilter)
 
 
 TRANSFORM_T = TypeVar("TRANSFORM_T")
@@ -218,6 +227,7 @@ class Paginated(BaseModel, Generic[PAGINATED_T]):
     items: list[PAGINATED_T]
     total: int
     unpaginated_total: int
+    total_pages: int
 
     def transform(
         self,
@@ -227,6 +237,7 @@ class Paginated(BaseModel, Generic[PAGINATED_T]):
             items=[transform(item) for item in self.items],
             total=self.total,
             unpaginated_total=self.unpaginated_total,
+            total_pages=self.total_pages,
         )
 
     async def transform_async(
@@ -252,6 +263,7 @@ class Paginated(BaseModel, Generic[PAGINATED_T]):
             items=items,
             total=self.total,
             unpaginated_total=self.unpaginated_total,
+            total_pages=self.total_pages,
         )
 
 
@@ -287,12 +299,6 @@ class QueryOperations(Generic[QUERY_FILTER_T, QUERY_ENTITY_T]):
             select(self.entity_type),
         )
 
-        unpaginated_total = (
-            await self.session.execute(
-                select(func.count()).select_from(query.subquery())
-            )
-        ).scalar_one()
-
         filtered_query = self.generate_filtered_query(filter, query)
 
         filtered_total = (
@@ -301,17 +307,28 @@ class QueryOperations(Generic[QUERY_FILTER_T, QUERY_ENTITY_T]):
             )
         ).scalar_one()
 
+        unpaginated_total = (
+            await self.session.execute(
+                select(func.count()).select_from(query.subquery())
+            )
+        ).scalar_one()
+
+        paginated_query = filtered_query.limit(filter.page_size).offset(
+            (filter.page) * filter.page_size
+        )
+
         return Paginated(
             items=[
                 e
                 for e in self.judge_unique(
                     await self.session.execute(
-                        self.generate_filtered_query(filter, filtered_query)
+                        self.generate_filtered_query(filter, paginated_query)
                     )
                 ).scalars()
             ],
             total=filtered_total,
             unpaginated_total=unpaginated_total,
+            total_pages=int(filtered_total / filter.page_size) + 1,
         )
 
     def judge_unique(
@@ -330,25 +347,6 @@ class QueryOperations(Generic[QUERY_FILTER_T, QUERY_ENTITY_T]):
             select_query,
         )
 
-
-# region PaginatedFilter
-class PaginatedFilter(BaseModel):
-    page: Annotated[int, Field(gt=0)] = 1
-    page_size: int = 10
-
-
-class PaginatedQueryInjector(QueryInjector):
-    def inject(
-        self,
-        query: Select[Tuple[BaseEntity]],
-        filter: PaginatedFilter,
-    ) -> Select[Tuple[BaseEntity]]:
-        return query.offset((filter.page - 1) * filter.page_size).limit(
-            filter.page_size
-        )
-
-
-# endregion
 
 # DateOrderedFilter
 

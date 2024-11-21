@@ -16,7 +16,6 @@ from jararaca import (
     IdentifiableEntity,
     Paginated,
     PaginatedFilter,
-    PaginatedQueryInjector,
     Patch,
     Post,
     QueryOperations,
@@ -57,7 +56,7 @@ class ${entityNamePascalCase}Controller:
 
         self.query_operations = QueryOperations[
             ${entityNamePascalCase}Filter, ${entityNamePascalCase}Entity
-        ](${entityNamePascalCase}Entity, use_session, [PaginatedQueryInjector()])
+        ](${entityNamePascalCase}Entity, use_session, [])
 
         self.crud_operations = CRUDOperations(${entityNamePascalCase}Entity, use_session)
 
