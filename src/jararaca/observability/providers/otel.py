@@ -1,6 +1,6 @@
 import logging
 from contextlib import asynccontextmanager, contextmanager
-from typing import AsyncGenerator, Generator
+from typing import AsyncGenerator, Generator, Protocol
 
 from opentelemetry import metrics, trace
 from opentelemetry._logs import set_logger_provider
@@ -27,6 +27,7 @@ from jararaca.microservice import AppContext, Container, Microservice
 from jararaca.observability.decorators import (
     TracingContextProvider,
     TracingContextProviderFactory,
+    get_tracing_ctx_provider,
 )
 from jararaca.observability.interceptor import ObservabilityProvider
 
@@ -89,6 +90,11 @@ class OtelTracingContextProviderFactory(TracingContextProviderFactory):
             yield
 
 
+class LoggerHandlerCallback(Protocol):
+
+    def __call__(self, logger_handler: logging.Handler) -> None: ...
+
+
 class OtelObservabilityProvider(ObservabilityProvider):
 
     def __init__(
@@ -97,6 +103,7 @@ class OtelObservabilityProvider(ObservabilityProvider):
         logs_exporter: LogExporter,
         span_exporter: SpanExporter,
         meter_exporter: MeterExporter,
+        logging_handler_callback: LoggerHandlerCallback = lambda _: None,
         meter_export_interval: int = 5000,
     ) -> None:
         self.app_name = app_name
@@ -105,6 +112,7 @@ class OtelObservabilityProvider(ObservabilityProvider):
         self.meter_exporter = meter_exporter
         self.tracing_provider = OtelTracingContextProviderFactory()
         self.meter_export_interval = meter_export_interval
+        self.logging_handler_callback = logging_handler_callback
 
     @asynccontextmanager
     async def setup(
@@ -134,11 +142,10 @@ class OtelObservabilityProvider(ObservabilityProvider):
         logging_handler = LoggingHandler(
             level=logging.DEBUG, logger_provider=logger_provider
         )
-        logging_handler.addFilter(
-            lambda record: hasattr(record, "message")
-            and "localhost" not in record.message
-        )
-        logging.getLogger().addHandler(logging_handler)
+
+        logging_handler.addFilter(lambda _: get_tracing_ctx_provider() is not None)
+
+        self.logging_handler_callback(logging_handler)
 
         ### Setup Metrics
         metric_reader = PeriodicExportingMetricReader(
@@ -151,7 +158,12 @@ class OtelObservabilityProvider(ObservabilityProvider):
         yield
 
     @staticmethod
-    def from_url(app_name: str, url: str) -> "OtelObservabilityProvider":
+    def from_url(
+        app_name: str,
+        url: str,
+        logging_handler_callback: LoggerHandlerCallback = lambda _: None,
+        meter_export_interval: int = 5000,
+    ) -> "OtelObservabilityProvider":
         """
         Create an instance of OtelObservabilityProvider with Http Exporters from a given URL
         """
@@ -161,5 +173,10 @@ class OtelObservabilityProvider(ObservabilityProvider):
         metric_exporter = MeterExporter(endpoint=f"{url}/v1/metrics")
 
         return OtelObservabilityProvider(
-            app_name, logs_exporter, span_exporter, metric_exporter
+            app_name,
+            logs_exporter,
+            span_exporter,
+            metric_exporter,
+            logging_handler_callback,
+            meter_export_interval,
         )
