@@ -1,4 +1,5 @@
 import logging
+import os
 
 from examples.client import HelloRPC
 from examples.controller import MyController
@@ -28,7 +29,10 @@ app = Microservice(
     controllers=[MyController],
     interceptors=[
         ObservabilityInterceptor(
-            OtelObservabilityProvider.from_url("App-example", "http://localhost:4318")
+            OtelObservabilityProvider.from_url(
+                "App-example",
+                url=os.getenv("OTEL_ENDPOINT", "localhost"),
+            )
         )
     ],
 )
