@@ -1,12 +1,24 @@
 import inspect
 import typing
+from contextlib import contextmanager
+from contextvars import ContextVar
 from dataclasses import dataclass
 from datetime import date, datetime, time
 from decimal import Decimal
 from enum import Enum
 from io import StringIO
 from types import NoneType, UnionType
-from typing import IO, Annotated, Any, Generic, Literal, Type, TypeVar, get_origin
+from typing import (
+    IO,
+    Annotated,
+    Any,
+    Generator,
+    Generic,
+    Literal,
+    Type,
+    TypeVar,
+    get_origin,
+)
 from uuid import UUID
 
 from fastapi import Request, Response, UploadFile
@@ -18,6 +30,25 @@ from jararaca.microservice import Microservice
 from jararaca.presentation.decorators import HttpMapping, RestController
 
 
+class ParseContext:
+    def __init__(self) -> None:
+        self.mapped_types: set[Any] = set()
+
+
+parse_context_ctxvar = ContextVar("parse_context", default=ParseContext())
+
+
+@contextmanager
+def with_parse_context() -> Generator[ParseContext, None, None]:
+    parse_context = parse_context_ctxvar.get()
+    yield parse_context
+    parse_context_ctxvar.set(parse_context)
+
+
+def use_parse_context() -> ParseContext:
+    return parse_context_ctxvar.get()
+
+
 def snake_to_camel(snake_str: str) -> str:
     components = snake_str.split("_")
     return components[0] + "".join(x.title() for x in components[1:])
@@ -27,6 +58,7 @@ def parse_literal_value(value: Any) -> str:
     if value is None:
         return "null"
     if isinstance(value, Enum):
+        use_parse_context().mapped_types.add(value.__class__)
         return f"{value.__class__.__name__}.{value.name}"
     if isinstance(value, str):
         return f'"{value}"'
@@ -145,7 +177,7 @@ def parse_type_to_typescript_interface(
         return (
             set(),
             f"export enum {basemodel_type.__name__} {{\n"
-            + "\n ".join([f'\t{x.value} = "{x.value}",' for x in basemodel_type])
+            + "\n ".join([f'\t{x._name_} = "{x.value}",' for x in basemodel_type])
             + "\n}\n",
         )
 
@@ -258,7 +290,6 @@ export abstract class HttpService {
 }
 """
     )
-
     processed_types: set[Any] = set()
     backlog: set[Any] = mapped_types_set.copy()
 
@@ -267,12 +298,14 @@ export abstract class HttpService {
     while len(backlog) > 0:
         t = backlog.pop()
         if not is_primitive(t):
-            new_types, text = parse_type_to_typescript_interface(t)
-            # final_buffer.write(text)
-            unordered_types_buffer.append((t, text))
+            with with_parse_context() as parse_context:
 
-            backlog.update(new_types - processed_types)
-            processed_types.add(t)
+                identified_types, text = parse_type_to_typescript_interface(t)
+                processed_types.add(t)
+                # final_buffer.write(text)
+                unordered_types_buffer.append((t, text))
+                identified_types.update(parse_context.mapped_types)
+                backlog.update(identified_types - processed_types)
 
     ordered_types_buffer = sorted(unordered_types_buffer, key=lambda x: x[0].__name__)
 
