@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from typing import Any, AsyncGenerator, Generator
 
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+from sqlalchemy.ext.asyncio.engine import AsyncEngine
 
 from jararaca.microservice import AppContext, AppInterceptor
 
@@ -36,14 +37,19 @@ def use_session(connection_name: str = "default") -> AsyncSession:
 @dataclass
 class AIOSQAConfig:
     connection_name: str
-    url: str
+    url: str | AsyncEngine
 
 
 class AIOSqlAlchemySessionInterceptor(AppInterceptor):
 
     def __init__(self, config: AIOSQAConfig):
         self.config = config
-        self.engine = create_async_engine(self.config.url)
+        self.engine = (
+            create_async_engine(self.config.url)
+            if isinstance(self.config.url, str)
+            else self.config.url
+        )
+
         self.sessionmaker = async_sessionmaker(self.engine)
 
     @asynccontextmanager
