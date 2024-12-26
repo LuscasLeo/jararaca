@@ -255,7 +255,7 @@ class HttpRpcClientBuilder:
                     elif attr.attribute_type == "body":
                         body = compiled_kwargs[attr.name]
                     elif attr.attribute_type == "param":
-                        compiled_path = path.replace(
+                        compiled_path = compiled_path.replace(
                             f":{attr.name}", str(compiled_kwargs[attr.name])
                         )
 
