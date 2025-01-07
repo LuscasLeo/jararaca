@@ -72,6 +72,8 @@ def parse_literal_value(value: Any) -> str:
 
 
 def get_field_type_for_ts(field_type: Any) -> Any:
+    if field_type is Any:
+        return "any"
     if field_type == UploadFile:
         return "File"
     if field_type == time:
@@ -336,6 +338,7 @@ def is_primitive(field_type: Any) -> bool:
             UploadFile,
             IO,
             time,
+            Any,
         ]
         or get_origin(field_type)
         in [list, dict, tuple, Literal, UnionType, Annotated, set]
