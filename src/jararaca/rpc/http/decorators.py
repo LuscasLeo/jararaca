@@ -1,6 +1,16 @@
 import inspect
 from dataclasses import dataclass
-from typing import Any, Awaitable, Callable, Literal, Protocol, Type, TypeVar, cast
+from typing import (
+    Any,
+    Awaitable,
+    Callable,
+    Iterable,
+    Literal,
+    Protocol,
+    Type,
+    TypeVar,
+    cast,
+)
 
 from pydantic import BaseModel
 
@@ -11,10 +21,10 @@ class HttpMapping:
 
     HTTP_MAPPING_ATTR = "__rest_http_client_mapping__"
 
-    def __init__(self, method: str, path: str, success_status: int = 200):
+    def __init__(self, method: str, path: str, success_statuses: Iterable[int] = [200]):
         self.method = method
         self.path = path
-        self.success_status = success_status
+        self.success_statuses = success_statuses
 
     def __call__(self, func: DECORATED_FUNC) -> DECORATED_FUNC:
         HttpMapping.register(func, self)
@@ -147,10 +157,6 @@ class RestClient:
         return cls
 
 
-class RPCRequestNetworkError(Exception):
-    pass
-
-
 @dataclass
 class HttpRPCResponse:
 
@@ -165,6 +171,92 @@ class HttpRPCRequest:
     headers: list[tuple[str, str]]
     query_params: dict[str, str]
     body: bytes | None
+
+
+class RPCRequestNetworkError(Exception):
+
+    def __init__(self, request: HttpRPCRequest, backend_request: Any):
+        self.request = request
+        self.backend_request = backend_request
+        super().__init__("Network error")
+
+
+class RPCUnhandleError(Exception):
+
+    def __init__(
+        self, request: HttpRPCRequest, response: HttpRPCResponse, backend_response: Any
+    ):
+        self.request = request
+        self.response = response
+        self.backend = backend_response
+        super().__init__(f"Unhandle error {response.status_code}")
+
+
+class HandleHttpErrorCallback(Protocol):
+
+    def __call__(self, request: HttpRPCRequest, response: HttpRPCResponse) -> Any: ...
+
+
+class GlobalHttpErrorHandler:
+
+    HTTP_ERROR_ATTR = "__global_http_error__"
+
+    def __init__(self, status_code: int, callback: HandleHttpErrorCallback):
+        self.status_code = status_code
+        self.callback = callback
+
+    def __call__(self, cls: Type[DECORATED_CLASS]) -> Type[DECORATED_CLASS]:
+        GlobalHttpErrorHandler.register(cls, self)
+        return cls
+
+    @staticmethod
+    def register(
+        cls: Type[DECORATED_CLASS], instance: "GlobalHttpErrorHandler"
+    ) -> None:
+        if not hasattr(cls, GlobalHttpErrorHandler.HTTP_ERROR_ATTR):
+            setattr(cls, GlobalHttpErrorHandler.HTTP_ERROR_ATTR, [])
+
+        getattr(cls, GlobalHttpErrorHandler.HTTP_ERROR_ATTR).append(instance)
+
+    @staticmethod
+    def get(cls: Type[DECORATED_CLASS]) -> "list[GlobalHttpErrorHandler]":
+        if hasattr(cls, GlobalHttpErrorHandler.HTTP_ERROR_ATTR):
+            return cast(
+                list[GlobalHttpErrorHandler],
+                getattr(cls, GlobalHttpErrorHandler.HTTP_ERROR_ATTR),
+            )
+
+        return []
+
+
+class RouteHttpErrorHandler:
+
+    ATTR = "__route_http_errors__"
+
+    def __init__(self, status_code: int, callback: HandleHttpErrorCallback):
+        self.status_code = status_code
+        self.callback = callback
+
+    def __call__(self, cls: DECORATED_FUNC) -> DECORATED_FUNC:
+        RouteHttpErrorHandler.register(cls, self)
+        return cls
+
+    @staticmethod
+    def register(cls: DECORATED_FUNC, instance: "RouteHttpErrorHandler") -> None:
+        if not hasattr(cls, RouteHttpErrorHandler.ATTR):
+            setattr(cls, RouteHttpErrorHandler.ATTR, [])
+
+        getattr(cls, RouteHttpErrorHandler.ATTR).append(instance)
+
+    @staticmethod
+    def get(cls: DECORATED_FUNC) -> "list[RouteHttpErrorHandler]":
+        if hasattr(cls, RouteHttpErrorHandler.ATTR):
+            return cast(
+                list[RouteHttpErrorHandler],
+                getattr(cls, RouteHttpErrorHandler.ATTR),
+            )
+
+        return []
 
 
 class HttpRPCAsyncBackend(Protocol):
@@ -219,6 +311,8 @@ class HttpRpcClientBuilder:
     def build(self, cls: type[T]) -> T:
         rest_client = RestClient.get(cls)
 
+        global_error_handlers = GlobalHttpErrorHandler.get(cls)
+
         if rest_client is None:
             raise ValueError("Class is not a rest client")
 
@@ -226,7 +320,7 @@ class HttpRpcClientBuilder:
             mapping: HttpMapping,
             method_call: Callable[..., Any],
             http_method: str,
-            path: str,
+            route_error_handlers: list[RouteHttpErrorHandler],
         ) -> Callable[..., Awaitable[Any]]:
 
             call_signature = inspect.signature(method_call)
@@ -285,10 +379,12 @@ class HttpRpcClientBuilder:
 
                 return_type = inspect.signature(method_call).return_annotation
 
-                if response.status_code != mapping.success_status:
-                    raise ValueError(
-                        "Invalid status code: {}".format(response.status_code)
-                    )
+                if response.status_code not in mapping.success_statuses:
+                    for error_handler in route_error_handlers + global_error_handlers:
+                        if error_handler.status_code == response.status_code:
+                            return error_handler.callback(request, response)
+
+                    raise RPCUnhandleError(request, response, None)
 
                 if return_type is not inspect.Signature.empty:
                     if issubclass(return_type, BaseModel):
@@ -309,10 +405,40 @@ class HttpRpcClientBuilder:
         for attr_name in dir(cls):
             method_call = getattr(cls, attr_name)
             if (mapping := HttpMapping.get(method_call)) is not None:
+                route_error_handlers = RouteHttpErrorHandler.get(method_call)
                 setattr(
                     dummy,
                     attr_name,
-                    create_method(mapping, method_call, mapping.method, mapping.path),
+                    create_method(
+                        mapping=mapping,
+                        method_call=method_call,
+                        http_method=mapping.method,
+                        route_error_handlers=route_error_handlers,
+                    ),
                 )
 
         return cast(T, dummy)
+
+
+__all__ = [
+    "Post",
+    "Get",
+    "Patch",
+    "Put",
+    "Delete",
+    "Query",
+    "Header",
+    "Body",
+    "PathParam",
+    "RestClient",
+    "HttpRPCAsyncBackend",
+    "HttpRPCRequest",
+    "HttpRPCResponse",
+    "RPCRequestNetworkError",
+    "HttpRpcClientBuilder",
+    "RequestMiddleware",
+    "TracedRequestMiddleware",
+    "GlobalHttpErrorHandler",
+    "RouteHttpErrorHandler",
+    "HandleHttpErrorCallback",
+]

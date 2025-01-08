@@ -35,5 +35,7 @@ class HTTPXHttpRPCAsyncBackend(HttpRPCAsyncBackend):
                     status_code=response.status_code,
                     data=response.content,
                 )
-            except httpx.NetworkError:
-                raise RPCRequestNetworkError("Network error")
+            except httpx.NetworkError as err:
+                raise RPCRequestNetworkError(
+                    request=request, backend_request=err.request
+                )
