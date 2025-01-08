@@ -12,12 +12,17 @@ from jararaca.presentation.hooks import (
 from jararaca.rpc.http.decorators import Body
 from jararaca.rpc.http.decorators import Delete as HttpDelete
 from jararaca.rpc.http.decorators import Get as HttpGet
-from jararaca.rpc.http.decorators import Header, HttpMapping
+from jararaca.rpc.http.decorators import GlobalHttpErrorHandler, Header, HttpMapping
 from jararaca.rpc.http.decorators import Patch as HttpPatch
 from jararaca.rpc.http.decorators import PathParam
 from jararaca.rpc.http.decorators import Post as HttpPost
 from jararaca.rpc.http.decorators import Put as HttpPut
-from jararaca.rpc.http.decorators import Query, RequestAttribute, RestClient
+from jararaca.rpc.http.decorators import (
+    Query,
+    RequestAttribute,
+    RestClient,
+    RouteHttpErrorHandler,
+)
 
 from .core.providers import ProviderSpec, Token
 from .di import Container
@@ -143,4 +148,6 @@ __all__ = [
     "AppConfigurationInterceptor",
     "UseMiddleware",
     "UseDependency",
+    "GlobalHttpErrorHandler",
+    "RouteHttpErrorHandler",
 ]
