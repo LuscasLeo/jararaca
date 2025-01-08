@@ -299,31 +299,29 @@ class QueryOperations(Generic[QUERY_FILTER_T, QUERY_ENTITY_T]):
             select(self.entity_type),
         )
 
-        filtered_query = self.generate_filtered_query(filter, query)
-
-        filtered_total = (
-            await self.session.execute(
-                select(func.count()).select_from(filtered_query.subquery())
-            )
-        ).scalar_one()
-
         unpaginated_total = (
             await self.session.execute(
                 select(func.count()).select_from(query.subquery())
             )
         ).scalar_one()
 
+        filtered_query = self.generate_filtered_query(filter, query)
+
         paginated_query = filtered_query.limit(filter.page_size).offset(
             (filter.page) * filter.page_size
         )
+
+        filtered_total = (
+            await self.session.execute(
+                select(func.count()).select_from(paginated_query.subquery())
+            )
+        ).scalar_one()
 
         return Paginated(
             items=[
                 e
                 for e in self.judge_unique(
-                    await self.session.execute(
-                        self.generate_filtered_query(filter, paginated_query)
-                    )
+                    await self.session.execute(paginated_query)
                 ).scalars()
             ],
             total=filtered_total,
