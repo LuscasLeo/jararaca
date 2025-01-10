@@ -26,13 +26,13 @@ from jararaca.rpc.http.decorators import (
 
 from .core.providers import ProviderSpec, Token
 from .di import Container
-from .messagebus import Message
-from .messagebus.decorators import IncomingHandler, MessageBusController
+from .messagebus.decorators import MessageBusController, MessageHandler
 from .messagebus.interceptors.publisher_interceptor import (
     AIOPikaConnectionFactory,
     MessageBusPublisherInterceptor,
 )
 from .messagebus.publisher import use_publisher
+from .messagebus.types import Message, MessageOf
 from .messagebus.worker import MessageBusWorker
 from .microservice import Microservice, use_current_container
 from .persistence.base import (
@@ -112,6 +112,7 @@ __all__ = [
     "CriteriaBasedAttributeQueryInjector",
     "Identifiable",
     "IdentifiableEntity",
+    "MessageOf",
     "Message",
     "StringCriteria",
     "DateCriteria",
@@ -124,7 +125,7 @@ __all__ = [
     "CRUDOperations",
     "RestController",
     "MessageBusController",
-    "IncomingHandler",
+    "MessageHandler",
     "ScheduledAction",
     "Microservice",
     "ProviderSpec",

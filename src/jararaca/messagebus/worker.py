@@ -7,18 +7,20 @@ from dataclasses import dataclass
 from typing import Any, AsyncContextManager, AsyncGenerator, Type, get_origin
 
 import aio_pika
+import aio_pika.abc
 import uvloop
 from pydantic import BaseModel
 
 from jararaca.core.uow import UnitOfWorkContextProvider
 from jararaca.di import Container
 from jararaca.lifecycle import AppLifecycle
-from jararaca.messagebus import Message
 from jararaca.messagebus.decorators import (
-    MESSAGEBUS_INCOMING_MAP,
-    IncomingHandler,
+    MESSAGE_HANDLER_DATA_SET,
     MessageBusController,
+    MessageHandler,
+    MessageHandlerData,
 )
+from jararaca.messagebus.types import Message, MessageOf
 from jararaca.microservice import MessageBusAppContext, Microservice
 
 logger = logging.getLogger(__name__)
@@ -32,27 +34,18 @@ class AioPikaWorkerConfig:
     prefetch_count: int
 
 
-class AioPikaMessage(Message[BaseModel]):
+class AioPikaMessage(MessageOf[Message]):
 
     def __init__(
         self,
         aio_pika_message: aio_pika.abc.AbstractIncomingMessage,
-        model_type: Type[BaseModel],
+        model_type: Type[Message],
     ):
         self.aio_pika_message = aio_pika_message
         self.model_type = model_type
 
-    def payload(self) -> BaseModel:
+    def payload(self) -> Message:
         return self.model_type.model_validate_json(self.aio_pika_message.body)
-
-    async def ack(self) -> None:
-        await self.aio_pika_message.ack()
-
-    async def reject(self) -> None:
-        await self.aio_pika_message.reject()
-
-    async def nack(self) -> None:
-        await self.aio_pika_message.nack()
 
 
 class MessageProcessingLocker:
@@ -83,11 +76,12 @@ class AioPikaMicroserviceConsumer:
     def __init__(
         self,
         config: AioPikaWorkerConfig,
-        incoming_map: MESSAGEBUS_INCOMING_MAP,
+        message_handler_set: MESSAGE_HANDLER_DATA_SET,
         uow_context_provider: UnitOfWorkContextProvider,
     ):
         self.config = config
-        self.incoming_map = incoming_map
+        self.message_handler_set = message_handler_set
+        self.incoming_map: dict[str, MessageHandlerData] = {}
         self.uow_context_provider = uow_context_provider
         self.shutdown_event = asyncio.Event()
         self.lock = asyncio.Lock()
@@ -95,77 +89,142 @@ class AioPikaMicroserviceConsumer:
 
     async def consume(self) -> None:
 
-        connection = await aio_pika.connect_robust(self.config.url)
+        connection = await aio_pika.connect(self.config.url)
 
         channel = await connection.channel()
 
         await channel.set_qos(prefetch_count=self.config.prefetch_count)
 
-        topic_exchange = await channel.declare_exchange(
-            self.config.exchange, type="topic"
-        )
+        main_x = await channel.declare_exchange(self.config.exchange, type="topic")
 
-        queue = await channel.declare_queue(self.config.queue)
+        dlx = await channel.declare_exchange("dlx", type="direct")
 
-        topics = [*self.incoming_map.keys()]
+        dlq = await channel.declare_queue("dlq")
 
-        for topic in topics:
-            await queue.bind(topic_exchange, routing_key=topic)
+        await dlq.bind(dlx, routing_key="dlq")
 
-        await queue.consume(self.message_consumer)
+        for handler in self.message_handler_set:
+
+            queue_name = f"{self.config.exchange}.{handler.message_type.MESSAGE_TOPIC}.{handler.callable.__module__}.{handler.callable.__qualname__}"
+            routing_key = (
+                f"{self.config.exchange}.{handler.message_type.MESSAGE_TOPIC}.#"
+            )
+
+            self.incoming_map[queue_name] = handler
+
+            queue = await channel.declare_queue(
+                queue_name,
+                arguments={
+                    "x-dead-letter-exchange": "dlx",
+                    "x-dead-letter-routing-key": "dlq",
+                },
+            )
+
+            await queue.bind(exchange=self.config.exchange, routing_key=routing_key)
+
+            await queue.consume(
+                callback=MessageHandlerCallback(
+                    consumer=self,
+                    queue_name=queue_name,
+                    routing_key=routing_key,
+                    message_handler=handler,
+                ),
+                no_ack=handler.spec.auto_ack,
+            )
+
+            print(f"Consuming {queue_name}")
 
         await self.shutdown_event.wait()
         logger.info("Worker shutting down")
 
-        async with self.lock:
-            logger.info("Stopping task incoming")
+        await self.wait_all_tasks_done()
 
-        logger.info("Waiting for all messages to be processed")
-        await asyncio.gather(*self.tasks, return_exceptions=True)
-
-        await channel.close()
+        channel.close()
         await connection.close()
+
+    async def wait_all_tasks_done(self) -> None:
+        async with self.lock:
+            await asyncio.gather(*self.tasks)
+
+
+class MessageHandlerCallback:
+
+    def __init__(
+        self,
+        consumer: AioPikaMicroserviceConsumer,
+        queue_name: str,
+        routing_key: str,
+        message_handler: MessageHandlerData,
+    ):
+        self.consumer = consumer
+        self.queue_name = queue_name
+        self.routing_key = routing_key
+        self.message_handler = message_handler
 
     async def message_consumer(
         self, aio_pika_message: aio_pika.abc.AbstractIncomingMessage
     ) -> None:
-        logger.info("Message received from %s", aio_pika_message.routing_key)
-
-        if self.shutdown_event.is_set():
+        if self.consumer.shutdown_event.is_set():
             return
 
-        await self.process_message(aio_pika_message)
+        async with self.consumer.lock:
+            task = asyncio.create_task(self.handle_message(aio_pika_message))
+            self.consumer.tasks.add(task)
+            # task.add_done_callback(self.tasks.discard)
+            task.add_done_callback(self.handle_message_consume_done)
 
-    async def process_message(
+    def handle_message_consume_done(self, task: asyncio.Task[Any]) -> None:
+        self.consumer.tasks.discard(task)
+        if task.cancelled():
+            return
+
+        if (error := task.exception()) is not None:
+            logger.exception("Error processing message", exc_info=error)
+
+    async def __call__(
         self, aio_pika_message: aio_pika.abc.AbstractIncomingMessage
     ) -> None:
-        async with self.lock:
-            task = asyncio.create_task(self.handle_message(aio_pika_message))
-            self.tasks.add(task)
-            task.add_done_callback(self.tasks.discard)
+        await self.message_consumer(aio_pika_message)
+
+    async def handle_reject_message(
+        self,
+        aio_pika_message: aio_pika.abc.AbstractIncomingMessage,
+        requeue: bool = False,
+    ) -> None:
+        if self.message_handler.spec.auto_ack is False:
+            await aio_pika_message.reject(requeue=requeue)
+        elif requeue:
+            logger.warning(
+                f"Message {aio_pika_message.message_id} ({self.queue_name}) cannot be requeued because auto_ack is enabled"
+            )
 
     async def handle_message(
         self, aio_pika_message: aio_pika.abc.AbstractIncomingMessage
     ) -> None:
 
-        topic = aio_pika_message.routing_key
+        rounting_key = self.queue_name
 
-        if topic is None:
-            logging.warning("No topic found for message")
+        if rounting_key is None:
+            logger.warning("No topic found for message")
+            await self.handle_reject_message(aio_pika_message)
+            return
+
+        handler_data = self.consumer.incoming_map.get(rounting_key)
+
+        if handler_data is None:
+            logger.warning("No handler found for topic '%s'" % rounting_key)
+            await self.handle_reject_message(aio_pika_message)
 
             return
 
-        handler = self.incoming_map.get(topic)
-
-        if handler is None:
-            logging.warning("No handler found for topic '%s'" % topic)
-            return
+        handler = handler_data.callable
 
         sig = inspect.signature(handler)
 
         if len(sig.parameters) != 1:
-            logging.warning(
-                "Handler for topic '%s' must have exactly one parameter" % topic
+            logger.warning(
+                "Handler for topic '%s' must have exactly one parameter which is MessageOf[T extends Message]"
+                % rounting_key
             )
             return
 
@@ -173,38 +232,38 @@ class AioPikaMicroserviceConsumer:
 
         param_origin = get_origin(parameter.annotation)
 
-        if param_origin is not Message:
-            logging.warning(
+        if param_origin is not MessageOf:
+            logger.warning(
                 "Handler for topic '%s' must have exactly one parameter of type Message"
-                % topic
+                % rounting_key
             )
             return
 
         if len(parameter.annotation.__args__) != 1:
-            logging.warning(
+            logger.warning(
                 "Handler for topic '%s' must have exactly one parameter of type Message"
-                % topic
+                % rounting_key
             )
             return
 
         message_type = parameter.annotation.__args__[0]
 
         if not issubclass(message_type, BaseModel):
-            logging.warning(
+            logger.warning(
                 "Handler for topic '%s' must have exactly one parameter of type Message[BaseModel]"
-                % topic
+                % rounting_key
             )
             return
 
         builded_message = AioPikaMessage(aio_pika_message, message_type)
 
-        incoming_message_spec = IncomingHandler.get_message_incoming(handler)
+        incoming_message_spec = MessageHandler.get_message_incoming(handler)
         assert incoming_message_spec is not None
 
-        async with self.uow_context_provider(
+        async with self.consumer.uow_context_provider(
             MessageBusAppContext(
                 message=builded_message,
-                topic=topic,
+                topic=rounting_key,
             )
         ):
             ctx: AsyncContextManager[Any]
@@ -215,24 +274,28 @@ class AioPikaMicroserviceConsumer:
             async with ctx:
                 try:
                     await handler(builded_message)
-                    if incoming_message_spec.auto_ack:
+                    if not incoming_message_spec.auto_ack:
                         await aio_pika_message.ack()
                 except BaseException as base_exc:
                     if incoming_message_spec.exception_handler is not None:
                         try:
                             incoming_message_spec.exception_handler(base_exc)
                         except Exception as nested_exc:
-                            logging.exception(
+                            logger.exception(
                                 f"Error processing exception handler: {base_exc} | {nested_exc}"
                             )
                     else:
-                        logging.exception(f"Error processing message on topic {topic}")
-                    if incoming_message_spec.nack_on_exception:
-                        await aio_pika_message.nack()
+                        logger.exception(
+                            f"Error processing message on topic {rounting_key}"
+                        )
+                    if incoming_message_spec.requeue_on_exception:
+                        await self.handle_reject_message(aio_pika_message, requeue=True)
                     else:
-                        await aio_pika_message.reject(requeue=False)
+                        await self.handle_reject_message(
+                            aio_pika_message, requeue=False
+                        )
                 else:
-                    logging.info("Message processed successfully")
+                    logger.info("Message processed successfully")
 
 
 @asynccontextmanager
@@ -260,7 +323,7 @@ class MessageBusWorker:
         return self._consumer
 
     async def start_async(self) -> None:
-        combined_messagebus_incoming_map: MESSAGEBUS_INCOMING_MAP = {}
+        all_message_handlers_set: MESSAGE_HANDLER_DATA_SET = set()
         async with self.lifecycle():
             for instance_type in self.app.controllers:
                 controller = MessageBusController.get_messagebus(instance_type)
@@ -270,19 +333,29 @@ class MessageBusWorker:
 
                 instance: Any = self.container.get_by_type(instance_type)
 
-                factory = controller.get_messagebus_factory()(instance)
+                factory = controller.get_messagebus_factory()
+                handlers = factory(instance)
 
-                for topic, consumer_func in factory.items():
-                    if topic in combined_messagebus_incoming_map:
-                        logging.warning(
-                            "Topic '%s' already registered by another controller"
+                message_handler_data_map: dict[str, MessageHandlerData] = {}
+
+                for handler_data in handlers:
+                    message_type = handler_data.spec.message_type
+                    topic = message_type.MESSAGE_TOPIC
+                    if (
+                        topic in message_handler_data_map
+                        and message_type.MESSAGE_TYPE == "task"
+                    ):
+                        logger.warning(
+                            "Task handler for topic '%s' already registered. Skipping"
                             % topic
                         )
-                    combined_messagebus_incoming_map[topic] = consumer_func
+                        continue
+                    message_handler_data_map[topic] = handler_data
+                    all_message_handlers_set.add(handler_data)
 
             consumer = self._consumer = AioPikaMicroserviceConsumer(
                 config=self.config,
-                incoming_map=combined_messagebus_incoming_map,
+                message_handler_set=all_message_handlers_set,
                 uow_context_provider=self.uow_context_provider,
             )
 
@@ -291,7 +364,7 @@ class MessageBusWorker:
     def start_sync(self) -> None:
 
         def on_shutdown(loop: asyncio.AbstractEventLoop) -> None:
-            logging.info("Shutting down")
+            logger.info("Shutting down")
             self.consumer.shutdown_event.set()
 
         with asyncio.Runner(loop_factory=uvloop.new_event_loop) as runner:

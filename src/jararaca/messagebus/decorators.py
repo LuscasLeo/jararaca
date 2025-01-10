@@ -1,13 +1,68 @@
 import inspect
-from typing import Any, Callable, TypeVar, cast
+from dataclasses import dataclass
+from typing import Any, Awaitable, Callable, Generic, TypeVar, cast
 
-from jararaca.messagebus import Message
+from jararaca.messagebus.types import INHERITS_MESSAGE_CO, Message, MessageOf
 
 DECORATED_FUNC = TypeVar("DECORATED_FUNC", bound=Callable[..., Any])
 DECORATED_CLASS = TypeVar("DECORATED_CLASS", bound=Any)
 
 
-MESSAGEBUS_INCOMING_MAP = dict[str, Callable[[Message[Any]], Any]]
+class MessageHandler(Generic[INHERITS_MESSAGE_CO]):
+
+    MESSAGE_INCOMING_ATTR = "__message_incoming__"
+
+    def __init__(
+        self,
+        message: type[INHERITS_MESSAGE_CO],
+        timeout: int | None = None,
+        exception_handler: Callable[[BaseException], None] | None = None,
+        nack_on_exception: bool = False,
+        auto_ack: bool = True,
+    ) -> None:
+        self.message_type = message
+
+        self.timeout = timeout
+        self.exception_handler = exception_handler
+        self.requeue_on_exception = nack_on_exception
+        self.auto_ack = auto_ack
+
+    def __call__(
+        self, func: Callable[[Any, MessageOf[INHERITS_MESSAGE_CO]], Awaitable[None]]
+    ) -> Callable[[Any, MessageOf[INHERITS_MESSAGE_CO]], Awaitable[None]]:
+
+        MessageHandler[Any].register(func, self)
+
+        return func
+
+    @staticmethod
+    def register(
+        func: Callable[[Any, MessageOf[INHERITS_MESSAGE_CO]], Awaitable[None]],
+        message_incoming: "MessageHandler[Any]",
+    ) -> None:
+
+        setattr(func, MessageHandler.MESSAGE_INCOMING_ATTR, message_incoming)
+
+    @staticmethod
+    def get_message_incoming(
+        func: Callable[[MessageOf[Any]], Awaitable[Any]]
+    ) -> "MessageHandler[Message] | None":
+        if not hasattr(func, MessageHandler.MESSAGE_INCOMING_ATTR):
+            return None
+
+        return cast(
+            MessageHandler[Message], getattr(func, MessageHandler.MESSAGE_INCOMING_ATTR)
+        )
+
+
+@dataclass(frozen=True)
+class MessageHandlerData:
+    message_type: type[Any]
+    spec: MessageHandler[Message]
+    callable: Callable[[MessageOf[Any]], Awaitable[None]]
+
+
+MESSAGE_HANDLER_DATA_SET = set[MessageHandlerData]
 
 
 class MessageBusController:
@@ -15,11 +70,11 @@ class MessageBusController:
     MESSAGEBUS_ATTR = "__messagebus__"
 
     def __init__(self) -> None:
-        self.messagebus_factory: Callable[[Any], MESSAGEBUS_INCOMING_MAP] | None = None
+        self.messagebus_factory: Callable[[Any], MESSAGE_HANDLER_DATA_SET] | None = None
 
     def get_messagebus_factory(
         self,
-    ) -> Callable[[DECORATED_CLASS], MESSAGEBUS_INCOMING_MAP]:
+    ) -> Callable[[DECORATED_CLASS], MESSAGE_HANDLER_DATA_SET]:
         if self.messagebus_factory is None:
             raise Exception("MessageBus factory is not set")
         return self.messagebus_factory
@@ -28,14 +83,14 @@ class MessageBusController:
 
         def messagebus_factory(
             instance: DECORATED_CLASS,
-        ) -> MESSAGEBUS_INCOMING_MAP:
-            handlers: MESSAGEBUS_INCOMING_MAP = {}
+        ) -> MESSAGE_HANDLER_DATA_SET:
+            handlers: MESSAGE_HANDLER_DATA_SET = set()
             inspect.signature(func)
 
             members = inspect.getmembers(func, predicate=inspect.isfunction)
 
             for name, member in members:
-                message_incoming = IncomingHandler.get_message_incoming(member)
+                message_incoming = MessageHandler.get_message_incoming(member)
 
                 if message_incoming is None:
                     continue
@@ -46,7 +101,13 @@ class MessageBusController:
                         % (name, func.__module__, func.__qualname__)
                     )
 
-                handlers[message_incoming.topic] = getattr(instance, name)
+                handlers.add(
+                    MessageHandlerData(
+                        message_type=message_incoming.message_type,
+                        spec=message_incoming,
+                        callable=getattr(instance, name),
+                    )
+                )
 
             return handlers
 
@@ -70,43 +131,4 @@ class MessageBusController:
 
         return cast(
             MessageBusController, getattr(func, MessageBusController.MESSAGEBUS_ATTR)
-        )
-
-
-class IncomingHandler:
-
-    MESSAGE_INCOMING_ATTR = "__message_incoming__"
-
-    def __init__(
-        self,
-        topic: str,
-        timeout: int | None = None,
-        exception_handler: Callable[[BaseException], None] | None = None,
-        nack_on_exception: bool = False,
-        auto_ack: bool = True,
-    ) -> None:
-        self.topic = topic
-        self.timeout = timeout
-        self.exception_handler = exception_handler
-        self.nack_on_exception = nack_on_exception
-        self.auto_ack = auto_ack
-
-    def __call__(self, func: DECORATED_FUNC) -> DECORATED_FUNC:
-
-        IncomingHandler.register(func, self)
-
-        return func
-
-    @staticmethod
-    def register(func: DECORATED_FUNC, message_incoming: "IncomingHandler") -> None:
-
-        setattr(func, IncomingHandler.MESSAGE_INCOMING_ATTR, message_incoming)
-
-    @staticmethod
-    def get_message_incoming(func: DECORATED_FUNC) -> "IncomingHandler | None":
-        if not hasattr(func, IncomingHandler.MESSAGE_INCOMING_ATTR):
-            return None
-
-        return cast(
-            IncomingHandler, getattr(func, IncomingHandler.MESSAGE_INCOMING_ATTR)
         )

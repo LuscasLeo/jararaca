@@ -41,10 +41,10 @@ class AIOPikaMessagePublisher(MessagePublisher):
             self.exchange_name,
             type=aio_pika.ExchangeType.TOPIC,
         )
-
+        routing_key = f"{self.exchange_name}.{topic}."
         await exchange.publish(
             aio_pika.Message(body=message.model_dump_json().encode()),
-            routing_key=topic,
+            routing_key=routing_key,
         )
 
 

@@ -19,10 +19,10 @@ from typing import (
 )
 
 from fastapi import Request, WebSocket
-from pydantic import BaseModel
 
 from jararaca.core.providers import ProviderSpec, T, Token
-from jararaca.messagebus import Message
+from jararaca.messagebus import MessageOf
+from jararaca.messagebus.types import Message
 
 if TYPE_CHECKING:
     from typing_extensions import TypeIs
@@ -46,7 +46,7 @@ class HttpAppContext:
 @dataclass
 class MessageBusAppContext:
     topic: str
-    message: Message[BaseModel]
+    message: MessageOf[Message]
     context_type: Literal["message_bus"] = "message_bus"
 
 
