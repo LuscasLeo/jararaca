@@ -139,7 +139,7 @@ class AioPikaMicroserviceConsumer:
 
         await self.wait_all_tasks_done()
 
-        channel.close()
+        await channel.close()
         await connection.close()
 
     async def wait_all_tasks_done(self) -> None:
@@ -295,7 +295,9 @@ class MessageHandlerCallback:
                             aio_pika_message, requeue=False
                         )
                 else:
-                    logger.info("Message processed successfully")
+                    logger.info(
+                        f"Message {aio_pika_message.message_id}#{self.queue_name} processed successfully"
+                    )
 
 
 @asynccontextmanager
