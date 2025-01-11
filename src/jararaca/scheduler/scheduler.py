@@ -92,6 +92,8 @@ class Scheduler:
             )
             return
 
+        logger.info(f"Running {func.__module__}.{func.__qualname__}")
+
         action_specs = ScheduledAction.get_scheduled_action(func)
 
         assert action_specs is not None
