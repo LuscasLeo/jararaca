@@ -1,4 +1,5 @@
 import inspect
+import re
 import typing
 from contextlib import contextmanager
 from contextvars import ContextVar
@@ -12,6 +13,7 @@ from typing import (
     IO,
     Annotated,
     Any,
+    ClassVar,
     Generator,
     Generic,
     Literal,
@@ -28,6 +30,13 @@ from pydantic import BaseModel, PlainValidator
 
 from jararaca.microservice import Microservice
 from jararaca.presentation.decorators import HttpMapping, RestController
+from jararaca.presentation.websocket.decorators import RegisterWebSocketMessage
+
+CONSTANT_PATTERN = re.compile(r"^[A-Z_]+$")
+
+
+def is_constant(name: str) -> bool:
+    return CONSTANT_PATTERN.match(name) is not None
 
 
 class ParseContext:
@@ -96,6 +105,8 @@ def get_field_type_for_ts(field_type: Any) -> Any:
         return "boolean"
     if field_type == Decimal:
         return "number"
+    if get_origin(field_type) == ClassVar:
+        return get_field_type_for_ts(field_type.__args__[0])
     if get_origin(field_type) == tuple:
         return f"[{', '.join([get_field_type_for_ts(field) for field in field_type.__args__])}]"
     if get_origin(field_type) == list:
@@ -190,8 +201,39 @@ def parse_type_to_typescript_interface(
         if not is_primitive(inherited_class)
     ]
 
+    cls_consts = set(
+        field_name for field_name in (f for f in dir(basemodel_type) if is_constant(f))
+    )
+
+    inherited_classes_consts_conflict = {
+        inherited_class: set(
+            field_name
+            for field_name in (f for f in dir(inherited_class) if is_constant(f))
+        ).intersection(cls_consts)
+        for inherited_class in valid_inherited_classes
+    }
+
     extends_expression = (
-        f" extends {', '.join([get_field_type_for_ts(inherited_class) for inherited_class in valid_inherited_classes])}"
+        " extends %s"
+        % ", ".join(
+            [
+                (
+                    "%s" % get_field_type_for_ts(inherited_class)
+                    if not inherited_classes_consts_conflict[inherited_class]
+                    else "Omit<%s, %s>"
+                    % (
+                        get_field_type_for_ts(inherited_class),
+                        " | ".join(
+                            '"%s"' % field_name
+                            for field_name in inherited_classes_consts_conflict[
+                                inherited_class
+                            ]
+                        ),
+                    )
+                )
+                for inherited_class in valid_inherited_classes
+            ]
+        )
         if len(valid_inherited_classes) > 0
         else ""
     )
@@ -206,7 +248,13 @@ def parse_type_to_typescript_interface(
         )
 
     if hasattr(basemodel_type, "__annotations__"):
+        for field_name in (f for f in dir(basemodel_type) if is_constant(f)):
+            field = getattr(basemodel_type, field_name)
+            if field is None:
+                continue
+            string_builder.write(f"  {field_name}: {parse_literal_value(field)};\n")
         for field_name, field in basemodel_type.__annotations__.items():
+
             string_builder.write(
                 f"  {snake_to_camel(field_name)}: {get_field_type_for_ts(field)};\n"
             )
@@ -259,8 +307,11 @@ def write_microservice_to_typescript_interface(
     rest_controller_buffer = StringIO()
     mapped_types_set: set[Any] = set()
 
+    websocket_registries: set[RegisterWebSocketMessage] = set()
+
     for controller in microservice.controllers:
         rest_controller = RestController.get_controller(controller)
+
         if rest_controller is None:
             continue
 
@@ -271,7 +322,33 @@ def write_microservice_to_typescript_interface(
         mapped_types_set.update(types)
         rest_controller_buffer.write(controller_class_str)
 
+        registered = RegisterWebSocketMessage.get(controller)
+
+        if registered is not None:
+            for message_type in registered.message_types:
+                identified_types, text = parse_type_to_typescript_interface(
+                    message_type
+                )
+                websocket_registries.add(registered)
+                mapped_types_set.update(identified_types)
+                rest_controller_buffer.write(text)
+
     final_buffer = StringIO()
+
+    final_buffer.write(
+        """
+export type WebSocketMessageMap = {
+%s
+}
+"""
+        % "\n".join(
+            [
+                f'\t"{message.MESSAGE_ID}": {message.__name__};'
+                for registers in websocket_registries
+                for message in registers.message_types
+            ]
+        )
+    )
 
     final_buffer.write(
         """
