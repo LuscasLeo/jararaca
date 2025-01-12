@@ -20,9 +20,9 @@ from jararaca import (
     Post,
     QueryOperations,
     RestController,
+    raises_404_on,
     use_session,
 )
-from jararaca.presentation.hooks import raises_404_on
 
 
 class ${entityNamePascalCase}Entity(IdentifiableEntity, DatedEntity):
