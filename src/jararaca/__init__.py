@@ -2,10 +2,15 @@ from importlib import import_module
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-
     from jararaca.microservice import AppContext, AppInterceptor
     from jararaca.observability.interceptor import ObservabilityInterceptor
     from jararaca.observability.providers.otel import OtelObservabilityProvider
+    from jararaca.persistence.sort_filter import (
+        FILTER_SORT_ENTITY_ATTR_MAP,
+        FilterModel,
+        SortFilterRunner,
+        SortModel,
+    )
     from jararaca.presentation.hooks import (
         raises_200_on,
         raises_400_on,
@@ -99,6 +104,10 @@ if TYPE_CHECKING:
     from .tools.app_config.interceptor import AppConfigurationInterceptor
 
     __all__ = [
+        "FILTER_SORT_ENTITY_ATTR_MAP",
+        "FilterModel",
+        "SortFilterRunner",
+        "SortModel",
         "RegisterWebSocketMessage",
         "TracedRequestMiddleware",
         "raises_http_exception_on",
@@ -186,6 +195,10 @@ if TYPE_CHECKING:
 __SPEC_PARENT__: str = __spec__.parent  # type: ignore
 # A mapping of {<member name>: (package, <module name>)} defining dynamic imports
 _dynamic_imports: "dict[str, tuple[str, str, str | None]]" = {
+    "FILTER_SORT_ENTITY_ATTR_MAP": (__SPEC_PARENT__, "persistence.sort_filter", None),
+    "FilterModel": (__SPEC_PARENT__, "persistence.sort_filter", None),
+    "SortFilterRunner": (__SPEC_PARENT__, "persistence.sort_filter", None),
+    "SortModel": (__SPEC_PARENT__, "persistence.sort_filter", None),
     "RegisterWebSocketMessage": (
         __SPEC_PARENT__,
         "presentation.websocket.decorators",
