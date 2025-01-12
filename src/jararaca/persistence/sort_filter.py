@@ -94,6 +94,12 @@ class SortFilterRunner:
                 case _:
                     raise ValueError(f"Unsupported string operator: {filter.operator}")
         elif field_type in [date, datetime]:
+            match filter.operator:
+                case "isEmpty":
+                    return query.filter(field == None)  # noqa
+                case "isNotEmpty":
+                    return query.filter(field != None)  # noqa
+
             __value = (
                 filter.value[0] if isinstance(filter.value, list) else filter.value
             )
@@ -114,10 +120,7 @@ class SortFilterRunner:
                     return query.filter(field < value)
                 case "onOrBefore":
                     return query.filter(field <= value)
-                case "isEmpty":
-                    return query.filter(field == None)  # noqa
-                case "isNotEmpty":
-                    return query.filter(field != None)  # noqa
+
                 case _:
                     raise ValueError(
                         f"Unsupported data/datetime operator: {filter.operator}"
