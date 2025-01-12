@@ -299,7 +299,6 @@ _dynamic_imports: "dict[str, tuple[str, str, str | None]]" = {
 
 def __getattr__(attr_name: str) -> object:
 
-    print(f"__getattr__({attr_name!r})")
     dynamic_attr = _dynamic_imports.get(attr_name)
     if dynamic_attr is None:
         raise AttributeError(f"module {__name__!r} has no attribute {attr_name!r}")
@@ -314,6 +313,7 @@ def __getattr__(attr_name: str) -> object:
         module = import_module(f"{package}.{module_name}", package=package)
         result = getattr(module, attr_name if realname is None else realname)
         g = globals()
+        g[attr_name] = result
         for k, (_, _, realname) in _dynamic_imports.items():
             # if v_module_name == module_name and k not in _deprecated_dynamic_imports:
             g[k] = getattr(module, k if realname is None else realname)

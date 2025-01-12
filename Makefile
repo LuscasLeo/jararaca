@@ -1,7 +1,7 @@
-
+bump-type ?= patch
 
 fast-release:
-	poetry version patch && \
+	poetry version $(bump-type) && \
 	git add pyproject.toml && \
 	git commit -m $$(poetry version -s) && \
 	git tag $$(poetry version -s) && \
