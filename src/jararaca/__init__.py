@@ -1,6 +1,8 @@
 from importlib import import_module
 from typing import TYPE_CHECKING
 
+from jararaca.observability.providers.otel import OtelObservabilityProvider
+
 if TYPE_CHECKING:
 
     from jararaca.microservice import AppContext, AppInterceptor
@@ -16,6 +18,7 @@ if TYPE_CHECKING:
         raises_http_exception_on,
     )
     from jararaca.rpc.http.backends.httpx import HTTPXHttpRPCAsyncBackend
+    from jararaca.rpc.http.backends.otel import TracedRequestMiddleware
     from jararaca.rpc.http.decorators import Body
     from jararaca.rpc.http.decorators import Delete as HttpDelete
     from jararaca.rpc.http.decorators import Get as HttpGet
@@ -94,6 +97,7 @@ if TYPE_CHECKING:
     from .tools.app_config.interceptor import AppConfigurationInterceptor
 
     __all__ = [
+        "TracedRequestMiddleware",
         "raises_http_exception_on",
         "raises_200_on",
         "raises_422_on",
@@ -173,12 +177,18 @@ if TYPE_CHECKING:
         "use_app_context",
         "AppContext",
         "AppInterceptor",
+        "OtelObservabilityProvider",
     ]
 
 __SPEC_PARENT__: str = __spec__.parent  # type: ignore
-
 # A mapping of {<member name>: (package, <module name>)} defining dynamic imports
 _dynamic_imports: "dict[str, tuple[str, str, str | None]]" = {
+    "OtelObservabilityProvider": (
+        __SPEC_PARENT__,
+        "observability.providers.otel",
+        None,
+    ),
+    "TracedRequestMiddleware": (__SPEC_PARENT__, "rpc.http.backends.otel", None),
     "raises_http_exception_on": (__SPEC_PARENT__, "presentation.hooks", None),
     "raises_200_on": (__SPEC_PARENT__, "presentation.hooks", None),
     "raises_400_on": (__SPEC_PARENT__, "presentation.hooks", None),
