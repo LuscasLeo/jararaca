@@ -31,6 +31,9 @@ from pydantic import BaseModel, PlainValidator
 from jararaca.microservice import Microservice
 from jararaca.presentation.decorators import HttpMapping, RestController
 from jararaca.presentation.websocket.decorators import RegisterWebSocketMessage
+from jararaca.presentation.websocket.websocket_interceptor import (
+    WebSocketMessageWrapper,
+)
 
 CONSTANT_PATTERN = re.compile(r"^[A-Z_]+$")
 
@@ -254,9 +257,10 @@ def parse_type_to_typescript_interface(
                 continue
             string_builder.write(f"  {field_name}: {parse_literal_value(field)};\n")
         for field_name, field in basemodel_type.__annotations__.items():
-
+            if field_name in cls_consts:
+                continue
             string_builder.write(
-                f"  {snake_to_camel(field_name)}: {get_field_type_for_ts(field)};\n"
+                f"  {snake_to_camel(field_name) if not is_constant(field_name) else field_name}: {get_field_type_for_ts(field)};\n"
             )
             mapped_types.update(extract_all_envolved_types(field))
             mapped_types.add(field)
@@ -308,6 +312,7 @@ def write_microservice_to_typescript_interface(
     mapped_types_set: set[Any] = set()
 
     websocket_registries: set[RegisterWebSocketMessage] = set()
+    mapped_types_set.add(WebSocketMessageWrapper)
 
     for controller in microservice.controllers:
         rest_controller = RestController.get_controller(controller)

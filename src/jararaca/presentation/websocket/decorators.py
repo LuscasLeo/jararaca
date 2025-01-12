@@ -37,14 +37,14 @@ class WebSocketEndpoint:
         return cls
 
 
-INHERITS_MESSAGE = TypeVar("INHERITS_MESSAGE", bound=WebSocketMessageBase)
+INHERITS_WS_MESSAGE = TypeVar("INHERITS_WS_MESSAGE", bound=WebSocketMessageBase)
 
 
 class RegisterWebSocketMessage:
 
     REGISTER_WEBSOCKET_MESSAGE_ATTR = "__register_websocket_message__"
 
-    def __init__(self, *message_types: type[INHERITS_MESSAGE]) -> None:
+    def __init__(self, *message_types: type[INHERITS_WS_MESSAGE]) -> None:
         self.message_types = message_types
 
     @staticmethod

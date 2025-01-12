@@ -1,13 +1,14 @@
 import asyncio
 import inspect
 from contextlib import asynccontextmanager
-from typing import Any, AsyncGenerator, Protocol
+from typing import Any, AsyncGenerator, Generic, Protocol
 
 from fastapi import APIRouter
 from fastapi import Depends as DependsF
 from fastapi import WebSocketDisconnect
 from fastapi.params import Depends
 from fastapi.websockets import WebSocket, WebSocketState
+from pydantic import BaseModel
 
 from jararaca.core.uow import UnitOfWorkContextProvider
 from jararaca.di import Container
@@ -26,9 +27,18 @@ from jararaca.presentation.websocket.context import (
     WebSocketConnectionManager,
     provide_ws_manager,
 )
-from jararaca.presentation.websocket.decorators import WebSocketEndpoint
+from jararaca.presentation.websocket.decorators import (
+    INHERITS_WS_MESSAGE,
+    WebSocketEndpoint,
+)
 
 from .base_types import WebSocketMessageBase
+
+
+class WebSocketMessageWrapper(BaseModel, Generic[INHERITS_WS_MESSAGE]):
+
+    MESSAGE_ID: str
+    message: INHERITS_WS_MESSAGE
 
 
 class BroadcastFunc(Protocol):
@@ -70,9 +80,6 @@ class WebSocketConnectionManagerImpl(WebSocketConnectionManager):
 
     async def broadcast(self, message: bytes) -> None:
 
-        # for websocket in self.all_websockets:
-        #     await websocket.send_bytes(message)
-
         await self.backend.broadcast(message)
 
     async def _broadcast_from_backend(self, message: bytes) -> None:
@@ -86,7 +93,12 @@ class WebSocketConnectionManagerImpl(WebSocketConnectionManager):
 
     async def send(self, rooms: list[str], message: WebSocketMessageBase) -> None:
 
-        await self.backend.send(rooms, message.model_dump_json().encode())
+        await self.backend.send(
+            rooms,
+            WebSocketMessageWrapper(MESSAGE_ID=message.MESSAGE_ID, message=message)
+            .model_dump_json()
+            .encode(),
+        )
 
     async def _send_from_backend(self, rooms: list[str], message: bytes) -> None:
         async with self.lock:
