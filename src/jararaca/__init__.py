@@ -88,7 +88,10 @@ if TYPE_CHECKING:
         provide_ws_manager,
         use_ws_manager,
     )
-    from .presentation.websocket.decorators import WebSocketEndpoint
+    from .presentation.websocket.decorators import (
+        RegisterWebSocketMessage,
+        WebSocketEndpoint,
+    )
     from .presentation.websocket.redis import RedisWebSocketConnectionBackend
     from .presentation.websocket.types import WebSocketMessage
     from .presentation.websocket.websocket_interceptor import WebSocketInterceptor
@@ -96,6 +99,7 @@ if TYPE_CHECKING:
     from .tools.app_config.interceptor import AppConfigurationInterceptor
 
     __all__ = [
+        "RegisterWebSocketMessage",
         "TracedRequestMiddleware",
         "raises_http_exception_on",
         "raises_200_on",
@@ -182,6 +186,11 @@ if TYPE_CHECKING:
 __SPEC_PARENT__: str = __spec__.parent  # type: ignore
 # A mapping of {<member name>: (package, <module name>)} defining dynamic imports
 _dynamic_imports: "dict[str, tuple[str, str, str | None]]" = {
+    "RegisterWebSocketMessage": (
+        __SPEC_PARENT__,
+        "presentation.websocket.decorators",
+        None,
+    ),
     "OtelObservabilityProvider": (
         __SPEC_PARENT__,
         "observability.providers.otel",
