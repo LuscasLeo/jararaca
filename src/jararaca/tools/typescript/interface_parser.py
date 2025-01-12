@@ -251,11 +251,11 @@ def parse_type_to_typescript_interface(
         )
 
     if hasattr(basemodel_type, "__annotations__"):
-        for field_name in (f for f in dir(basemodel_type) if is_constant(f)):
-            field = getattr(basemodel_type, field_name)
-            if field is None:
-                continue
-            string_builder.write(f"  {field_name}: {parse_literal_value(field)};\n")
+        # for field_name in (f for f in dir(basemodel_type) if is_constant(f)):
+        #     field = getattr(basemodel_type, field_name)
+        #     if field is None:
+        #         continue
+        #     string_builder.write(f"  {field_name}: {parse_literal_value(field)};\n")
         for field_name, field in basemodel_type.__annotations__.items():
             if field_name in cls_consts:
                 continue
