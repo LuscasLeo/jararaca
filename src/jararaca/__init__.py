@@ -1,12 +1,11 @@
 from importlib import import_module
 from typing import TYPE_CHECKING
 
-from jararaca.observability.providers.otel import OtelObservabilityProvider
-
 if TYPE_CHECKING:
 
     from jararaca.microservice import AppContext, AppInterceptor
     from jararaca.observability.interceptor import ObservabilityInterceptor
+    from jararaca.observability.providers.otel import OtelObservabilityProvider
     from jararaca.presentation.hooks import (
         raises_200_on,
         raises_400_on,
