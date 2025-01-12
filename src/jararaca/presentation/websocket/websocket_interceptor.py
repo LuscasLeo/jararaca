@@ -1,8 +1,7 @@
 import asyncio
 import inspect
-from contextlib import asynccontextmanager, contextmanager, suppress
-from contextvars import ContextVar
-from typing import Any, AsyncGenerator, Generator, Protocol
+from contextlib import asynccontextmanager
+from typing import Any, AsyncGenerator, Protocol
 
 from fastapi import APIRouter
 from fastapi import Depends as DependsF
@@ -23,7 +22,13 @@ from jararaca.presentation.decorators import (
     UseDependency,
     UseMiddleware,
 )
+from jararaca.presentation.websocket.context import (
+    WebSocketConnectionManager,
+    provide_ws_manager,
+)
 from jararaca.presentation.websocket.decorators import WebSocketEndpoint
+
+from .base_types import WebSocketMessageBase
 
 
 class BroadcastFunc(Protocol):
@@ -47,7 +52,7 @@ class WebSocketConnectionBackend(Protocol):
     async def shutdown(self) -> None: ...
 
 
-class WebSocketConnectionManager:
+class WebSocketConnectionManagerImpl(WebSocketConnectionManager):
 
     def __init__(
         self, backend: WebSocketConnectionBackend, shutdown_event: asyncio.Event
@@ -79,12 +84,9 @@ class WebSocketConnectionManager:
                 async with self.lock:  # TODO: check if this can cause concurrency slowdown issues
                     self.all_websockets.remove(websocket)
 
-    async def send(self, rooms: list[str], message: bytes) -> None:
-        # for room in rooms:
-        #     for websocket in self.rooms.get(room, set()):
-        #         await websocket.send_bytes(message)
+    async def send(self, rooms: list[str], message: WebSocketMessageBase) -> None:
 
-        await self.backend.send(rooms, message)
+        await self.backend.send(rooms, message.model_dump_json().encode())
 
     async def _send_from_backend(self, rooms: list[str], message: bytes) -> None:
         async with self.lock:
@@ -111,28 +113,6 @@ class WebSocketConnectionManager:
             room.discard(websocket)
 
     # async def setup_consumer(self, websocket: WebSocket) -> None: ...
-
-
-_ws_manage_ctx = ContextVar[WebSocketConnectionManager]("ws_manage_ctx")
-
-
-def use_ws_manager() -> WebSocketConnectionManager:
-    try:
-        return _ws_manage_ctx.get()
-    except LookupError:
-        raise RuntimeError("No WebSocketConnectionManager found")
-
-
-@contextmanager
-def provide_ws_manager(
-    ws_manager: WebSocketConnectionManager,
-) -> Generator[None, None, None]:
-    token = _ws_manage_ctx.set(ws_manager)
-    try:
-        yield
-    finally:
-        with suppress(ValueError):
-            _ws_manage_ctx.reset(token)
 
 
 class WebSocketInterceptor(AppInterceptor, AppInterceptorWithLifecycle):
@@ -164,7 +144,7 @@ class WebSocketInterceptor(AppInterceptor, AppInterceptorWithLifecycle):
     def __init__(self, backend: WebSocketConnectionBackend) -> None:
         self.backend = backend
         self.shutdown_event = asyncio.Event()
-        self.connection_manager = WebSocketConnectionManager(
+        self.connection_manager = WebSocketConnectionManagerImpl(
             backend, self.shutdown_event
         )
 
