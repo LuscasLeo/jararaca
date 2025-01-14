@@ -23,6 +23,8 @@ from sqlalchemy import DateTime, Result, Select, delete, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
+from jararaca.persistence.sort_filter import FilterModel, SortModel
+
 IDENTIFIABLE_SCHEMA_T = TypeVar("IDENTIFIABLE_SCHEMA_T")
 logger = logging.getLogger(__name__)
 
@@ -205,6 +207,8 @@ class CRUDOperations(Generic[IDENTIFIABLE_T]):
 class PaginatedFilter(BaseModel):
     page: Annotated[int, Field(gt=-1)] = 1
     page_size: int = 10
+    sort_models: list[SortModel] = []
+    filter_model: list[FilterModel] = []
 
 
 class QueryInjector(Protocol):
