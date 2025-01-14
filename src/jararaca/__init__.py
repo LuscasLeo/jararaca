@@ -54,9 +54,13 @@ if TYPE_CHECKING:
     from .messagebus.types import Message, MessageOf
     from .messagebus.worker import MessageBusWorker
     from .microservice import Microservice, use_app_context, use_current_container
-    from .persistence.base import (
-        T_BASEMODEL,
-        BaseEntity,
+    from .persistence.base import T_BASEMODEL, BaseEntity
+    from .persistence.interceptors.aiosqa_interceptor import (
+        AIOSQAConfig,
+        AIOSqlAlchemySessionInterceptor,
+        use_session,
+    )
+    from .persistence.utilities import (
         CriteriaBasedAttributeQueryInjector,
         CRUDOperations,
         DateCriteria,
@@ -70,11 +74,6 @@ if TYPE_CHECKING:
         QueryInjector,
         QueryOperations,
         StringCriteria,
-    )
-    from .persistence.interceptors.aiosqa_interceptor import (
-        AIOSQAConfig,
-        AIOSqlAlchemySessionInterceptor,
-        use_session,
     )
     from .presentation.decorators import (
         Delete,
@@ -232,27 +231,31 @@ _dynamic_imports: "dict[str, tuple[str, str, str | None]]" = {
     "HttpPut": (__SPEC_PARENT__, "rpc.http.decorators", "Put"),
     "HttpDelete": (__SPEC_PARENT__, "rpc.http.decorators", "Delete"),
     "ObservabilityInterceptor": (__SPEC_PARENT__, "observability.interceptor", None),
-    "QueryInjector": (__SPEC_PARENT__, "persistence.base", None),
+    "QueryInjector": (__SPEC_PARENT__, "persistence.utilities", None),
     "HttpMicroservice": (__SPEC_PARENT__, "presentation.http_microservice", None),
     "use_current_container": (__SPEC_PARENT__, "microservice", None),
     "T_BASEMODEL": (__SPEC_PARENT__, "persistence.base", None),
-    "DatedEntity": (__SPEC_PARENT__, "persistence.base", None),
+    "DatedEntity": (__SPEC_PARENT__, "persistence.utilities", None),
     "BaseEntity": (__SPEC_PARENT__, "persistence.base", None),
     "use_ws_manager": (__SPEC_PARENT__, "presentation.websocket.context", None),
     "WebSocketEndpoint": (__SPEC_PARENT__, "presentation.websocket.decorators", None),
-    "CriteriaBasedAttributeQueryInjector": (__SPEC_PARENT__, "persistence.base", None),
-    "Identifiable": (__SPEC_PARENT__, "persistence.base", None),
-    "IdentifiableEntity": (__SPEC_PARENT__, "persistence.base", None),
+    "CriteriaBasedAttributeQueryInjector": (
+        __SPEC_PARENT__,
+        "persistence.utilities",
+        None,
+    ),
+    "Identifiable": (__SPEC_PARENT__, "persistence.utilities", None),
+    "IdentifiableEntity": (__SPEC_PARENT__, "persistence.utilities", None),
     "MessageOf": (__SPEC_PARENT__, "messagebus.types", None),
     "Message": (__SPEC_PARENT__, "messagebus.types", None),
-    "StringCriteria": (__SPEC_PARENT__, "persistence.base", None),
-    "DateCriteria": (__SPEC_PARENT__, "persistence.base", None),
-    "DateOrderedFilter": (__SPEC_PARENT__, "persistence.base", None),
-    "DateOrderedQueryInjector": (__SPEC_PARENT__, "persistence.base", None),
-    "Paginated": (__SPEC_PARENT__, "persistence.base", None),
-    "PaginatedFilter": (__SPEC_PARENT__, "persistence.base", None),
-    "QueryOperations": (__SPEC_PARENT__, "persistence.base", None),
-    "CRUDOperations": (__SPEC_PARENT__, "persistence.base", None),
+    "StringCriteria": (__SPEC_PARENT__, "persistence.utilities", None),
+    "DateCriteria": (__SPEC_PARENT__, "persistence.utilities", None),
+    "DateOrderedFilter": (__SPEC_PARENT__, "persistence.utilities", None),
+    "DateOrderedQueryInjector": (__SPEC_PARENT__, "persistence.utilities", None),
+    "Paginated": (__SPEC_PARENT__, "persistence.utilities", None),
+    "PaginatedFilter": (__SPEC_PARENT__, "persistence.utilities", None),
+    "QueryOperations": (__SPEC_PARENT__, "persistence.utilities", None),
+    "CRUDOperations": (__SPEC_PARENT__, "persistence.utilities", None),
     "RestController": (__SPEC_PARENT__, "presentation.decorators", None),
     "MessageBusController": (__SPEC_PARENT__, "messagebus.decorators", None),
     "MessageHandler": (__SPEC_PARENT__, "messagebus.decorators", None),
