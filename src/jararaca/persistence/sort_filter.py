@@ -74,9 +74,9 @@ class SortFilterRunner:
         if field_type is str:
             match filter.operator:
                 case "contains":
-                    return query.filter(field.contains(filter.value))
+                    return query.filter(field.icontains(filter.value))
                 case "doesNotContain":
-                    return query.filter(~field.contains(filter.value))
+                    return query.filter(~field.icontains(filter.value))
                 case "equals":
                     return query.filter(field == filter.value)
                 case "doesNotEqual":
