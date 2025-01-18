@@ -27,6 +27,7 @@ from fastapi import Request, Response, UploadFile
 from fastapi.params import Body, Cookie, Depends, Header, Path, Query
 from fastapi.security.http import HTTPBase
 from pydantic import BaseModel, PlainValidator
+from pydantic_core import PydanticUndefinedType
 
 from jararaca.microservice import Microservice
 from jararaca.presentation.decorators import HttpMapping, RestController
@@ -259,8 +260,17 @@ def parse_type_to_typescript_interface(
         for field_name, field in basemodel_type.__annotations__.items():
             if field_name in cls_consts:
                 continue
+
+            has_default_value = (
+                get_origin(field) is not Literal
+                and field_name in basemodel_type.model_fields
+                and not isinstance(
+                    basemodel_type.model_fields[field_name].default,
+                    PydanticUndefinedType,
+                )
+            )
             string_builder.write(
-                f"  {snake_to_camel(field_name) if not is_constant(field_name) else field_name}: {get_field_type_for_ts(field)};\n"
+                f"  {snake_to_camel(field_name) if not is_constant(field_name) else field_name}{'?' if has_default_value else ''}: {get_field_type_for_ts(field)};\n"
             )
             mapped_types.update(extract_all_envolved_types(field))
             mapped_types.add(field)
