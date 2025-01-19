@@ -103,6 +103,8 @@ class SortFilterRunner:
             __value = (
                 filter.value[0] if isinstance(filter.value, list) else filter.value
             )
+            if not __value.strip():
+                return query
             if field_type is date:
                 value = datetime.strptime(__value, "%Y-%m-%d").date()
             else:
