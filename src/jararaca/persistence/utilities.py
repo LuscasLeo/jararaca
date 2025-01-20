@@ -29,7 +29,12 @@ from jararaca.persistence.base import (
     BaseEntity,
     recursive_get_dict,
 )
-from jararaca.persistence.sort_filter import FilterModel, SortModel
+from jararaca.persistence.sort_filter import (
+    FilterModel,
+    FilterRuleApplier,
+    SortModel,
+    SortRuleApplier,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -257,11 +262,15 @@ class QueryOperations(Generic[QUERY_FILTER_T, QUERY_ENTITY_T]):
         session_provider: Callable[[], AsyncSession],
         filters_functions: list[QueryInjector],
         unique: bool = False,
+        sort_rule_applier: SortRuleApplier | None = None,
+        filter_rule_applier: FilterRuleApplier | None = None,
     ) -> None:
         self.entity_type: type[QUERY_ENTITY_T] = entity_type
         self.session_provider = session_provider
         self.filters_functions = filters_functions
         self.unique = unique
+        self.sort_rule_applier = sort_rule_applier
+        self.filter_rule_applier = filter_rule_applier
 
     @property
     def session(self) -> AsyncSession:
@@ -280,6 +289,16 @@ class QueryOperations(Generic[QUERY_FILTER_T, QUERY_ENTITY_T]):
             interceptors,
             select(self.entity_type),
         )
+
+        if self.sort_rule_applier:
+            query = self.sort_rule_applier.create_query_for_sorting_list(
+                query, filter.sort_models
+            )
+
+        if self.filter_rule_applier:
+            query = self.filter_rule_applier.create_query_for_filter_list(
+                query, filter.filter_models
+            )
 
         unpaginated_total = (
             await self.session.execute(
