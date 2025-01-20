@@ -10,7 +10,7 @@ from sqlalchemy.orm.attributes import InstrumentedAttribute
 from jararaca import BaseEntity
 
 FILTER_SORT_ENTITY_ATTR_MAP = dict[
-    str, InstrumentedAttribute[str | int | datetime | date | UUID]
+    str, InstrumentedAttribute[str | int | datetime | date | UUID | None]
 ]
 
 
@@ -54,14 +54,12 @@ class FilterModel(BaseModel):
 INHERITS_BASE_ENTITY = TypeVar("INHERITS_BASE_ENTITY", bound=BaseEntity)
 
 
-class SortFilterRunner:
+class FilterRuleApplier:
     def __init__(
         self,
         allowed_filters: FILTER_SORT_ENTITY_ATTR_MAP,
-        allowed_sorts: FILTER_SORT_ENTITY_ATTR_MAP,
     ):
         self.allowed_filters = allowed_filters
-        self.allowed_sorts = allowed_sorts
 
     def create_query_for_filter(
         self, query: Select[Tuple[INHERITS_BASE_ENTITY]], filter: FilterModel
@@ -168,6 +166,14 @@ class SortFilterRunner:
     ) -> Select[Tuple[INHERITS_BASE_ENTITY]]:
         return reduce(lambda q, f: self.create_query_for_filter(q, f), filters, query)
 
+
+class SortRuleApplier:
+    def __init__(
+        self,
+        allowed_sorts: FILTER_SORT_ENTITY_ATTR_MAP,
+    ):
+        self.allowed_sorts = allowed_sorts
+
     def create_query_for_sorting(
         self, query: Select[Tuple[INHERITS_BASE_ENTITY]], sort: SortModel
     ) -> Select[Tuple[INHERITS_BASE_ENTITY]]:
@@ -180,6 +186,38 @@ class SortFilterRunner:
         self, query: Select[Tuple[INHERITS_BASE_ENTITY]], sorts: list[SortModel]
     ) -> Select[Tuple[INHERITS_BASE_ENTITY]]:
         return reduce(lambda q, s: self.create_query_for_sorting(q, s), sorts, query)
+
+
+class SortFilterRunner:
+    def __init__(
+        self,
+        allowed_filters: FILTER_SORT_ENTITY_ATTR_MAP,
+        allowed_sorts: FILTER_SORT_ENTITY_ATTR_MAP,
+    ):
+        self.allowed_filters = allowed_filters
+        self.allowed_sorts = allowed_sorts
+        self.filter_rule_applier = FilterRuleApplier(allowed_filters)
+        self.sort_rule_applier = SortRuleApplier(allowed_sorts)
+
+    def create_query_for_filter(
+        self, query: Select[Tuple[INHERITS_BASE_ENTITY]], filter: FilterModel
+    ) -> Select[Tuple[INHERITS_BASE_ENTITY]]:
+        return self.filter_rule_applier.create_query_for_filter(query, filter)
+
+    def create_query_for_filter_list(
+        self, query: Select[Tuple[INHERITS_BASE_ENTITY]], filters: list[FilterModel]
+    ) -> Select[Tuple[INHERITS_BASE_ENTITY]]:
+        return self.filter_rule_applier.create_query_for_filter_list(query, filters)
+
+    def create_query_for_sorting(
+        self, query: Select[Tuple[INHERITS_BASE_ENTITY]], sort: SortModel
+    ) -> Select[Tuple[INHERITS_BASE_ENTITY]]:
+        return self.sort_rule_applier.create_query_for_sorting(query, sort)
+
+    def create_query_for_sorting_list(
+        self, query: Select[Tuple[INHERITS_BASE_ENTITY]], sorts: list[SortModel]
+    ) -> Select[Tuple[INHERITS_BASE_ENTITY]]:
+        return self.sort_rule_applier.create_query_for_sorting_list(query, sorts)
 
 
 __all__ = [
