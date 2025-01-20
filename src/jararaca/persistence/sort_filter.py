@@ -69,6 +69,8 @@ class FilterRuleApplier:
         if field is None:
             raise ValueError(f"Unsupported field: {filter.field}")
         field_type = field.property.columns[0].type.python_type
+        if not filter.value:  # Is empty string or empty list
+            return query
 
         if field_type is str:
             match filter.operator:
