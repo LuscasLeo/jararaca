@@ -138,14 +138,29 @@ class FilterRuleApplier:
                 case _:
                     raise ValueError(f"Unsupported bool operator: {filter.operator}")
         elif field_type is int:
-            __value = (
-                filter.value[0] if isinstance(filter.value, list) else filter.value
-            )
-            if not re.match(r"^-?\d+$", __value):
+
+            if isinstance(filter.value, list):
+                match filter.operator:
+                    case "isAnyOf":
+                        if not len(filter.value):
+                            return query
+
+                        number_values = [
+                            int(v) for v in filter.value if re.match(r"^-?\d+$", v)
+                        ]
+                        return query.filter(field.in_(number_values))
+                    case _:
+                        raise ValueError(
+                            f"Unsupported int operator: {filter.operator} for list"
+                        )
+
+            if not re.match(r"^-?\d+$", filter.value):
                 raise ValueError(
-                    f"Unsupported value type for int field: {type(__value)}"
+                    f"Invalid integer value: {filter.value} for field {field}"
                 )
-            number_value = int(__value)
+
+            number_value = int(filter.value)
+
             match filter.operator:
                 case "=":
                     return query.filter(field == number_value)
@@ -163,18 +178,10 @@ class FilterRuleApplier:
                     return query.filter(field == None)  # noqa
                 case "isNotEmpty":
                     return query.filter(field != None)  # noqa
-                case "isAnyOf":
-                    if not isinstance(filter.value, list):
-                        raise ValueError(
-                            f"Unsupported value type for isAnyOf operator: {type(filter.value)}"
-                        )
-
-                    number_values = [
-                        int(v) for v in filter.value if re.match(r"^-?\d+$", v)
-                    ]
-                    return query.filter(field.in_(number_values))
                 case _:
-                    raise ValueError(f"Unsupported int operator: {filter.operator}")
+                    raise ValueError(
+                        f"Unsupported int operator: {filter.operator} for single value"
+                    )
 
         raise ValueError(f"Unsupported field type: {field_type}")
 
