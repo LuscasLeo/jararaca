@@ -113,7 +113,7 @@ def get_field_type_for_ts(field_type: Any) -> Any:
         return get_field_type_for_ts(field_type.__args__[0])
     if get_origin(field_type) == tuple:
         return f"[{', '.join([get_field_type_for_ts(field) for field in field_type.__args__])}]"
-    if get_origin(field_type) == list:
+    if get_origin(field_type) == list or get_origin(field_type) == frozenset:
         return f"Array<{get_field_type_for_ts(field_type.__args__[0])}>"
     if get_origin(field_type) == set:
         return f"Array<{get_field_type_for_ts(field_type.__args__[0])}> // Set"
