@@ -14,6 +14,10 @@ from pydantic import BaseModel
 from jararaca.core.uow import UnitOfWorkContextProvider
 from jararaca.di import Container
 from jararaca.lifecycle import AppLifecycle
+from jararaca.messagebus.bus_message_controller import (
+    BusMessageController,
+    provide_bus_message_controller,
+)
 from jararaca.messagebus.decorators import (
     MESSAGE_HANDLER_DATA_SET,
     MessageBusController,
@@ -170,7 +174,6 @@ class MessageHandlerCallback:
         async with self.consumer.lock:
             task = asyncio.create_task(self.handle_message(aio_pika_message))
             self.consumer.tasks.add(task)
-            # task.add_done_callback(self.tasks.discard)
             task.add_done_callback(self.handle_message_consume_done)
 
     def handle_message_consume_done(self, task: asyncio.Task[Any]) -> None:
@@ -273,7 +276,10 @@ class MessageHandlerCallback:
                 ctx = none_context()
             async with ctx:
                 try:
-                    await handler(builded_message)
+                    with provide_bus_message_controller(
+                        AioPikaMessageBusController(aio_pika_message)
+                    ):
+                        await handler(builded_message)
                     if not incoming_message_spec.auto_ack:
                         await aio_pika_message.ack()
                 except BaseException as base_exc:
@@ -374,3 +380,23 @@ class MessageBusWorker:
                 signal.SIGINT, on_shutdown, runner.get_loop()
             )
             runner.run(self.start_async())
+
+
+class AioPikaMessageBusController(BusMessageController):
+    def __init__(self, aio_pika_message: aio_pika.abc.AbstractIncomingMessage):
+        self.aio_pika_message = aio_pika_message
+
+    async def ack(self) -> None:
+        await self.aio_pika_message.ack()
+
+    async def nack(self) -> None:
+        await self.aio_pika_message.nack()
+
+    async def reject(self) -> None:
+        await self.aio_pika_message.reject()
+
+    async def retry(self) -> None:
+        await self.aio_pika_message.reject(requeue=True)
+
+    async def retry_later(self, delay: int) -> None:
+        raise NotImplementedError("Not implemented")
