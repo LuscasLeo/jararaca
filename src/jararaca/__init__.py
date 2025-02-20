@@ -2,6 +2,14 @@ from importlib import import_module
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
+    from jararaca.messagebus.bus_message_controller import (
+        ack,
+        nack,
+        reject,
+        retry,
+        retry_later,
+        use_bus_message_controller,
+    )
     from jararaca.microservice import AppContext, AppInterceptor
     from jararaca.observability.interceptor import ObservabilityInterceptor
     from jararaca.observability.providers.otel import OtelObservabilityProvider
@@ -47,7 +55,7 @@ if TYPE_CHECKING:
     from .core.providers import ProviderSpec, Token
     from .di import Container
     from .messagebus.decorators import MessageBusController, MessageHandler
-    from .messagebus.interceptors.publisher_interceptor import (
+    from .messagebus.interceptors.aiopika_publisher_interceptor import (
         AIOPikaConnectionFactory,
         MessageBusPublisherInterceptor,
     )
@@ -104,6 +112,12 @@ if TYPE_CHECKING:
     from .tools.app_config.interceptor import AppConfigurationInterceptor
 
     __all__ = [
+        "use_bus_message_controller",
+        "ack",
+        "nack",
+        "reject",
+        "retry",
+        "retry_later",
         "RPCRequestNetworkError",
         "FILTER_SORT_ENTITY_ATTR_MAP",
         "FilterModel",
@@ -196,6 +210,16 @@ if TYPE_CHECKING:
 __SPEC_PARENT__: str = __spec__.parent  # type: ignore
 # A mapping of {<member name>: (package, <module name>)} defining dynamic imports
 _dynamic_imports: "dict[str, tuple[str, str, str | None]]" = {
+    "use_bus_message_controller": (
+        __SPEC_PARENT__,
+        "messagebus.bus_message_controller",
+        None,
+    ),
+    "ack": (__SPEC_PARENT__, "messagebus.bus_message_controller", None),
+    "nack": (__SPEC_PARENT__, "messagebus.bus_message_controller", None),
+    "reject": (__SPEC_PARENT__, "messagebus.bus_message_controller", None),
+    "retry": (__SPEC_PARENT__, "messagebus.bus_message_controller", None),
+    "retry_later": (__SPEC_PARENT__, "messagebus.bus_message_controller", None),
     "RPCRequestNetworkError": (__SPEC_PARENT__, "rpc.http.decorators", None),
     "FILTER_SORT_ENTITY_ATTR_MAP": (__SPEC_PARENT__, "persistence.sort_filter", None),
     "FilterModel": (__SPEC_PARENT__, "persistence.sort_filter", None),
