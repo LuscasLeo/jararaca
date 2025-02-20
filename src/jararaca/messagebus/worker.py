@@ -2,7 +2,7 @@ import asyncio
 import inspect
 import logging
 import signal
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, suppress
 from dataclasses import dataclass
 from typing import Any, AsyncContextManager, AsyncGenerator, Type, get_origin
 
@@ -281,7 +281,8 @@ class MessageHandlerCallback:
                     ):
                         await handler(builded_message)
                     if not incoming_message_spec.auto_ack:
-                        await aio_pika_message.ack()
+                        with suppress(aio_pika.MessageProcessError):
+                            await aio_pika_message.ack()
                 except BaseException as base_exc:
                     if incoming_message_spec.exception_handler is not None:
                         try:
