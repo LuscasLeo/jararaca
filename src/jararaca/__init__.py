@@ -41,6 +41,7 @@ if TYPE_CHECKING:
         RequestAttribute,
         RestClient,
         RouteHttpErrorHandler,
+        RPCRequestNetworkError,
     )
 
     from .core.providers import ProviderSpec, Token
@@ -103,6 +104,7 @@ if TYPE_CHECKING:
     from .tools.app_config.interceptor import AppConfigurationInterceptor
 
     __all__ = [
+        "RPCRequestNetworkError",
         "FILTER_SORT_ENTITY_ATTR_MAP",
         "FilterModel",
         "SortFilterRunner",
@@ -194,6 +196,7 @@ if TYPE_CHECKING:
 __SPEC_PARENT__: str = __spec__.parent  # type: ignore
 # A mapping of {<member name>: (package, <module name>)} defining dynamic imports
 _dynamic_imports: "dict[str, tuple[str, str, str | None]]" = {
+    "RPCRequestNetworkError": (__SPEC_PARENT__, "rpc.http.decorators", None),
     "FILTER_SORT_ENTITY_ATTR_MAP": (__SPEC_PARENT__, "persistence.sort_filter", None),
     "FilterModel": (__SPEC_PARENT__, "persistence.sort_filter", None),
     "SortFilterRunner": (__SPEC_PARENT__, "persistence.sort_filter", None),
