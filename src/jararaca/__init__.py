@@ -321,12 +321,12 @@ _dynamic_imports: "dict[str, tuple[str, str, str | None]]" = {
     "use_publisher": (__SPEC_PARENT__, "messagebus.publisher", None),
     "AIOPikaConnectionFactory": (
         __SPEC_PARENT__,
-        "messagebus.interceptors.publisher_interceptor",
+        "messagebus.interceptors.aiopika_publisher_interceptor",
         None,
     ),
     "MessageBusPublisherInterceptor": (
         __SPEC_PARENT__,
-        "messagebus.interceptors.publisher_interceptor",
+        "messagebus.interceptors.aiopika_publisher_interceptor",
         None,
     ),
     "RedisWebSocketConnectionBackend": (
