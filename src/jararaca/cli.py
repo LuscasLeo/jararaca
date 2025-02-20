@@ -31,8 +31,8 @@ def find_item_by_module_path(
 
     try:
         module = importlib.import_module(module_name)
-    except ImportError:
-        raise ValueError("App module not found")
+    except ImportError as e:
+        raise ImportError("App module not found") from e
 
     if not hasattr(module, app):
         raise ValueError("module %s has no attribute %s" % (module, app))

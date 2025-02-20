@@ -38,4 +38,4 @@ class HTTPXHttpRPCAsyncBackend(HttpRPCAsyncBackend):
             except httpx.NetworkError as err:
                 raise RPCRequestNetworkError(
                     request=request, backend_request=err.request
-                )
+                ) from err
