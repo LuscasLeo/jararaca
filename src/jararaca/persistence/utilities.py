@@ -47,7 +47,7 @@ class Identifiable(BaseModel, Generic[IDENTIFIABLE_SCHEMA_T]):
     def instance(
         id: UUID, data: IDENTIFIABLE_SCHEMA_T
     ) -> "Identifiable[IDENTIFIABLE_SCHEMA_T]":
-        return Identifiable[IDENTIFIABLE_SCHEMA_T](id=id, data=data)
+        return Identifiable[data.__class__](id=id, data=data)  # type: ignore[name-defined]
 
 
 def nowutc() -> datetime:
@@ -55,7 +55,6 @@ def nowutc() -> datetime:
 
 
 class DatedEntity(BaseEntity):
-    __abstract__ = True
 
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, default=nowutc
