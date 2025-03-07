@@ -188,7 +188,7 @@ class CRUDOperations(Generic[IDENTIFIABLE_T]):
 
 # region PaginatedFilter
 class PaginatedFilter(BaseModel):
-    page: Annotated[int, Field(gt=-1)] = 1
+    page: Annotated[int, Field(gt=-1)] = 0
     page_size: int = 10
     sort_models: list[SortModel] = []
     filter_models: list[FilterModel] = []
