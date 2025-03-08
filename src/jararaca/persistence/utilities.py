@@ -72,9 +72,33 @@ class IdentifiableEntity(BaseEntity):
 
     @classmethod
     def from_identifiable(cls, model: Identifiable[T_BASEMODEL]) -> "Self":
+        """
+        Converts an Identifiable model instance to an instance of the calling class.
+        This method takes an instance of a class that implements the Identifiable interface
+        and uses its `id` and `data` attributes to create a new instance of the calling class.
+        Args:
+            model (Identifiable[T_BASEMODEL]): An instance of a class that implements the Identifiable interface.
+        Returns:
+            Self: A new instance of the calling class with attributes populated from the model.
+        Deprecated:
+            This method is deprecated and will be removed in a future release.
+        """
+
         return cls(**{"id": model.id, **model.data.model_dump()})
 
     def to_identifiable(self, MODEL: Type[T_BASEMODEL]) -> Identifiable[T_BASEMODEL]:
+        """
+        Converts the current instance to an Identifiable object of the specified model type.
+        Args:
+            MODEL (Type[T_BASEMODEL]): The model type to convert the current instance to.
+        Returns:
+            Identifiable[T_BASEMODEL]: An Identifiable object containing the id and data of the current instance.
+        Raises:
+            ValidationError: If the conversion fails due to validation errors.
+        Note:
+            This method is **deprecated** and may be removed in future versions.
+
+        """
         try:
             return Identifiable[MODEL].model_validate(  # type: ignore[valid-type]
                 {"id": self.id, "data": recursive_get_dict(self)}
