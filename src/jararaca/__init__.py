@@ -16,8 +16,10 @@ if TYPE_CHECKING:
     from jararaca.persistence.sort_filter import (
         FILTER_SORT_ENTITY_ATTR_MAP,
         FilterModel,
+        FilterRuleApplier,
         SortFilterRunner,
         SortModel,
+        SortRuleApplier,
     )
     from jararaca.presentation.hooks import (
         raises_200_on,
@@ -112,6 +114,8 @@ if TYPE_CHECKING:
     from .tools.app_config.interceptor import AppConfigurationInterceptor
 
     __all__ = [
+        "FilterRuleApplier",
+        "SortRuleApplier",
         "use_bus_message_controller",
         "ack",
         "nack",
@@ -210,6 +214,8 @@ if TYPE_CHECKING:
 __SPEC_PARENT__: str = __spec__.parent  # type: ignore
 # A mapping of {<member name>: (package, <module name>)} defining dynamic imports
 _dynamic_imports: "dict[str, tuple[str, str, str | None]]" = {
+    "FilterRuleApplier": (__SPEC_PARENT__, "persistence.sort_filter", None),
+    "SortRuleApplier": (__SPEC_PARENT__, "persistence.sort_filter", None),
     "use_bus_message_controller": (
         __SPEC_PARENT__,
         "messagebus.bus_message_controller",
