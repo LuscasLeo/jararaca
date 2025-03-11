@@ -85,6 +85,8 @@ def parse_literal_value(value: Any) -> str:
 
 
 def get_field_type_for_ts(field_type: Any) -> Any:
+    if field_type is Response:
+        return "unknown"
     if field_type is Any:
         return "any"
     if field_type == UploadFile:
@@ -367,12 +369,23 @@ export type WebSocketMessageMap = {
 
     final_buffer.write(
         """
+export type ResponseType =
+    | "arraybuffer"
+    | "blob"
+    | "document"
+    | "json"
+    | "text"
+    | "stream"
+    | "formdata";
+
+
 export interface HttpBackendRequest {
   method: string;
   path: string;
   headers: { [key: string]: string };
   query: { [key: string]: unknown };
   body: unknown;
+  responseType?: ResponseType;
 }
 
 export interface HttpBackend {
@@ -491,6 +504,8 @@ def write_rest_controller_to_typescript_interface(
                 "const response = await this.httpBackend.request<%s>({ \n"
                 % return_value_repr
             )
+            if mapping.response_type is not None:
+                class_buffer.write(f'\t\t\tresponseType: "{mapping.response_type}",\n')
             class_buffer.write(f'\t\t\tmethod: "{mapping.method}",\n')
 
             endpoint_path = parse_path_with_params(mapping.path, arg_params_spec)
