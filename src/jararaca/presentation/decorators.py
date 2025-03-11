@@ -1,5 +1,5 @@
 import inspect
-from typing import Any, Callable, Protocol, TypeVar, cast
+from typing import Any, Callable, Literal, Protocol, TypeVar, cast
 
 from fastapi import APIRouter
 from fastapi import Depends as DependsF
@@ -147,6 +147,16 @@ class RestController:
 
 Options = dict[str, Any]
 
+ResponseType = Literal[
+    "arraybuffer",
+    "blob",
+    "document",
+    "json",
+    "text",
+    "stream",
+    "formdata",
+]
+
 
 class HttpMapping:
 
@@ -154,11 +164,16 @@ class HttpMapping:
     ORDER_COUNTER = 0
 
     def __init__(
-        self, method: str, path: str = "/", options: Options | None = None
+        self,
+        method: str,
+        path: str = "/",
+        adapter_options: Options | None = None,
+        response_type: ResponseType | None = None,
     ) -> None:
         self.method = method
         self.path = path
-        self.options = options
+        self.options = adapter_options
+        self.response_type = response_type
 
         HttpMapping.ORDER_COUNTER += 1
         self.order = HttpMapping.ORDER_COUNTER
@@ -185,32 +200,57 @@ class HttpMapping:
 
 class Post(HttpMapping):
 
-    def __init__(self, path: str = "/", options: Options | None = None) -> None:
-        super().__init__("POST", path, options)
+    def __init__(
+        self,
+        path: str = "/",
+        options: Options | None = None,
+        response_type: ResponseType | None = None,
+    ) -> None:
+        super().__init__("POST", path, options, response_type)
 
 
 class Get(HttpMapping):
 
-    def __init__(self, path: str = "/", options: Options | None = None) -> None:
-        super().__init__("GET", path, options)
+    def __init__(
+        self,
+        path: str = "/",
+        options: Options | None = None,
+        response_type: ResponseType | None = None,
+    ) -> None:
+        super().__init__("GET", path, options, response_type)
 
 
 class Put(HttpMapping):
 
-    def __init__(self, path: str = "/", options: Options | None = None) -> None:
-        super().__init__("PUT", path, options)
+    def __init__(
+        self,
+        path: str = "/",
+        options: Options | None = None,
+        response_type: ResponseType | None = None,
+    ) -> None:
+        super().__init__("PUT", path, options, response_type)
 
 
 class Delete(HttpMapping):
 
-    def __init__(self, path: str = "/", options: Options | None = None) -> None:
-        super().__init__("DELETE", path, options)
+    def __init__(
+        self,
+        path: str = "/",
+        options: Options | None = None,
+        response_type: ResponseType | None = None,
+    ) -> None:
+        super().__init__("DELETE", path, options, response_type)
 
 
 class Patch(HttpMapping):
 
-    def __init__(self, path: str = "/", options: Options | None = None) -> None:
-        super().__init__("PATCH", path, options)
+    def __init__(
+        self,
+        path: str = "/",
+        options: Options | None = None,
+        response_type: ResponseType | None = None,
+    ) -> None:
+        super().__init__("PATCH", path, options, response_type)
 
 
 class UseMiddleware:
