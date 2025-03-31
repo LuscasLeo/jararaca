@@ -59,6 +59,7 @@ if TYPE_CHECKING:
     from .messagebus.decorators import MessageBusController, MessageHandler
     from .messagebus.interceptors.aiopika_publisher_interceptor import (
         AIOPikaConnectionFactory,
+        GenericPoolConfig,
         MessageBusPublisherInterceptor,
     )
     from .messagebus.publisher import use_publisher
@@ -192,6 +193,7 @@ if TYPE_CHECKING:
         "Put",
         "Delete",
         "use_publisher",
+        "GenericPoolConfig",
         "AIOPikaConnectionFactory",
         "MessageBusPublisherInterceptor",
         "RedisWebSocketConnectionBackend",
@@ -219,6 +221,11 @@ _dynamic_imports: "dict[str, tuple[str, str, str | None]]" = {
     "use_bus_message_controller": (
         __SPEC_PARENT__,
         "messagebus.bus_message_controller",
+        None,
+    ),
+    "GenericPoolConfig": (
+        __SPEC_PARENT__,
+        "messagebus.interceptors.aiopika_publisher_interceptor",
         None,
     ),
     "ack": (__SPEC_PARENT__, "messagebus.bus_message_controller", None),
