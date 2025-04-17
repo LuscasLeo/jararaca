@@ -268,6 +268,187 @@ async def get_tasks(self, filter: TaskSimpleFilter) -> Paginated[TaskSchema]:
     return await self.tasks_query_operations.query(filter)
 ```
 
+## Messaging and Real-Time Communication
+
+Jararaca provides powerful abstractions for both asynchronous messaging (via message bus) and real-time communication (via WebSockets).
+
+### Message Bus Communication
+
+The `Message` class is the foundation for all message bus communication in Jararaca. Messages can be tasks or events that flow through your microservice architecture.
+
+```python
+from typing import ClassVar
+
+from pydantic import Field
+
+from jararaca import Message
+
+
+class UserCreatedMessage(Message):
+    MESSAGE_TOPIC = "user.created"
+    MESSAGE_TYPE = "event"  # or "event"
+
+    user_id: str
+    username: str
+    email: str
+```
+
+#### Publishing Messages
+
+You can publish messages in two ways:
+
+1. Using the message's built-in `publish()` method:
+
+```python
+user_message = UserCreatedMessage(
+    user_id="123",
+    username="johndoe",
+    email="john@example.com"
+)
+await user_message.publish()  # Uses the MESSAGE_TOPIC defined in the class
+```
+
+2. Using the publisher directly:
+
+```python
+from jararaca import use_publisher
+
+publisher = use_publisher()
+await publisher.publish(user_message, "custom.topic")  # Override the default topic
+```
+
+#### Consuming Messages
+
+To consume messages, create a handler with the `@MessageHandler` decorator:
+
+```python
+from jararaca import Message, MessageBusController, MessageHandler
+
+@MessageBusController()
+class UserEventsController:
+    @MessageHandler("user.created")
+    async def handle_user_created(self, message: Message[UserCreatedMessage]):
+        user_data = message.payload()
+        # Process the message
+        print(f"User created: {user_data.username}")
+```
+
+### WebSocket Communication
+
+The `WebSocketMessage` class enables real-time communication with connected WebSocket clients. It provides a simple way to send messages to specific rooms or broadcast to all clients.
+
+```python
+from jararaca import WebSocketMessage
+from pydantic import Field
+from typing import ClassVar
+
+class ChatMessage(WebSocketMessage):
+    MESSAGE_ID = "chat.message"
+
+    user_id: str
+    username: str
+    content: str
+    timestamp: str
+```
+
+#### Sending WebSocket Messages
+
+You can send WebSocket messages to specific rooms:
+
+```python
+message = ChatMessage(
+    user_id="123",
+    username="johndoe",
+    content="Hello, world!",
+    timestamp="2025-04-17T12:00:00Z"
+)
+
+# Send to specific rooms
+await message.send("room1", "room2")
+```
+
+#### Manual WebSocket Management
+
+For more control, you can use the WebSocket manager directly:
+
+```python
+from jararaca import use_ws_manager
+
+# Get the WebSocket manager
+ws_manager = use_ws_manager()
+
+# Add a WebSocket connection to rooms
+await ws_manager.add_websocket_to_room(websocket, "room1")
+
+# Send a message to specific rooms
+await ws_manager.send(["room1", "room2"], message)
+
+# Broadcast to all connections
+await ws_manager.broadcast(message)
+
+# Remove a WebSocket from a room
+await ws_manager.remove_websocket_from_room(websocket, "room1")
+```
+
+#### WebSocket Endpoint
+
+Create a WebSocket endpoint using the `@WebSocketEndpoint` decorator:
+
+```python
+from jararaca import WebSocketEndpoint, RestController
+from fastapi import WebSocket
+
+@RestController("/ws")
+@RegisterWebSocketMessage(ChatMessage) # Register the WebSocket message
+class WebSocketController:
+    @WebSocketEndpoint("/chat/{room_id}")
+    async def chat_endpoint(self, websocket: WebSocket, room_id: str):
+        await websocket.accept()
+
+        # Add to room
+        ws_manager = use_ws_manager()
+        await ws_manager.add_websocket_to_room(websocket, room_id)
+
+        try:
+            while True:
+                data = await websocket.receive_text()
+                message = ChatMessage(
+                    user_id="123",
+                    username="johndoe",
+                    content=data,
+                    timestamp="2025-04-17T12:00:00Z"
+                )
+                await message.send(room_id)
+        except:
+            # Remove from room when connection closes
+            await ws_manager.remove_websocket_from_room(websocket, room_id)
+```
+
+### Integration Between Message Bus and WebSockets
+
+One of Jararaca's strengths is the ability to seamlessly integrate message bus events with WebSocket communication, enabling real-time updates from background processes:
+
+```python
+@MessageBusController()
+@RestController("/notifications")
+class NotificationController:
+    @MessageHandler("user.activity")
+    async def handle_user_activity(self, message: Message[UserActivityMessage]):
+        user_data = message.payload()
+
+        # Create a WebSocket message
+        notification = ActivityNotification(
+            user_id=user_data.user_id,
+            action=user_data.action,
+            timestamp=user_data.timestamp
+        )
+
+        # Send to user's room
+        await notification.send(f"user-{user_data.user_id}")
+```
+
+This allows you to build truly reactive systems where events processed in background workers can immediately update connected clients through WebSockets.
+
 ## Advanced Features
 
 ### WebSocket Support
