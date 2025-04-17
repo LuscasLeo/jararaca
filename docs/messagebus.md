@@ -129,6 +129,99 @@ sequenceDiagram
     C->>W: process & acknowledge
 ```
 
+## Message Routing: Exchanges and Queues
+
+Jararaca's message bus system leverages RabbitMQ's exchange and queue architecture to efficiently route messages between publishers and consumers.
+
+### Exchange and Queue Structure Example
+
+The following diagram illustrates how the exchange and queue system works in a typical Jararaca application:
+
+```mermaid
+graph LR
+    subgraph Publishers
+        P1[UserService]
+        P2[OrderService]
+        P3[NotificationService]
+    end
+
+    subgraph "Exchange (jararaca_ex)"
+        E[Topic Exchange]
+    end
+
+    subgraph Queues
+        Q1[user_service_queue]
+        Q2[order_service_queue]
+        Q3[notification_service_queue]
+        Q4[analytics_service_queue]
+    end
+
+    subgraph Consumers
+        C1[UserServiceHandler]
+        C2[OrderServiceHandler]
+        C3[NotificationServiceHandler]
+        C4[AnalyticsServiceHandler]
+    end
+
+    P1 -->|user.created| E
+    P1 -->|user.updated| E
+    P2 -->|order.created| E
+    P2 -->|order.updated| E
+    P3 -->|notification.sent| E
+
+    E -->|user.created| Q1
+    E -->|user.updated| Q1
+    E -->|order.created| Q2
+    E -->|order.updated| Q2
+    E -->|notification.sent| Q3
+
+    %% Events can be routed to multiple queues
+    E -->|user.created| Q4
+    E -->|order.created| Q4
+
+    Q1 --> C1
+    Q2 --> C2
+    Q3 --> C3
+    Q4 --> C4
+
+    style E fill:#f96,stroke:#333,stroke-width:2px
+    style Q1 fill:#9cf,stroke:#333,stroke-width:1px
+    style Q2 fill:#9cf,stroke:#333,stroke-width:1px
+    style Q3 fill:#9cf,stroke:#333,stroke-width:1px
+    style Q4 fill:#9cf,stroke:#333,stroke-width:1px
+```
+
+### How Message Routing Works
+
+1. **Publishers** send messages to the exchange with a specific topic (e.g., `user.created`, `order.updated`).
+2. The **Exchange** routes these messages to queues based on binding patterns.
+3. **Queues** hold messages until they are consumed.
+4. **Consumers** process messages from their assigned queues.
+
+#### Key Concepts:
+
+- **Topic-based routing**: Messages are routed based on their topic (e.g., `user.created`)
+- **Multiple bindings**: A single exchange can route to multiple queues (especially useful for event messages)
+- **Service isolation**: Each service typically has its own queue
+- **Message persistence**: Messages remain in queues until processed, even if consumers are temporarily unavailable
+
+#### Example Queue Binding Configuration
+
+```python
+from jararaca import MessageBusController, MessageHandler
+from jararaca.messagebus.worker import AioPikaWorkerConfig
+
+# Define worker configuration with queue binding patterns
+worker_config = AioPikaWorkerConfig(
+    url="amqp://guest:guest@localhost/",
+    exchange="jararaca_ex",
+    queue="user_service_queue",
+    binding_keys=["user.*", "notification.user.*"]  # This queue receives all user-related topics
+)
+```
+
+This message routing architecture allows for flexible and scalable communication patterns between different parts of your application, supporting both direct task assignment and broad event publishing.
+
 ## Worker Infrastructure
 
 The MessageBusWorker is the central piece that orchestrates message consumption and processing.
