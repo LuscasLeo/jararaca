@@ -1,10 +1,18 @@
-# Jararaca Microservice
+# Jararaca Microservice Framework
 
+Jararaca is a powerful Python microservice framework that provides a comprehensive set of tools and abstractions for building robust microservice architectures. It integrates seamlessly with FastAPI, SQLAlchemy, Redis, and RabbitMQ to deliver a complete solution for modern microservice development.
 
-## Overview
+## Features
 
-Jararaca is a python microservice that provides all resources for a Microservice Architecture.
-
+- 🚀 **FastAPI Integration**: Built-in support for FastAPI with automatic OpenAPI documentation
+- 🔌 **WebSocket Support**: Real-time communication capabilities with Redis-backed WebSocket management
+- 📦 **Dependency Injection**: Flexible dependency injection system with interceptors
+- 📊 **Database Integration**: SQLAlchemy integration with async support
+- 📡 **Message Bus**: RabbitMQ integration for event-driven architecture
+- 🔒 **Authentication**: Built-in JWT authentication with token blacklisting
+- 🔍 **Query Operations**: Advanced query capabilities with pagination and filtering
+- ⏱️ **Scheduled Tasks**: Cron-based task scheduling
+- 🛠️ **CRUD Operations**: Simplified database operations with automatic entity mapping
 
 ## Installation
 
@@ -12,10 +20,11 @@ Jararaca is a python microservice that provides all resources for a Microservice
 pip install jararaca
 ```
 
-## Usage
+## Quick Start
 
-```py
-# src/app/main.py
+Here's a basic example of how to create a microservice with Jararaca:
+
+```python
 from app.app_config import AppConfig, AppFactoryWithAppConfig
 from app.auth.auth_controller import (
     AuthConfig,
@@ -44,8 +53,10 @@ from jararaca import (
     create_http_server,
 )
 
+# Create your microservice instance
 app = Microservice(
     providers=[
+        # Redis provider for caching and WebSocket management
         ProviderSpec(
             provide=REDIS_TOKEN,
             use_factory=AppFactoryWithAppConfig(
@@ -53,28 +64,32 @@ app = Microservice(
             ),
             after_interceptors=True,
         ),
+        # Authentication configuration
         ProviderSpec(
             provide=Token(AuthConfig, "AUTH_CONFIG"),
             use_value=AuthConfig(
-                secret="secret",
+                secret="your-secret-key",
                 identity_refresh_token_expires_delta_seconds=60 * 60 * 24 * 30,
                 identity_token_expires_delta_seconds=60 * 60,
             ),
         ),
+        # Token blacklist service for JWT management
         ProviderSpec(
             provide=TokenBlackListService,
             use_value=InMemoryTokenBlackListService(),
         ),
     ],
     controllers=[
-        TasksController,
+        TasksController,  # Your application controllers
     ],
     interceptors=[
+        # Application configuration interceptor
         AppConfigurationInterceptor(
             global_configs=[
                 (Token(AppConfig, "APP_CONFIG"), AppConfig),
             ]
         ),
+        # Message bus interceptor for RabbitMQ
         AppFactoryWithAppConfig(
             lambda config: MessageBusPublisherInterceptor(
                 connection_factory=AIOPikaConnectionFactory(
@@ -83,6 +98,7 @@ app = Microservice(
                 ),
             )
         ),
+        # Database session interceptor
         AppFactoryWithAppConfig(
             lambda config: AIOSqlAlchemySessionInterceptor(
                 AIOSQAConfig(
@@ -91,6 +107,7 @@ app = Microservice(
                 )
             )
         ),
+        # WebSocket interceptor
         AppFactoryWithAppConfig(
             lambda config: WebSocketInterceptor(
                 backend=RedisWebSocketConnectionBackend(
@@ -103,8 +120,7 @@ app = Microservice(
     ],
 )
 
-
-# FastAPI factory for uvicorn
+# Create FastAPI application
 http_app = create_http_server(
     HttpMicroservice(
         app=app,
@@ -113,406 +129,112 @@ http_app = create_http_server(
 )
 ```
 
+## Core Concepts
 
-```py
-# src/app/app_config.py
-from typing import Annotated, Any, Callable
+### Controllers
 
-from pydantic import BaseModel
+Controllers are the heart of your microservice. They handle HTTP requests, WebSocket connections, and message bus events. Here's an example of a task controller:
 
-from jararaca import Token
-
-
-class AppConfig(BaseModel):
-
-    DATABASE_URL: str
-    REDIS_URL: str
-    AMQP_URL: str
-
-
-APP_CONFIG_TOKEN = Token(AppConfig, "APP_CONFIG")
-
-
-class AppFactoryWithAppConfig:
-
-    def __init__(self, callback: Callable[[AppConfig], Any]):
-        self.callback = callback
-
-    def __call__(self, app_config: Annotated[AppConfig, APP_CONFIG_TOKEN]) -> Any:
-        return self.callback(app_config)
-
-```
-
-
-```py
-# src/app/providers.py
-
-from typing import cast
-
-from redis.asyncio import Redis
-
-from jararaca import Token
-
-REDIS_TOKEN = Token["Redis[bytes]"](cast("type[Redis[bytes]]", Redis), "REDIS_AWS")
-```
-
-```py
-# src/app/extraction/tasks/tasks_controller.py
-
-import asyncio
-import random
-from datetime import datetime, timedelta
-from typing import Annotated, Any, Literal
-from uuid import UUID, uuid4
-
-from app.app_config import AppConfig
-from app.extraction.entity import ExtractionModelEntity, SecretEntity, TaskEntity
-from app.extraction.schemas import ExtractionModelSchema
-from app.providers import REDIS_TOKEN
-from fastapi import Depends, HTTPException, WebSocket, WebSocketDisconnect
-from pydantic import BaseModel, field_validator
-from redis.asyncio import Redis
-from sqlalchemy import select, update
-from sqlalchemy.exc import NoResultFound
-
-from jararaca import (
-    CriteriaBasedAttributeQueryInjector,
-    CRUDOperations,
-    DateCriteria,
-    DateOrderedFilter,
-    DateOrderedQueryInjector,
-    Get,
-    Identifiable,
-    IncomingHandler,
-    Message,
-    MessageBusController,
-    Paginated,
-    PaginatedFilter,
-    PaginatedQueryInjector,
-    Post,
-    Put,
-    QueryOperations,
-    RestController,
-    ScheduledAction,
-    StringCriteria,
-    Token,
-    WebSocketEndpoint,
-    use_publisher,
-    use_session,
-    use_ws_manager,
-)
-
-TaskId = UUID
-
-
-class TaskReportSchema(BaseModel):
-    report: str
-    status: Literal["SUCCESS", "ERROR"]
-
-
-class TaskSchema(BaseModel):
-    status: Literal["PENDING", "RUNNING", "FINISHED", "ERROR"]
-    extraction_model_schema: ExtractionModelSchema
-    created_at: datetime
-    updated_at: datetime
-    started_at: datetime | None = None
-    finished_at: datetime | None = None
-
-    @field_validator("extraction_model_schema", mode="before")
-    @classmethod
-    def extraction_model_validator(cls, value: Any) -> ExtractionModelSchema:
-        if isinstance(value, dict):
-            return ExtractionModelSchema.model_validate(value)
-        elif isinstance(value, str):
-            return ExtractionModelSchema.model_validate_json(value)
-        elif isinstance(value, ExtractionModelSchema):
-            return value
-        else:
-            raise ValueError("Invalid Extraction Model Schema")
-
-
-class CreateTaskSchema(BaseModel):
-    extraction_model_id: UUID
-
-
-class TaskSimpleFilter(PaginatedFilter, DateOrderedFilter): ...
-
-
-class DatedFilter(BaseModel):
-    created_at: DateCriteria | None = None
-    updated_at: DateCriteria | None = None
-
-
-class TaskComplexFilter(PaginatedFilter, DatedFilter):
-    name: StringCriteria | None = None
-
-
+```python
 @MessageBusController()
 @RestController("/tasks")
 class TasksController:
-
-    def __init__(
-        self,
-        app_config: Annotated[AppConfig, Token(AppConfig, "APP_CONFIG")],
-        redis: Annotated["Redis[bytes]", REDIS_TOKEN],
-    ) -> None:
-        self.app_config = app_config
-        self.redis = redis
-        self.tasks_crud = CRUDOperations(TaskEntity, use_session)
-        self.tasks_simple_query_operations = QueryOperations[
-            TaskSimpleFilter, TaskEntity
-        ](
-            TaskEntity,
-            use_session,
-            [
-                PaginatedQueryInjector(),
-                DateOrderedQueryInjector(TaskEntity),
-            ],
-        )
-
-        self.tasks_complex_query_operations = QueryOperations[
-            TaskComplexFilter, TaskEntity
-        ](
-            TaskEntity,
-            use_session,
-            [
-                PaginatedQueryInjector(),
-                CriteriaBasedAttributeQueryInjector(TaskEntity),
-                DateOrderedQueryInjector(TaskEntity),
-            ],
-        )
-
-        self.extraction_model_crud = CRUDOperations(ExtractionModelEntity, use_session)
-
     @Post("/")
     async def create_task(self, task: CreateTaskSchema) -> Identifiable[TaskSchema]:
-        try:
-            extraction_model = await self.extraction_model_crud.get(
-                task.extraction_model_id
-            )
-        except NoResultFound:
-            raise HTTPException(status_code=404, detail="Extraction Model not found")
-
-        task_entity = TaskEntity.from_basemodel(task)
-        task_entity.id = uuid4()
-
-        task_entity.extraction_model_schema = (
-            extraction_model.to_model().model_dump_json()
-        )
-
-        await self.tasks_crud.create(task_entity)
-        await use_ws_manager().broadcast(b"New Task Created")
-        await use_publisher().publish(
-            task_entity.to_identifiable(TaskSchema), topic="task"
-        )
-
-        return task_entity.to_identifiable(TaskSchema)
-
-    @Post("/{task_id}")
-    async def get_task(self, task_id: TaskId) -> Identifiable[TaskSchema]:
-        task = await self.tasks_crud.get(task_id)
-        return task.to_identifiable(TaskSchema)
+        # Your implementation here
+        pass
 
     @Get("/")
-    async def simple_query_tasks(
-        self, filter: Annotated[TaskSimpleFilter, Depends(TaskSimpleFilter)]
-    ) -> Paginated[Identifiable[TaskSchema]]:
-        pagination = await self.tasks_simple_query_operations.query(filter)
-        return pagination.transform(lambda task: task.to_identifiable(TaskSchema))
-
-    @Post("/query")
-    async def complex_query_tasks(
-        self, filter: TaskComplexFilter
-    ) -> Paginated[Identifiable[TaskSchema]]:
-        pagination = await self.tasks_complex_query_operations.query(filter)
-        return pagination.transform(lambda task: task.to_identifiable(TaskSchema))
-
-    @Put("/{task_id}")
-    async def update_task(self, task_id: TaskId, task: TaskSchema) -> None:
-        task_entity = TaskEntity.from_basemodel(task)
-        await self.tasks_crud.update_by_id(task_id, task_entity)
-
-    @IncomingHandler("task")
-    async def process_task(self, message: Message[Identifiable[TaskSchema]]) -> None:
-        payload = message.payload()
-
-        current_status = (
-            await use_session().execute(
-                select(TaskEntity.status).filter(TaskEntity.id == payload.id)
-            )
-        ).scalar()
-
-        if current_status != "PENDING":
-            print("Task %s is not pending, is %s" % (payload.id, current_status))
-            return
-
-        async with use_session().begin_nested():
-            await use_session().execute(
-                update(TaskEntity)
-                .filter(TaskEntity.id == payload.id)
-                .values(status="RUNNING", started_at=datetime.now())
-            )
-            print("Processing Task: ", payload.id)
-            await use_session().commit()
-
-            await use_ws_manager().broadcast(
-                ("Task %s is running" % payload.id).encode()
-            )
-
-        print("Processing")
-        await asyncio.sleep(3)
-        async with use_session().begin_nested():
-
-            await use_session().commit()
-
-            await use_ws_manager().broadcast(
-                ("Task %s is finished" % payload.id).encode()
-            )
-
-    @ScheduledAction("* * * * * */5")
-    async def scheduled_task2(self) -> None:
-        print("Scheduled Task 2")
-        pending_tasks = (
-            (
-                await use_session().execute(
-                    select(TaskEntity).filter(TaskEntity.status == "PENDING")
-                )
-            )
-            .scalars()
-            .all()
-        )
-
-        for task in pending_tasks:
-            if not await self.redis.sismember("tasks", str(task.id)):
-
-                async with self.redis.pipeline() as pipe:
-                    try:
-
-                        await pipe.sadd("tasks", str(task.id))
-                        await use_publisher().publish(
-                            task.to_identifiable(TaskSchema), topic="task"
-                        )
-                        await pipe.expire("tasks", timedelta(minutes=5))
-                        await pipe.execute()
-                    except Exception as e:
-                        print("Error: ", e)
-                        await pipe.reset()
-                        raise e
-
-    @WebSocketEndpoint("/ws")
-    async def ws_endpoint(self, websocket: WebSocket) -> None:
-        await websocket.accept()
-        counter.increment()
-        await use_ws_manager().add_websocket(websocket)
-        await use_ws_manager().join(["tasks"], websocket)
-
-        print("New Connection (%d)" % counter.count)
-
-        while True:
-            try:
-                await websocket.receive_text()
-            except WebSocketDisconnect:
-                counter.decrement()
-                await use_ws_manager().remove_websocket(websocket)
-
-                print("Connection Closed (%d)" % counter.count)
-                break
-
+    async def get_tasks(self) -> List[TaskSchema]:
+        # Your implementation here
+        pass
 ```
 
+### Entities
 
-```py
-# src/app/extraction/entity.py
+Entities represent your database models. They can be automatically mapped to and from Pydantic models:
 
-import json
-from datetime import datetime
-from typing import List, Literal
-from uuid import UUID
-
-from app.extraction.schemas import ExtractionModelSchema, KeyValue
-from pydantic import RootModel
-from sqlalchemy import DateTime, ForeignKey
-from sqlalchemy.orm import Mapped, mapped_column, relationship
-
-from jararaca import T_BASEMODEL, DatedEntity, Identifiable, IdentifiableEntity
-
-
+```python
 class TaskEntity(IdentifiableEntity, DatedEntity):
-
     __tablename__ = "tasks"
 
-    extraction_model_id: Mapped[UUID] = mapped_column(nullable=False)
-    extraction_model_schema: Mapped[str] = mapped_column(nullable=False)
-    status: Mapped[Literal["PENDING", "RUNNING", "FINISHED", "ERROR"]] = mapped_column(
-        nullable=False, default="PENDING"
-    )
-    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=True)
-    finished_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), nullable=True
-    )
-    report: Mapped["TaskReportEntity | None"] = relationship(
-        "TaskReportEntity",
-        uselist=False,
-        backref="task",
-        cascade="all, delete-orphan",
-        lazy="joined",
-    )
-
-
-class TaskReportEntity(DatedEntity):
-
-    __tablename__ = "task_reports"
-
-    task_id: Mapped[UUID] = mapped_column(
-        ForeignKey("tasks.id"), nullable=False, primary_key=True
-    )
-    report: Mapped[str] = mapped_column(nullable=False)
-    status: Mapped[Literal["SUCCESS", "ERROR"]] = mapped_column(nullable=False)
-
-
-class SecretEntity(IdentifiableEntity, DatedEntity):
-
-    __tablename__ = "secrets"
-
-    name: Mapped[str] = mapped_column(nullable=False, unique=True)
-    value: Mapped[str] = mapped_column(nullable=False)
-    description: Mapped[str] = mapped_column(nullable=False)
-
-
-class ExtractionModelEntity(IdentifiableEntity, DatedEntity):
-
-    __tablename__ = "extraction_models"
-
-    url: Mapped[str] = mapped_column(nullable=False)
-    method: Mapped[str] = mapped_column(nullable=False)
-    headers_json: Mapped[str] = mapped_column(nullable=False)
-    params_json: Mapped[str] = mapped_column(nullable=False)
-    query_json: Mapped[str] = mapped_column(nullable=False)
-
-    @classmethod
-    def from_model(cls, model: ExtractionModelSchema) -> "ExtractionModelEntity":
-        return cls(
-            url=model.url,
-            method=model.method,
-            headers_json=json.dumps([e.model_dump() for e in model.headers]),
-            params_json=json.dumps([e.model_dump() for e in model.params]),
-            query_json=json.dumps([e.model_dump() for e in model.query]),
-        )
-
-    def to_model(self) -> ExtractionModelSchema:
-        return ExtractionModelSchema(
-            url=self.url,
-            method=self.method,
-            headers=RootModel[List[KeyValue]]
-            .model_validate_json(self.headers_json)
-            .root,
-            params=RootModel[List[KeyValue]].model_validate_json(self.params_json).root,
-            query=RootModel[List[KeyValue]].model_validate_json(self.query_json).root,
-        )
-
-    def to_identifiable(self, MODEL: type[T_BASEMODEL]) -> Identifiable[T_BASEMODEL]:
-        return Identifiable[MODEL].model_validate(  # type: ignore[valid-type]
-            {"id": self.id, "data": self.to_model()}
-        )
-
+    status: Mapped[Literal["PENDING", "RUNNING", "FINISHED", "ERROR"]]
+    extraction_model_id: Mapped[UUID]
+    # ... other fields
 ```
+
+### Query Operations
+
+Jararaca provides powerful query operations with support for pagination and filtering:
+
+```python
+class TaskSimpleFilter(PaginatedFilter, DateOrderedFilter):
+    pass
+
+@Get("/")
+async def get_tasks(self, filter: TaskSimpleFilter) -> Paginated[TaskSchema]:
+    return await self.tasks_query_operations.query(filter)
+```
+
+## Advanced Features
+
+### WebSocket Support
+
+Real-time communication is built-in:
+
+```python
+@WebSocketEndpoint("/ws")
+async def ws_endpoint(self, websocket: WebSocket):
+    await websocket.accept()
+    await use_ws_manager().add_websocket(websocket)
+    # Handle WebSocket messages
+```
+
+### Scheduled Tasks
+
+Run periodic tasks using cron expressions:
+
+```python
+@ScheduledAction("* * * * * */5")
+async def scheduled_task(self):
+    # Your scheduled task implementation
+    pass
+```
+
+### Message Bus Integration
+
+Publish and consume messages through RabbitMQ:
+
+```python
+@IncomingHandler("task")
+async def process_task(self, message: Message[TaskSchema]):
+    # Process incoming messages
+    pass
+```
+
+## Configuration
+
+Configure your microservice through environment variables or configuration files:
+
+```python
+class AppConfig(BaseModel):
+    DATABASE_URL: str
+    REDIS_URL: str
+    AMQP_URL: str
+```
+
+## Best Practices
+
+1. **Use Dependency Injection**: Leverage the DI system for better testability and maintainability
+2. **Implement Proper Error Handling**: Use HTTP exceptions for API errors
+3. **Use Type Hints**: Take advantage of Python's type system for better code quality
+4. **Follow RESTful Principles**: Design your API endpoints following REST conventions
+5. **Implement Proper Authentication**: Use the built-in JWT authentication system
+
+## Contributing
+
+Contributions are welcome! Please feel free to submit a Pull Request.
+
+## License
+
+This project is licensed under the MIT License - see the LICENSE file for details.
