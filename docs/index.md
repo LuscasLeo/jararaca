@@ -20,6 +20,102 @@ Jararaca is a powerful Python microservice framework that provides a comprehensi
 pip install jararaca
 ```
 
+## CLI Commands
+
+Jararaca comes with a powerful command-line interface to help you manage your microservices:
+
+### `worker` - Message Bus Worker
+
+```bash
+jararaca worker APP_PATH [OPTIONS]
+```
+
+Starts a message bus worker that processes asynchronous messages from a message queue.
+
+**Options:**
+
+- `--url`: AMQP URL (default: "amqp://guest:guest@localhost/")
+- `--username`: AMQP username (optional)
+- `--password`: AMQP password (optional)
+- `--exchange`: Exchange name (default: "jararaca_ex")
+- `--queue`: Queue name (default: "jararaca_q")
+- `--prefetch-count`: Number of messages to prefetch (default: 1)
+
+### `server` - HTTP Server
+
+```bash
+jararaca server APP_PATH [OPTIONS]
+```
+
+#### Perfer `uvicorn` for production
+
+Starts a FastAPI HTTP server for your microservice.
+
+```python
+def fastapi_factory(lifespan: Lifespan[FastAPI]) -> FastAPI:
+    app = FastAPI(
+        lifespan=lifespan,
+    )
+
+    app.router.prefix = "/api"
+
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=["*"],
+        allow_credentials=True,
+        allow_methods=["*"],
+        allow_headers=["*"],
+        expose_headers=["error", "reason", "scope"],
+    )
+
+    return app
+
+
+http_app = HttpMicroservice(app, fastapi_factory)
+
+asgi_app = create_http_server(http_app)
+```
+Then run the server with:
+
+```bash
+uvicorn app_module:asgi_app
+```
+
+Starts a FastAPI HTTP server for your microservice.
+
+**Options:**
+
+- `--host`: Hostname to bind to (default: "0.0.0.0")
+- `--port`: Port to listen on (default: 8000)
+
+### `scheduler` - Task Scheduler
+
+```bash
+jararaca scheduler APP_PATH [OPTIONS]
+```
+
+Runs scheduled tasks defined in your application using cron expressions.
+
+**Options:**
+
+- `--interval`: Polling interval in seconds (default: 1)
+
+### `gen-tsi` - Generate TypeScript Interfaces
+
+```bash
+jararaca gen-tsi APP_PATH FILE_PATH
+```
+
+Generates TypeScript interfaces from your Python models to ensure type safety between your frontend and backend.
+
+### `gen-entity` - Generate Entity Template
+
+```bash
+jararaca gen-entity ENTITY_NAME FILE_PATH
+```
+
+Generates a new entity file template with proper naming conventions in different formats (snake_case, PascalCase, kebab-case).
+
 ## Quick Start
 
 Here's a basic example of how to create a microservice with Jararaca:
@@ -229,7 +325,6 @@ class AppConfig(BaseModel):
 2. **Implement Proper Error Handling**: Use HTTP exceptions for API errors
 3. **Use Type Hints**: Take advantage of Python's type system for better code quality
 4. **Follow RESTful Principles**: Design your API endpoints following REST conventions
-5. **Implement Proper Authentication**: Use the built-in JWT authentication system
 
 ## Contributing
 
