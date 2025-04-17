@@ -205,6 +205,13 @@ http_app = create_http_server(
     )
 )
 
+
+class HelloTask(Message):
+    MESSAGE_TYPE = "task"
+    MESSAGE_TOPIC = "task.topic.name"
+
+    message: str
+
 # Example controller showing unified utilities across runtimes
 @MessageBusController()
 @RestController("/tasks")
@@ -221,12 +228,10 @@ class TasksController:
         await use_publisher().publish(task_entity.to_identifiable(TaskSchema), topic="task")
         return task_entity.to_identifiable(TaskSchema)
 
-    @IncomingHandler("task")
-    async def process_task(self, message: Message[Identifiable[TaskSchema]]) -> None:
+    @MessageHandler(HelloTask)
+    async def process_task(self, message: MessageOf[HelloTask]) -> None:
         # Use session in Message Bus context
-        async with use_session().begin_nested():
-            await use_session().execute(update(TaskEntity))
-            await use_ws_manager().broadcast(b"Task running")
+        print(message.message)
 
     @ScheduledAction("* * * * * */5")
     async def scheduled_task(self) -> None:
@@ -337,6 +342,7 @@ class AIOSqlAlchemySessionInterceptor(AppInterceptor):
 ```python
 # In a REST Controller
 @RestController("/tasks")
+@MessageBusController()
 class TasksController:
     @Get("/")
     async def get_tasks(self):
@@ -344,22 +350,18 @@ class TasksController:
         session = use_session()
         return await session.execute(select(TaskEntity))
 
-# In a Message Handler
-@MessageBusController()
-class TaskProcessor:
-    @IncomingHandler("task")
-    async def process_task(self, message: Message):
+
+    @MessageHandler(SomeTask)
+    async def process_task(self, message: MessageOf[SomeTask]):
         # Gets a session specific to this message processing
         session = use_session()
-        async with session.begin_nested():
-            await session.execute(update(TaskEntity))
 
-# In a Scheduled Job
-@ScheduledAction("* * * * *")
-async def scheduled_task():
-    # Gets a session specific to this job execution
-    session = use_session()
-    await session.execute(select(TaskEntity))
+    # In a Scheduled Job
+    @ScheduledAction("* * * * *")
+    async def scheduled_task(self):
+        # Gets a session specific to this job execution
+        session = use_session()
+        await session.execute(select(TaskEntity))
 ```
 
 This system ensures that:

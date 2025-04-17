@@ -205,17 +205,17 @@ class MessageHandlerCallback:
         self, aio_pika_message: aio_pika.abc.AbstractIncomingMessage
     ) -> None:
 
-        rounting_key = self.queue_name
+        routing_key = self.queue_name
 
-        if rounting_key is None:
+        if routing_key is None:
             logger.warning("No topic found for message")
             await self.handle_reject_message(aio_pika_message)
             return
 
-        handler_data = self.consumer.incoming_map.get(rounting_key)
+        handler_data = self.consumer.incoming_map.get(routing_key)
 
         if handler_data is None:
-            logger.warning("No handler found for topic '%s'" % rounting_key)
+            logger.warning("No handler found for topic '%s'" % routing_key)
             await self.handle_reject_message(aio_pika_message)
 
             return
@@ -227,7 +227,7 @@ class MessageHandlerCallback:
         if len(sig.parameters) != 1:
             logger.warning(
                 "Handler for topic '%s' must have exactly one parameter which is MessageOf[T extends Message]"
-                % rounting_key
+                % routing_key
             )
             return
 
@@ -238,14 +238,14 @@ class MessageHandlerCallback:
         if param_origin is not MessageOf:
             logger.warning(
                 "Handler for topic '%s' must have exactly one parameter of type Message"
-                % rounting_key
+                % routing_key
             )
             return
 
         if len(parameter.annotation.__args__) != 1:
             logger.warning(
                 "Handler for topic '%s' must have exactly one parameter of type Message"
-                % rounting_key
+                % routing_key
             )
             return
 
@@ -253,8 +253,8 @@ class MessageHandlerCallback:
 
         if not issubclass(message_type, BaseModel):
             logger.warning(
-                "Handler for topic '%s' must have exactly one parameter of type Message[BaseModel]"
-                % rounting_key
+                "Handler for topic '%s' must have exactly one parameter of type MessageOf[BaseModel]"
+                % routing_key
             )
             return
 
@@ -266,7 +266,7 @@ class MessageHandlerCallback:
         async with self.consumer.uow_context_provider(
             MessageBusAppContext(
                 message=builded_message,
-                topic=rounting_key,
+                topic=routing_key,
             )
         ):
             ctx: AsyncContextManager[Any]
@@ -293,7 +293,7 @@ class MessageHandlerCallback:
                             )
                     else:
                         logger.exception(
-                            f"Error processing message on topic {rounting_key}"
+                            f"Error processing message on topic {routing_key}"
                         )
                     if incoming_message_spec.requeue_on_exception:
                         await self.handle_reject_message(aio_pika_message, requeue=True)
