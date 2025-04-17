@@ -1,243 +1,120 @@
-<img src="https://raw.githubusercontent.com/LuscasLeo/jararaca/main/docs/assets/_f04774c9-7e05-4da4-8b17-8be23f6a1475.jpeg" alt="README.md" width="250" float="right">
+<img src="https://raw.githubusercontent.com/LuscasLeo/jararaca/main/docs/assets/_f04774c9-7e05-4da4-8b17-8be23f6a1475.jpeg" alt="Jararaca Logo" width="250" float="right">
 
 # Jararaca Microservice Framework
 
 ## Overview
 
-Jararaca is a aio-first microservice framework that provides a set of tools to build and deploy microservices in a simple and clear way.
+Jararaca is an async-first microservice framework designed to simplify the development of distributed systems. It provides a comprehensive set of tools for building robust, scalable, and maintainable microservices with a focus on developer experience and type safety.
 
-## Features
+## Key Features
+
+### REST API Development
+- Easy-to-use interfaces for building REST APIs
+- Automatic request/response validation
+- Type-safe endpoints with FastAPI integration
+- Automatic OpenAPI documentation generation
+
+### Message Bus Integration
+- Topic-based message bus for event-driven architecture
+- Support for both worker and publisher patterns
+- Built-in message serialization and deserialization
+- Easy integration with AIO Pika for RabbitMQ
+
+### Distributed WebSocket
+- Room-based WebSocket communication
+- Distributed broadcasting across multiple backend instances
+- Automatic message synchronization between instances
+- Built-in connection management and room handling
+
+### Task Scheduling
+- Cron-based task scheduling
+- Support for overlapping and non-overlapping tasks
+- Distributed task execution
+- Easy integration with message bus for task distribution
+
+### TypeScript Integration
+- Automatic TypeScript interface generation
+- Command-line tool for generating TypeScript types
+- Support for REST endpoints, WebSocket events, and message bus payloads
+- Type-safe frontend-backend communication
 
 ### Hexagonal Architecture
-
-The framework is based on the hexagonal architecture, which allows you to separate the business logic from the infrastructure, making the code more testable and maintainable.
-
-### Dependency Injection
-
-The framework uses the dependency injection pattern to manage the dependencies between the components of the application.
-
-```py
-    app = Microservice(
-        providers=[
-            ProviderSpec(
-                provide=Token(AuthConfig, "AUTH_CONFIG"),
-                use_value=AuthConfig(
-                    secret="secret",
-                    identity_refresh_token_expires_delta_seconds=60 * 60 * 24 * 30,
-                    identity_token_expires_delta_seconds=60 * 60,
-                ),
-            ),
-            ProviderSpec(
-                provide=Token(AppConfig, "APP_CONFIG"),
-                use_factory=AppConfig.provider,
-            ),
-            ProviderSpec(
-                provide=TokenBlackListService,
-                use_value=InMemoryTokenBlackListService(),
-            ),
-        ],
-    )
-```
-
-### Web Server Port
-
-The framework provides a web server that listens on a specific port and routes the requests to the appropriate handler. It uses [FastAPI](https://fastapi.tiangolo.com/) as the web framework.
-
-```py
-    @Delete("/{task_id}")
-    async def delete_task(self, task_id: TaskId) -> None:
-        await self.tasks_crud.delete_by_id(task_id)
-
-        await use_ws_manager().broadcast(("Task %s deleted" % task_id).encode())
-```
-
-### Message Bus
-
-The framework provides a topic-based message bus that allows you to send messages between the components of the application. It uses [AIO Pika](https://aio-pika.readthedocs.io/) as the message broker worker and publisher.
-
-```py
-    @IncomingHandler("task")
-    async def process_task(self, message: Message[Identifiable[TaskSchema]]) -> None:
-        name = generate_random_name()
-        now = asyncio.get_event_loop().time()
-        print("Processing task: ", name)
-
-        task = message.payload()
-
-        print("Received task: ", task)
-        await asyncio.sleep(random.randint(1, 5))
-
-        await use_publisher().publish(task, topic="task")
-
-        then = asyncio.get_event_loop().time()
-        print("Task Finished: ", name, " Time: ", then - now)
-```
-
-### Distributed Websocket
-
-You can setup a room-based websocket server that allows you to send messages to a specific room or broadcast messages to all connected clients. All backend instances communicates with each other using a pub/sub mechanism (such as Redis).
-
-```py
-    @WebSocketEndpoint("/ws")
-    async def ws_endpoint(self, websocket: WebSocket) -> None:
-        await websocket.accept()
-        counter.increment()
-        await use_ws_manager().add_websocket(websocket)
-        await use_ws_manager().join(["tasks"], websocket)
-        await use_ws_manager().broadcast(
-            ("New Connection (%d) from %s" % (counter.count, self.hostname)).encode()
-        )
-
-        print("New Connection (%d)" % counter.count)
-
-        while True:
-            try:
-                await websocket.receive_text()
-            except WebSocketDisconnect:
-                counter.decrement()
-                await use_ws_manager().remove_websocket(websocket)
-
-                await use_ws_manager().broadcast(
-                    (
-                        "Connection Closed (%d) from %s"
-                        % (counter.count, self.hostname)
-                    ).encode()
-                )
-                print("Connection Closed (%d)" % counter.count)
-                break
-```
-
-### Scheduled Routine
-
-You can setup a scheduled routine that runs a specific task at a specific time or interval.
-
-```py
-...
-    @ScheduledAction("* * * * * */3", allow_overlap=False)
-    async def scheduled_task(self) -> None:
-        print("Scheduled Task at ", asyncio.get_event_loop().time())
-
-        print("sleeping")
-        await asyncio.sleep(5)
-
-        await use_publisher().publish(
-            message=Identifiable(
-                id=uuid4(),
-                data=TaskSchema(name=generate_random_name()),
-            ),
-            topic="task",
-        )
-```
+- Clear separation of concerns
+- Business logic isolation from infrastructure
+- Easy testing and maintainability
+- Dependency injection for flexible component management
 
 ### Observability
+- Built-in OpenTelemetry integration
+- Distributed tracing support
+- Logging and metrics collection
+- Performance monitoring capabilities
 
-You can setup Observability Interceptors for logs, traces and metric collection with [OpenTelemetry](https://opentelemetry.io/docs)-based Protocols
+## Quick Start
 
-```python
-class HelloService:
-    def __init__(
-        self,
-        hello_rpc: Annotated[HelloRPC, Token(HelloRPC, "HELLO_RPC")],
-    ):
-        self.hello_rpc = hello_rpc
-
-    @TracedFunc("ping") # Decorator for tracing
-    async def ping(self) -> HelloResponse:
-        return await self.hello_rpc.ping()
-
-    @TracedFunc("hello-service")
-    async def hello(
-        self,
-        gather: bool,
-    ) -> HelloResponse:
-        now = asyncio.get_event_loop().time()
-        if gather:
-            await asyncio.gather(*[self.random_await(a) for a in range(10)])
-        else:
-            for a in range(10):
-                await self.random_await(a)
-        return HelloResponse(
-            message="Elapsed time: {}".format(asyncio.get_event_loop().time() - now)
-        )
-
-    @TracedFunc("random-await")
-    async def random_await(self, index: int) -> None:
-        logger.info("Random await %s", index, extra={"index": index})
-        await asyncio.sleep(random.randint(1, 3))
-        logger.info("Random await %s done", index, extra={"index": index})
-```
-
-## Installation
+### Installation
 
 ```bash
 pip install jararaca
 ```
 
-## Usage
-
-### Create a Microservice
+### Basic Usage
 
 ```python
-# app.py
-
-from jararaca import Microservice, create_http_server, create_messagebus_worker
+from jararaca import Microservice, create_http_server
 from jararaca.presentation.http_microservice import HttpMicroservice
 
+# Define your microservice
 app = Microservice(
     providers=[
-        ProviderSpec(
-            provide=Token[AppConfig],
-            use_factory=AppConfig.provider,
-        )
+        # Add your providers here
     ],
-    controllers=[TasksController],
+    controllers=[
+        # Add your controllers here
+    ],
     interceptors=[
-        AIOSqlAlchemySessionInterceptor(
-            AIOSQAConfig(
-                connection_name="default",
-                url="sqlite+aiosqlite:///db.sqlite3",
-            )
-        ),
+        # Add your interceptors here
     ],
 )
 
-
-# App for specific Http Configuration Context
+# Create HTTP server
 http_app = HttpMicroservice(app)
-
 web_app = create_http_server(app)
-
 ```
 
-### Run as a Web Server
+### Running the Service
 
 ```bash
-uvicorn app:web_app --reload
-# or
-jararaca server app:app
-# or
+# Run as HTTP server
 jararaca server app:http_app
 
-```
-
-### Run as a Message Bus Worker
-
-```bash
+# Run as message bus worker
 jararaca worker app:app
-```
 
-### Run as a scheduled routine
-
-```bash
+# Run as scheduler
 jararaca scheduler app:app
-```
 
-### Generate Typescript intefaces from microservice app controllers
-
-```bash
+# Generate TypeScript interfaces
 jararaca gen-tsi app.main:app app.ts
 ```
 
-### Documentation
+## Documentation
 
-Documentation is under construction [here](https://luscasleo.github.io/jararaca/).
+For detailed documentation, please visit our [documentation site](https://luscasleo.github.io/jararaca/).
+
+## Examples
+
+Check out the [examples directory](examples/) for complete working examples of:
+- REST API implementation
+- WebSocket usage
+- Message bus integration
+- Task scheduling
+- TypeScript interface generation
+
+## Contributing
+
+Contributions are welcome! Please read our [contributing guidelines](.github/CONTRIBUTING.md) for details on our code of conduct and the process for submitting pull requests.
+
+## License
+
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
