@@ -326,7 +326,7 @@ from jararaca import Message, MessageBusController, MessageHandler
 @MessageBusController()
 class UserEventsController:
     @MessageHandler("user.created")
-    async def handle_user_created(self, message: Message[UserCreatedMessage]):
+    async def handle_user_created(self, message: MessageOf[UserCreatedMessage]):
         user_data = message.payload()
         # Process the message
         print(f"User created: {user_data.username}")
@@ -429,7 +429,7 @@ One of Jararaca's strengths is the ability to seamlessly integrate message bus e
 @RestController("/notifications")
 class NotificationController:
     @MessageHandler("user.activity")
-    async def handle_user_activity(self, message: Message[UserActivityMessage]):
+    async def handle_user_activity(self, message: MessageOf[UserActivityMessage]):
         user_data = message.payload()
 
         # Create a WebSocket message
@@ -475,8 +475,10 @@ async def scheduled_task(self):
 Publish and consume messages through RabbitMQ:
 
 ```python
-@IncomingHandler("task")
-async def process_task(self, message: Message[TaskSchema]):
+
+
+@MessageHandler(TaskSchema)
+async def process_task(self, message: MessageOf[TaskSchema]):
     # Process incoming messages
     pass
 ```
