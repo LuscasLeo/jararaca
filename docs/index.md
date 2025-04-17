@@ -286,7 +286,7 @@ from jararaca import Message
 
 class UserCreatedMessage(Message):
     MESSAGE_TOPIC = "user.created"
-    MESSAGE_TYPE = "event"  # or "event"
+    MESSAGE_TYPE = "event"  # or "task"
 
     user_id: str
     username: str
