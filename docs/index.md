@@ -12,7 +12,6 @@ Jararaca is a powerful Python microservice framework that provides a comprehensi
 - 🔒 **Authentication**: Built-in JWT authentication with token blacklisting
 - 🔍 **Query Operations**: Advanced query capabilities with pagination and filtering
 - ⏱️ **Scheduled Tasks**: Cron-based task scheduling
-- 🛠️ **CRUD Operations**: Simplified database operations with automatic entity mapping
 
 ## Installation
 
