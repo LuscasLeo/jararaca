@@ -396,7 +396,7 @@ from jararaca import WebSocketEndpoint, RestController
 from fastapi import WebSocket
 
 @RestController("/ws")
-@RegisterWebSocketMessage(ChatMessage) # Register the WebSocket message
+@RegisterWebSocketMessage(ChatMessage) # Register the WebSocket message in order to be generated in the ts files
 class WebSocketController:
     @WebSocketEndpoint("/chat/{room_id}")
     async def chat_endpoint(self, websocket: WebSocket, room_id: str):
