@@ -78,3 +78,5 @@ extra:
     - icon: fontawesome/brands/bluesky
       link: https://bsky.app/profile/luscasleo.dev
       name: LuscasLeo on Bluesky
+  # Adding footer note
+copyright: Documentation Made with help of AI and Poorly reviewed 🥲
