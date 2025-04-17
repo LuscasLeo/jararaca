@@ -385,8 +385,6 @@ await ws_manager.send(["room1", "room2"], message)
 # Broadcast to all connections
 await ws_manager.broadcast(message)
 
-# Remove a WebSocket from a room
-await ws_manager.remove_websocket_from_room(websocket, "room1")
 ```
 
 #### WebSocket Endpoint
