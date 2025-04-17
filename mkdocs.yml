@@ -1,4 +1,8 @@
 site_name: Jararaca Framework
+
+plugins:
+  - search
+  - mermaid2
 theme:
   name: material
   features:
@@ -12,19 +16,31 @@ theme:
     - content.code.annotation
     - content.code.copy
   language: en
+  font:
+    text: Roboto
+    code: JetBrains Mono
   palette:
     - scheme: default
       toggle:
         icon: material/toggle-switch-off-outline
         name: Switch to dark mode
-      primary: teal
-      accent: purple
+      primary: deep purple
+      accent: amber
+      background: white
+      surface: white
+      text: black
     - scheme: slate
       toggle:
         icon: material/toggle-switch
         name: Switch to light mode
-      primary: teal
-      accent: lime
+      primary: deep purple
+      accent: amber
+      background: "#1a1a1a"
+      surface: "#2a2a2a"
+      text: white
+  icon:
+    repo: fontawesome/brands/github
+  logo: assets/_f04774c9-7e05-4da4-8b17-8be23f6a1475.jpeg
 
 markdown_extensions:
   - pymdownx.highlight:
@@ -33,4 +49,12 @@ markdown_extensions:
       pygments_lang_class: true
   - pymdownx.inlinehilite
   - pymdownx.snippets
-  - pymdownx.superfences
+  - pymdownx.superfences:
+      # make exceptions to highlighting of code:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:mermaid2.fence_mermaid_custom
+
+extra_css:
+  - stylesheets/custom.css

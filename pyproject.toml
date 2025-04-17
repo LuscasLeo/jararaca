@@ -52,6 +52,7 @@ types-redis = "^4.6.0.20240903"
 
 [tool.poetry.group.docs.dependencies]
 mkdocs-material = "^9.5.34"
+mkdocs-mermaid2-plugin = "^1.2.1"
 
 
 [tool.poetry.group.dev.dependencies]
