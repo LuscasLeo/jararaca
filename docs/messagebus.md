@@ -48,6 +48,28 @@ graph TB
 
 Messages in Jararaca are built on Pydantic models, which provide type validation and serialization capabilities.
 
+### Message Types: Tasks vs Events
+
+Jararaca supports two fundamental message types:
+
+- **Tasks**: Designed to be handled exactly once by a single MessageHandler. It is not recommended to have multiple MessageHandlers listening to the same Task type. Tasks represent commands or operations that should be executed once.
+
+- **Events**: Can be listened to by multiple parts of the application. Events are ideal for scenarios where different components need to react to the same occurrence, providing looser coupling throughout the codebase.
+
+```mermaid
+graph LR
+    Task[Task Message] --> Handler1[Single Handler]
+    Event[Event Message] --> HandlerA[Handler A]
+    Event --> HandlerB[Handler B]
+    Event --> HandlerC[Handler C]
+```
+
+When designing your message architecture, consider:
+
+- Use Tasks when an operation should be performed exactly once
+- Use Events when multiple systems need to react to the same occurrence
+- Events promote better decoupling between components
+
 ### Base Message Class
 
 ```mermaid
@@ -337,6 +359,7 @@ jararaca worker APP_PATH [OPTIONS]
 ```
 
 Options:
+
 - `--url`: AMQP URL (default: "amqp://guest:guest@localhost/")
 - `--username`: AMQP username (optional)
 - `--password`: AMQP password (optional)
