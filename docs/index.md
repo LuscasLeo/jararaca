@@ -75,6 +75,7 @@ http_app = HttpMicroservice(app, fastapi_factory)
 
 asgi_app = create_http_server(http_app)
 ```
+
 Then run the server with:
 
 ```bash
@@ -82,11 +83,6 @@ uvicorn app_module:asgi_app
 ```
 
 Starts a FastAPI HTTP server for your microservice.
-
-**Options:**
-
-- `--host`: Hostname to bind to (default: "0.0.0.0")
-- `--port`: Port to listen on (default: 8000)
 
 ### `scheduler` - Task Scheduler
 
