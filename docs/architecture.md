@@ -56,7 +56,7 @@ The application structure follows a hierarchical pattern:
 ## Architecture Diagram
 
 ```mermaid
-graph TD
+graph LR
     subgraph "Runtime Layer"
         REST[REST API Runtime]
         Worker[Message Bus Worker Runtime]
