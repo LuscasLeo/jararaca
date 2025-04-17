@@ -277,7 +277,7 @@ Jararaca provides powerful abstractions for both asynchronous messaging (via mes
 The `Message` class is the foundation for all message bus communication in Jararaca. Messages can be tasks or events that flow through your microservice architecture.
 
 ```python
-from typing import ClassVar
+
 
 from pydantic import Field
 
@@ -340,7 +340,6 @@ The `WebSocketMessage` class enables real-time communication with connected WebS
 ```python
 from jararaca import WebSocketMessage
 from pydantic import Field
-from typing import ClassVar
 
 class ChatMessage(WebSocketMessage):
     MESSAGE_ID = "chat.message"
