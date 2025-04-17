@@ -1,5 +1,9 @@
 site_name: Jararaca Framework
 
+# Add repository URL here
+repo_url: https://github.com/LuscasLeo/jararaca
+repo_name: LuscasLeo/jararaca
+
 plugins:
   - search
   - mermaid2
@@ -58,3 +62,19 @@ markdown_extensions:
 
 extra_css:
   - stylesheets/custom.css
+
+# Add Buy Me a Coffee link
+extra:
+  social:
+    - icon: fontawesome/brands/github
+      link: https://github.com/LuscasLeo
+      name: LuscasLeo on GitHub
+    - icon: fontawesome/solid/mug-hot
+      link: https://buymeacoffee.com/luscasleo
+      name: Buy Me a Coffee
+    - icon: fontawesome/brands/twitter
+      link: https://twitter.com/luscasleo_dev
+      name: LuscasLeo on Twitter
+    - icon: fontawesome/brands/bluesky
+      link: https://bsky.app/profile/luscasleo.dev
+      name: LuscasLeo on Bluesky
