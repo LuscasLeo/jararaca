@@ -98,10 +98,35 @@ Runs scheduled tasks defined in your application using cron expressions.
 ### `gen-tsi` - Generate TypeScript Interfaces
 
 ```bash
-jararaca gen-tsi APP_PATH FILE_PATH
+jararaca gen-tsi APP_PATH FILE_PATH [OPTIONS]
 ```
 
 Generates TypeScript interfaces from your Python models to ensure type safety between your frontend and backend.
+
+**Options:**
+
+- `--watch`: Watch for file changes and regenerate TypeScript interfaces automatically
+- `--src-dir`: Source directory to watch for changes (default: "src")
+
+**Example with watch mode:**
+
+```bash
+jararaca gen-tsi app.module:app interfaces.ts --watch
+```
+
+This will generate the TypeScript interfaces initially and then watch for any changes to Python files in the src directory, automatically regenerating the interfaces when changes are detected. You can stop watching with Ctrl+C.
+
+**Note:** To use the watch feature, you need to install the watchdog package:
+
+```bash
+pip install jararaca[watch]
+```
+
+Or directly:
+
+```bash
+pip install watchdog
+```
 
 ### `gen-entity` - Generate Entity Template
 

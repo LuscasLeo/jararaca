@@ -1,5 +1,8 @@
 import importlib
 import importlib.resources
+import os
+import sys
+import time
 from codecs import StreamWriter
 from typing import Any
 from urllib.parse import urlparse, urlunsplit
@@ -208,12 +211,83 @@ def scheduler(
     "file_path",
     type=click.File("w"),
 )
-def gen_tsi(app_path: str, file_path: StreamWriter) -> None:
-    app = find_microservice_by_module_path(app_path)
+@click.option(
+    "--watch",
+    is_flag=True,
+    help="Watch for file changes and regenerate TypeScript interfaces",
+)
+@click.option(
+    "--src-dir",
+    type=click.Path(exists=True, file_okay=False, dir_okay=True),
+    default="src",
+    help="Source directory to watch for changes (default: src)",
+)
+def gen_tsi(app_path: str, file_path: StreamWriter, watch: bool, src_dir: str) -> None:
+    """Generate TypeScript interfaces from a Python microservice."""
 
-    content = write_microservice_to_typescript_interface(app)
+    # Generate typescript interfaces
+    def generate_interfaces() -> None:
+        try:
+            app = find_microservice_by_module_path(app_path)
+            content = write_microservice_to_typescript_interface(app)
 
-    file_path.write(content)
+            # Save current position
+            file_path.tell()
+
+            # Reset file to beginning
+            file_path.seek(0)
+            file_path.truncate()
+
+            # Write new content
+            file_path.write(content)
+            file_path.flush()
+
+            print(f"Generated TypeScript interfaces at {time.strftime('%H:%M:%S')}")
+        except Exception as e:
+            print(f"Error generating TypeScript interfaces: {e}", file=sys.stderr)
+
+    # Initial generation
+    generate_interfaces()
+
+    # If watch mode is not enabled, exit
+    if not watch:
+        return
+
+    try:
+        from watchdog.events import FileSystemEvent, FileSystemEventHandler
+        from watchdog.observers import Observer
+    except ImportError:
+        print(
+            "Watchdog is required for watch mode. Install it with: pip install watchdog",
+            file=sys.stderr,
+        )
+        return
+
+    # Set up file system event handler
+    class PyFileChangeHandler(FileSystemEventHandler):
+        def on_modified(self, event: FileSystemEvent) -> None:
+            src_path = (
+                event.src_path
+                if isinstance(event.src_path, str)
+                else str(event.src_path)
+            )
+            if not event.is_directory and src_path.endswith(".py"):
+                print(f"File changed: {src_path}")
+                generate_interfaces()
+
+    # Set up observer
+    observer = Observer()
+    observer.schedule(PyFileChangeHandler(), src_dir, recursive=True)
+    observer.start()
+
+    print(f"Watching for changes in {os.path.abspath(src_dir)}...")
+    try:
+        while True:
+            time.sleep(1)
+    except KeyboardInterrupt:
+        observer.stop()
+        print("Watch mode stopped")
+    observer.join()
 
 
 def camel_case_to_snake_case(name: str) -> str:
