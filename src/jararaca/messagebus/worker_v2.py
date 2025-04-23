@@ -2,15 +2,28 @@ import asyncio
 import inspect
 import logging
 import signal
+from abc import ABC
 from contextlib import asynccontextmanager, suppress
 from dataclasses import dataclass
-from typing import Any, AsyncContextManager, AsyncGenerator, Type, get_origin
+from datetime import UTC, datetime
+from typing import (
+    Any,
+    AsyncContextManager,
+    AsyncGenerator,
+    Awaitable,
+    Callable,
+    Type,
+    get_origin,
+)
+from urllib.parse import parse_qs, urlparse
 
 import aio_pika
 import aio_pika.abc
 import uvloop
 from pydantic import BaseModel
 
+from jararaca.broker_backend import MessageBrokerBackend
+from jararaca.broker_backend.mapper import get_message_broker_backend_from_url
 from jararaca.core.uow import UnitOfWorkContextProvider
 from jararaca.di import Container
 from jararaca.lifecycle import AppLifecycle
@@ -20,12 +33,19 @@ from jararaca.messagebus.bus_message_controller import (
 )
 from jararaca.messagebus.decorators import (
     MESSAGE_HANDLER_DATA_SET,
+    SCHEDULED_ACTION_DATA_SET,
     MessageBusController,
     MessageHandler,
     MessageHandlerData,
+    ScheduledActionData,
+    ScheduleDispatchData,
 )
 from jararaca.messagebus.message import Message, MessageOf
-from jararaca.microservice import MessageBusAppContext, Microservice
+from jararaca.microservice import (
+    MessageBusAppContext,
+    Microservice,
+    SchedulerAppContext,
+)
 from jararaca.utils.rabbitmq_utils import RabbitmqUtils
 
 logger = logging.getLogger(__name__)
@@ -76,15 +96,28 @@ class MessageProcessingLocker:
         await asyncio.gather(*self.current_processing_messages_set)
 
 
-class AioPikaMicroserviceConsumer:
+class MessageBusConsumer(ABC):
+
+    async def consume(self) -> None:
+        raise NotImplementedError("consume method not implemented")
+
+    def shutdown(self) -> None: ...
+
+
+class AioPikaMicroserviceConsumer(MessageBusConsumer):
     def __init__(
         self,
+        broker_backend: MessageBrokerBackend,
         config: AioPikaWorkerConfig,
         message_handler_set: MESSAGE_HANDLER_DATA_SET,
+        scheduled_actions: SCHEDULED_ACTION_DATA_SET,
         uow_context_provider: UnitOfWorkContextProvider,
     ):
+
+        self.broker_backend = broker_backend
         self.config = config
         self.message_handler_set = message_handler_set
+        self.scheduled_actions = scheduled_actions
         self.incoming_map: dict[str, MessageHandlerData] = {}
         self.uow_context_provider = uow_context_provider
         self.shutdown_event = asyncio.Event()
@@ -99,11 +132,16 @@ class AioPikaMicroserviceConsumer:
 
         await channel.set_qos(prefetch_count=self.config.prefetch_count)
 
-        main_ex = await RabbitmqUtils.declare_main_exchange(
-            channel=channel, exchange_name=self.config.exchange
+        await RabbitmqUtils.declare_main_exchange(
+            channel=channel,
+            exchange_name=self.config.exchange,
         )
 
-        dlx, dlq = await RabbitmqUtils.delcare_dl_kit(channel=channel)
+        dlx = await RabbitmqUtils.declare_dl_exchange(channel=channel)
+
+        dlq = await RabbitmqUtils.declare_dl_queue(channel=channel)
+
+        await dlq.bind(dlx, routing_key=RabbitmqUtils.DEAD_LETTER_EXCHANGE)
 
         for handler in self.message_handler_set:
 
@@ -112,15 +150,11 @@ class AioPikaMicroserviceConsumer:
 
             self.incoming_map[queue_name] = handler
 
-            queue = await channel.declare_queue(
-                queue_name,
-                arguments={
-                    "x-dead-letter-exchange": dlx.name,
-                    "x-dead-letter-routing-key": dlq.name,
-                },
+            queue = await RabbitmqUtils.declare_queue(
+                channel=channel, queue_name=queue_name
             )
 
-            await queue.bind(exchange=main_ex, routing_key=routing_key)
+            await queue.bind(exchange=self.config.exchange, routing_key=routing_key)
 
             await queue.consume(
                 callback=MessageHandlerCallback(
@@ -132,7 +166,29 @@ class AioPikaMicroserviceConsumer:
                 no_ack=handler.spec.auto_ack,
             )
 
-            print(f"Consuming {queue_name}")
+            logger.info(f"Consuming message handler {queue_name}")
+
+        for scheduled_action in self.scheduled_actions:
+
+            queue_name = f"{scheduled_action.callable.__module__}.{scheduled_action.callable.__qualname__}"
+
+            routing_key = queue_name
+
+            queue = await channel.declare_queue(queue_name, durable=True)
+
+            await queue.bind(exchange=self.config.exchange, routing_key=routing_key)
+
+            await queue.consume(
+                callback=ScheduledMessageHandlerCallback(
+                    consumer=self,
+                    queue_name=queue_name,
+                    routing_key=routing_key,
+                    scheduled_action=scheduled_action,
+                ),
+                no_ack=True,
+            )
+
+            logger.info(f"Consuming scheduler {queue_name}")
 
         await self.shutdown_event.wait()
         logger.info("Worker shutting down")
@@ -145,6 +201,158 @@ class AioPikaMicroserviceConsumer:
     async def wait_all_tasks_done(self) -> None:
         async with self.lock:
             await asyncio.gather(*self.tasks)
+
+    def shutdown(self) -> None:
+        self.shutdown_event.set()
+
+
+def create_message_bus(
+    broker_url: str,
+    broker_backend: MessageBrokerBackend,
+    scheduled_actions: SCHEDULED_ACTION_DATA_SET,
+    message_handler_set: MESSAGE_HANDLER_DATA_SET,
+    uow_context_provider: UnitOfWorkContextProvider,
+) -> MessageBusConsumer:
+
+    parsed_url = urlparse(broker_url)
+
+    if parsed_url.scheme == "amqp" or parsed_url.scheme == "amqps":
+        assert parsed_url.query, "Query string must be set for AMQP URLs"
+
+        query_params: dict[str, list[str]] = parse_qs(parsed_url.query)
+
+        assert "exchange" in query_params, "Exchange must be set in the query string"
+        assert (
+            len(query_params["exchange"]) == 1
+        ), "Exchange must be set in the query string"
+        assert (
+            "prefetch_count" in query_params
+        ), "Prefetch count must be set in the query string"
+        assert (
+            len(query_params["prefetch_count"]) == 1
+        ), "Prefetch count must be set in the query string"
+        assert query_params["prefetch_count"][
+            0
+        ].isdigit(), "Prefetch count must be an integer in the query string"
+        assert query_params["exchange"][0], "Exchange must be set in the query string"
+        assert query_params["prefetch_count"][
+            0
+        ], "Prefetch count must be set in the query string"
+
+        exchange = query_params["exchange"][0]
+        prefetch_count = int(query_params["prefetch_count"][0])
+
+        config = AioPikaWorkerConfig(
+            url=broker_url,
+            exchange=exchange,
+            prefetch_count=prefetch_count,
+        )
+
+        return AioPikaMicroserviceConsumer(
+            config=config,
+            broker_backend=broker_backend,
+            message_handler_set=message_handler_set,
+            scheduled_actions=scheduled_actions,
+            uow_context_provider=uow_context_provider,
+        )
+
+    raise ValueError(
+        f"Unsupported broker URL scheme: {parsed_url.scheme}. Supported schemes are amqp and amqps"
+    )
+
+
+class ScheduledMessageHandlerCallback:
+    def __init__(
+        self,
+        consumer: AioPikaMicroserviceConsumer,
+        queue_name: str,
+        routing_key: str,
+        scheduled_action: ScheduledActionData,
+    ):
+        self.consumer = consumer
+        self.queue_name = queue_name
+        self.routing_key = routing_key
+        self.scheduled_action = scheduled_action
+
+    async def __call__(
+        self, aio_pika_message: aio_pika.abc.AbstractIncomingMessage
+    ) -> None:
+
+        if self.consumer.shutdown_event.is_set():
+            return
+
+        async with self.consumer.lock:
+            task = asyncio.create_task(self.handle_message(aio_pika_message))
+            self.consumer.tasks.add(task)
+            task.add_done_callback(self.handle_message_consume_done)
+
+    def handle_message_consume_done(self, task: asyncio.Task[Any]) -> None:
+        self.consumer.tasks.discard(task)
+
+    async def handle_message(
+        self, aio_pika_message: aio_pika.abc.AbstractIncomingMessage
+    ) -> None:
+
+        if self.consumer.shutdown_event.is_set():
+            logger.info("Shutdown event set. Rqueuing message")
+            await aio_pika_message.reject(requeue=True)
+
+        sig = inspect.signature(self.scheduled_action.callable)
+        if len(sig.parameters) == 1:
+
+            task = asyncio.create_task(
+                self.run_with_context(
+                    self.scheduled_action.callable,
+                    self.scheduled_action,
+                    (ScheduleDispatchData(int(aio_pika_message.body.decode("utf-8"))),),
+                    {},
+                )
+            )
+
+        elif len(sig.parameters) == 0:
+            task = asyncio.create_task(
+                self.run_with_context(
+                    self.scheduled_action.callable,
+                    self.scheduled_action,
+                    (),
+                    {},
+                )
+            )
+        else:
+            logger.warning(
+                "Scheduled action '%s' must have exactly one parameter of type ScheduleDispatchData or no parameters"
+                % self.queue_name
+            )
+            return
+
+        self.consumer.tasks.add(task)
+        task.add_done_callback(self.handle_message_consume_done)
+
+        try:
+            await task
+        except Exception as e:
+
+            logger.exception(
+                f"Error processing scheduled action {self.queue_name}: {e}"
+            )
+
+    async def run_with_context(
+        self,
+        func: Callable[..., Awaitable[None]],
+        scheduled_action: ScheduledActionData,
+        args: tuple[Any, ...],
+        kwargs: dict[str, Any],
+    ) -> None:
+        async with self.consumer.uow_context_provider(
+            SchedulerAppContext(
+                action=func,
+                scheduled_to=datetime.now(UTC),
+                cron_expression=scheduled_action.spec.cron,
+                triggered_at=datetime.now(UTC),
+            )
+        ):
+
+            await func(*args, **kwargs)
 
 
 class MessageHandlerCallback:
@@ -208,13 +416,7 @@ class MessageHandlerCallback:
             await self.handle_reject_message(aio_pika_message)
             return
 
-        handler_data = self.consumer.incoming_map.get(routing_key)
-
-        if handler_data is None:
-            logger.warning("No handler found for topic '%s'" % routing_key)
-            await self.handle_reject_message(aio_pika_message)
-
-            return
+        handler_data = self.message_handler
 
         handler = handler_data.callable
 
@@ -309,9 +511,11 @@ async def none_context() -> AsyncGenerator[None, None]:
 
 
 class MessageBusWorker:
-    def __init__(self, app: Microservice, config: AioPikaWorkerConfig) -> None:
+    def __init__(self, app: Microservice, broker_url: str, backend_url: str) -> None:
         self.app = app
-        self.config = config
+        self.backend_url = backend_url
+        self.broker_url = broker_url
+
         self.container = Container(app)
         self.lifecycle = AppLifecycle(app, self.container)
 
@@ -319,30 +523,31 @@ class MessageBusWorker:
             app=app, container=self.container
         )
 
-        self._consumer: AioPikaMicroserviceConsumer | None = None
+        self._consumer: MessageBusConsumer | None = None
 
     @property
-    def consumer(self) -> AioPikaMicroserviceConsumer:
+    def consumer(self) -> MessageBusConsumer:
         if self._consumer is None:
             raise RuntimeError("Consumer not started")
         return self._consumer
 
     async def start_async(self) -> None:
         all_message_handlers_set: MESSAGE_HANDLER_DATA_SET = set()
+        all_scheduled_actions_set: SCHEDULED_ACTION_DATA_SET = set()
         async with self.lifecycle():
-            for instance_type in self.app.controllers:
-                controller = MessageBusController.get_messagebus(instance_type)
+            for instance_class in self.app.controllers:
+                controller = MessageBusController.get_messagebus(instance_class)
 
                 if controller is None:
                     continue
 
-                instance: Any = self.container.get_by_type(instance_type)
+                instance: Any = self.container.get_by_type(instance_class)
 
                 factory = controller.get_messagebus_factory()
-                handlers, _ = factory(instance)
+                handlers, schedulers = factory(instance)
 
                 message_handler_data_map: dict[str, MessageHandlerData] = {}
-
+                all_scheduled_actions_set.update(schedulers)
                 for handler_data in handlers:
                     message_type = handler_data.spec.message_type
                     topic = message_type.MESSAGE_TOPIC
@@ -358,8 +563,12 @@ class MessageBusWorker:
                     message_handler_data_map[topic] = handler_data
                     all_message_handlers_set.add(handler_data)
 
-            consumer = self._consumer = AioPikaMicroserviceConsumer(
-                config=self.config,
+            broker_backend = get_message_broker_backend_from_url(url=self.backend_url)
+
+            consumer = self._consumer = create_message_bus(
+                broker_url=self.broker_url,
+                broker_backend=broker_backend,
+                scheduled_actions=all_scheduled_actions_set,
                 message_handler_set=all_message_handlers_set,
                 uow_context_provider=self.uow_context_provider,
             )
@@ -370,7 +579,7 @@ class MessageBusWorker:
 
         def on_shutdown(loop: asyncio.AbstractEventLoop) -> None:
             logger.info("Shutting down")
-            self.consumer.shutdown_event.set()
+            self.consumer.shutdown()
 
         with asyncio.Runner(loop_factory=uvloop.new_event_loop) as runner:
             runner.get_loop().add_signal_handler(

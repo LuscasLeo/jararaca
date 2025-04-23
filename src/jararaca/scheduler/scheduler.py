@@ -1,5 +1,7 @@
 import asyncio
+import inspect
 import logging
+import time
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -11,6 +13,7 @@ from croniter import croniter
 from jararaca.core.uow import UnitOfWorkContextProvider
 from jararaca.di import Container
 from jararaca.lifecycle import AppLifecycle
+from jararaca.messagebus.decorators import ScheduleDispatchData
 from jararaca.microservice import Microservice, SchedulerAppContext
 from jararaca.scheduler.decorators import ScheduledAction
 
@@ -20,9 +23,6 @@ logger = logging.getLogger(__name__)
 @dataclass
 class SchedulerConfig:
     interval: int
-
-
-class SchedulerBackend: ...
 
 
 def extract_scheduled_actions(
@@ -52,12 +52,11 @@ class Scheduler:
     def __init__(
         self,
         app: Microservice,
-        backend: SchedulerBackend,
-        config: SchedulerConfig,
+        interval: int,
     ) -> None:
         self.app = app
-        self.backend = backend
-        self.config = config
+
+        self.interval = interval
         self.container = Container(self.app)
         self.uow_provider = UnitOfWorkContextProvider(app, self.container)
 
@@ -115,7 +114,15 @@ class Scheduler:
             ):
                 try:
                     async with ctx:
-                        await func()
+                        signature = inspect.signature(func)
+                        if len(signature.parameters) > 0:
+                            logging.warning(
+                                f"Scheduled action {func.__module__}.{func.__qualname__} has parameters, but no arguments were provided. Must be using scheduler-v2"
+                            )
+                            await func(ScheduleDispatchData(time.time()))
+                        else:
+                            await func()
+
                 except BaseException as e:
                     if action_specs.exception_handler:
                         action_specs.exception_handler(e)
@@ -143,7 +150,7 @@ class Scheduler:
 
                         await self.process_task(func, scheduled_action)
 
-                    await asyncio.sleep(self.config.interval)
+                    await asyncio.sleep(self.interval)
 
         with asyncio.Runner(loop_factory=uvloop.new_event_loop) as runner:
             runner.run(run_scheduled_actions())

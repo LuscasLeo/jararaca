@@ -1,12 +1,41 @@
 from contextlib import contextmanager, suppress
 from contextvars import ContextVar
-from typing import Any, Generator, Protocol
+from datetime import datetime, tzinfo
+from typing import Any, ClassVar, Generator, Literal, Protocol
 
 from pydantic import BaseModel
 
 
+class IMessage(BaseModel):
+    """
+    Base class for messages representing tasks.
+    A Task is a message that represents a unit of work to be done.
+    It is published to a TaskPublisher and consumed by a TaskHandler, wrapped in TaskData.
+    Note: A Task is not an Event.
+    """
+
+    MESSAGE_TOPIC: ClassVar[str] = "__unset__"
+
+    MESSAGE_TYPE: ClassVar[Literal["task", "event"]] = "task"
+
+
 class MessagePublisher(Protocol):
-    async def publish(self, message: BaseModel, topic: str) -> None:
+    async def publish(self, message: IMessage, topic: str) -> None:
+        raise NotImplementedError()
+
+    async def delay(self, message: IMessage, seconds: int) -> None:
+        """
+        Delay the message for a given number of seconds.
+        """
+
+        raise NotImplementedError()
+
+    async def schedule(
+        self, message: IMessage, when: datetime, timezone: tzinfo
+    ) -> None:
+        """
+        Schedule the message for a given datetime.
+        """
         raise NotImplementedError()
 
 

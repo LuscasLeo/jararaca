@@ -1,3 +1,3 @@
-from .types import MessageOf
+from .message import MessageOf
 
 __all__ = ["MessageOf"]

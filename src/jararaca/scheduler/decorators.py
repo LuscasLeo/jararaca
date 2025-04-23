@@ -11,7 +11,7 @@ class ScheduledAction:
         self,
         cron: str,
         allow_overlap: bool = False,
-        exclusive: bool = False,
+        exclusive: bool = True,
         timeout: int | None = None,
         exception_handler: Callable[[BaseException], None] | None = None,
     ) -> None:
@@ -19,12 +19,35 @@ class ScheduledAction:
         :param cron: A string representing the cron expression for the scheduled action.
         :param allow_overlap: A boolean indicating if the scheduled action should new executions even if the previous one is still running.
         :param exclusive: A boolean indicating if the scheduled action should be executed in one instance of the application. (Requires a distributed lock provided by a backend)
+        :param exception_handler: A callable that will be called when an exception is raised during the execution of the scheduled action.
+        :param timeout: An integer representing the timeout for the scheduled action in seconds. If the scheduled action takes longer than this time, it will be terminated.
         """
         self.cron = cron
+        """
+        A string representing the cron expression for the scheduled action.
+        """
+
         self.allow_overlap = allow_overlap
+        """
+        A boolean indicating if the scheduled action should new executions even if the previous one is still running.
+        """
+
         self.exclusive = exclusive
+        """
+        A boolean indicating if the scheduled action should be executed
+        in one instance of the application. (Requires a distributed lock provided by a backend)
+        """
+
         self.exception_handler = exception_handler
+        """
+        A callable that will be called when an exception is raised during the execution of the scheduled action.
+        """
+
         self.timeout = timeout
+        """
+        An integer representing the timeout for the scheduled action in seconds.
+        If the scheduled action takes longer than this time, it will be terminated.
+        """
 
     def __call__(self, func: DECORATED_FUNC) -> DECORATED_FUNC:
         ScheduledAction.register(func, self)
@@ -61,3 +84,13 @@ class ScheduledAction:
             scheduled_actions.append((member, scheduled_action))
 
         return scheduled_actions
+
+    @staticmethod
+    def get_function_id(
+        func: Callable[..., Any],
+    ) -> str:
+        """
+        Get the function ID of the scheduled action.
+        This is used to identify the scheduled action in the message broker.
+        """
+        return f"{func.__module__}.{func.__qualname__}"
