@@ -153,3 +153,10 @@ class RedisMessageBrokerBackend(MessageBrokerBackend):
                 continue
 
         return delayed_messages
+
+    async def dispose(self) -> None:
+        """
+        Dispose of the message broker backend.
+        This is used to close the connection to the message broker.
+        """
+        await self.redis.close()

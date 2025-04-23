@@ -1,14 +1,17 @@
 import asyncio
+import contextlib
 import logging
 import signal
 import time
 from abc import ABC, abstractmethod
 from contextlib import asynccontextmanager
+from datetime import UTC, datetime
 from types import FrameType
 from typing import Any, AsyncGenerator, Callable
 from urllib.parse import parse_qs
 
 import aio_pika
+import croniter
 import urllib3
 import urllib3.util
 import uvloop
@@ -81,6 +84,9 @@ class MessageBrokerDispatcher(ABC):
     async def initialize(self, scheduled_actions: SCHEDULED_ACTION_LIST) -> None:
         raise NotImplementedError("initialize() is not implemented yet.")
 
+    async def dispose(self) -> None:
+        pass
+
 
 class RabbitMQBrokerDispatcher(MessageBrokerDispatcher):
 
@@ -112,8 +118,6 @@ class RabbitMQBrokerDispatcher(MessageBrokerDispatcher):
         assert query_params["exchange"], "Empty exchange parameter"
 
         self.exchange = str(query_params["exchange"][0])
-
-        print(f"RabbitMQ URL: {url}")
 
     async def _create_connection(self) -> AbstractRobustConnection:
         """
@@ -194,6 +198,10 @@ class RabbitMQBrokerDispatcher(MessageBrokerDispatcher):
                     exchange=self.exchange,
                     routing_key=ScheduledAction.get_function_id(func),
                 )
+
+    async def dispose(self) -> None:
+        await self.channel_pool.close()
+        await self.conn_pool.close()
 
 
 def get_message_broker_dispatcher_from_url(url: str) -> MessageBrokerDispatcher:
@@ -278,23 +286,25 @@ class SchedulerV2:
                         )
                     )
 
-                    # if last_dispatch_time is not None:
-                    #     cron = croniter(scheduled_action.cron, last_dispatch_time)
-                    #     next_run: datetime = cron.get_next(datetime).replace(tzinfo=UTC)
-                    #     if next_run > datetime.now(UTC):
-                    #         logger.info(
-                    #             f"Skipping {func.__module__}.{func.__qualname__} until {next_run}"
-                    #         )
-                    #         continue
+                    if last_dispatch_time is not None:
+                        cron = croniter.croniter(
+                            scheduled_action.cron, last_dispatch_time
+                        )
+                        next_run: datetime = cron.get_next(datetime).replace(tzinfo=UTC)
+                        if next_run > datetime.now(UTC):
+                            logger.info(
+                                f"Skipping {func.__module__}.{func.__qualname__} until {next_run}"
+                            )
+                            continue
 
-                    # if not scheduled_action.allow_overlap:
-                    #     if (
-                    #         await self.backend.get_in_execution_count(
-                    #             ScheduledAction.get_function_id(func)
-                    #         )
-                    #         > 0
-                    #     ):
-                    #         continue
+                    if not scheduled_action.allow_overlap:
+                        if (
+                            await self.backend.get_in_execution_count(
+                                ScheduledAction.get_function_id(func)
+                            )
+                            > 0
+                        ):
+                            continue
 
                     await self.broker.dispatch_scheduled_action(
                         ScheduledAction.get_function_id(func),
@@ -314,7 +324,15 @@ class SchedulerV2:
             ) in await self.backend.dequeue_next_delayed_messages(now):
                 await self.broker.dispatch_delayed_message(delayed_message_data)
 
-            await asyncio.sleep(self.interval)
+            with contextlib.suppress(asyncio.TimeoutError):
+                await asyncio.wait_for(self.shutdown_event.wait(), self.interval)
+
+            # await self.shutdown_event.wait(self.interval)
+
+        logger.info("Scheduler stopped")
+
+        await self.backend.dispose()
+        await self.broker.dispose()
 
 
 @asynccontextmanager

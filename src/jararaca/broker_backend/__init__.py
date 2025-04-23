@@ -75,6 +75,12 @@ class MessageBrokerBackend(ABC):
             f"enqueue_delayed_message() is not implemented by {self.__class__}."
         )
 
+    async def dispose(self) -> None:
+        """
+        Dispose of the message broker backend.
+        This is used to clean up resources used by the message broker backend.
+        """
+
 
 class NullBackend(MessageBrokerBackend):
     """
@@ -90,4 +96,7 @@ class NullBackend(MessageBrokerBackend):
         return 0
 
     async def set_last_dispatch_time(self, action_name: str, timestamp: int) -> None:
+        pass
+
+    async def dispose(self) -> None:
         pass
