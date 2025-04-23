@@ -46,6 +46,13 @@ theme:
     repo: fontawesome/brands/github
   logo: assets/_f04774c9-7e05-4da4-8b17-8be23f6a1475.jpeg
 
+nav:
+  - Home: index.md
+  - Architecture: architecture.md
+  - Message Bus: messagebus.md
+  - WebSocket: websocket.md
+  - Scheduler: scheduler.md
+
 markdown_extensions:
   - pymdownx.highlight:
       anchor_linenums: true
