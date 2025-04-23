@@ -2,7 +2,8 @@ import inspect
 from dataclasses import dataclass
 from typing import Any, Awaitable, Callable, Generic, TypeVar, cast
 
-from jararaca.messagebus.types import INHERITS_MESSAGE_CO, Message, MessageOf
+from jararaca.messagebus.message import INHERITS_MESSAGE_CO, Message, MessageOf
+from jararaca.scheduler.decorators import ScheduledAction
 
 DECORATED_FUNC = TypeVar("DECORATED_FUNC", bound=Callable[..., Any])
 DECORATED_CLASS = TypeVar("DECORATED_CLASS", bound=Any)
@@ -45,7 +46,7 @@ class MessageHandler(Generic[INHERITS_MESSAGE_CO]):
 
     @staticmethod
     def get_message_incoming(
-        func: Callable[[MessageOf[Any]], Awaitable[Any]]
+        func: Callable[[MessageOf[Any]], Awaitable[Any]],
     ) -> "MessageHandler[Message] | None":
         if not hasattr(func, MessageHandler.MESSAGE_INCOMING_ATTR):
             return None
@@ -62,7 +63,21 @@ class MessageHandlerData:
     callable: Callable[[MessageOf[Any]], Awaitable[None]]
 
 
+@dataclass(frozen=True)
+class ScheduleDispatchData:
+    timestamp: float
+
+
+@dataclass(frozen=True)
+class ScheduledActionData:
+    spec: ScheduledAction
+    callable: Callable[
+        ..., Awaitable[None]
+    ]  # Callable[[ScheduleDispatchData], Awaitable[None]]
+
+
 MESSAGE_HANDLER_DATA_SET = set[MessageHandlerData]
+SCHEDULED_ACTION_DATA_SET = set[ScheduledActionData]
 
 
 class MessageBusController:
@@ -70,11 +85,16 @@ class MessageBusController:
     MESSAGEBUS_ATTR = "__messagebus__"
 
     def __init__(self) -> None:
-        self.messagebus_factory: Callable[[Any], MESSAGE_HANDLER_DATA_SET] | None = None
+        self.messagebus_factory: (
+            Callable[[Any], tuple[MESSAGE_HANDLER_DATA_SET, SCHEDULED_ACTION_DATA_SET]]
+            | None
+        ) = None
 
     def get_messagebus_factory(
         self,
-    ) -> Callable[[DECORATED_CLASS], MESSAGE_HANDLER_DATA_SET]:
+    ) -> Callable[
+        [DECORATED_CLASS], tuple[MESSAGE_HANDLER_DATA_SET, SCHEDULED_ACTION_DATA_SET]
+    ]:
         if self.messagebus_factory is None:
             raise Exception("MessageBus factory is not set")
         return self.messagebus_factory
@@ -83,33 +103,49 @@ class MessageBusController:
 
         def messagebus_factory(
             instance: DECORATED_CLASS,
-        ) -> MESSAGE_HANDLER_DATA_SET:
+        ) -> tuple[MESSAGE_HANDLER_DATA_SET, SCHEDULED_ACTION_DATA_SET]:
             handlers: MESSAGE_HANDLER_DATA_SET = set()
-            inspect.signature(func)
+
+            schedulers: SCHEDULED_ACTION_DATA_SET = set()
 
             members = inspect.getmembers(func, predicate=inspect.isfunction)
 
             for name, member in members:
-                message_incoming = MessageHandler.get_message_incoming(member)
-
-                if message_incoming is None:
-                    continue
-
-                if not inspect.iscoroutinefunction(member):
-                    raise Exception(
-                        "Message incoming handler '%s' from '%s.%s' must be a coroutine function"
-                        % (name, func.__module__, func.__qualname__)
-                    )
-
-                handlers.add(
-                    MessageHandlerData(
-                        message_type=message_incoming.message_type,
-                        spec=message_incoming,
-                        callable=getattr(instance, name),
-                    )
+                message_handler_decoration = MessageHandler.get_message_incoming(member)
+                scheduled_action_decoration = ScheduledAction.get_scheduled_action(
+                    member
                 )
 
-            return handlers
+                if message_handler_decoration is not None:
+
+                    if not inspect.iscoroutinefunction(member):
+                        raise Exception(
+                            "Message incoming handler '%s' from '%s.%s' must be a coroutine function"
+                            % (name, func.__module__, func.__qualname__)
+                        )
+
+                    handlers.add(
+                        MessageHandlerData(
+                            message_type=message_handler_decoration.message_type,
+                            spec=message_handler_decoration,
+                            callable=getattr(instance, name),
+                        )
+                    )
+                elif scheduled_action_decoration is not None:
+                    if not inspect.iscoroutinefunction(member):
+                        raise Exception(
+                            "Scheduled action handler '%s' from '%s.%s' must be a coroutine function"
+                            % (name, func.__module__, func.__qualname__)
+                        )
+
+                    schedulers.add(
+                        ScheduledActionData(
+                            spec=scheduled_action_decoration,
+                            callable=getattr(instance, name),
+                        )
+                    )
+
+            return handlers, schedulers
 
         self.messagebus_factory = messagebus_factory
 

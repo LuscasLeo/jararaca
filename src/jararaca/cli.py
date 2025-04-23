@@ -11,11 +11,13 @@ import click
 import uvicorn
 from mako.template import Template  # type: ignore
 
-from jararaca.messagebus.worker import AioPikaWorkerConfig, MessageBusWorker
+from jararaca.messagebus import worker as worker_v1
+from jararaca.messagebus import worker_v2 as worker_v2_mod
 from jararaca.microservice import Microservice
 from jararaca.presentation.http_microservice import HttpMicroservice
 from jararaca.presentation.server import create_http_server
-from jararaca.scheduler.scheduler import Scheduler, SchedulerBackend, SchedulerConfig
+from jararaca.scheduler.scheduler import Scheduler
+from jararaca.scheduler.scheduler_v2 import SchedulerV2
 from jararaca.tools.typescript.interface_parser import (
     write_microservice_to_typescript_interface,
 )
@@ -35,7 +37,10 @@ def find_item_by_module_path(
     try:
         module = importlib.import_module(module_name)
     except ImportError as e:
-        raise ImportError("App module not found") from e
+        if e.name == module_name:
+            raise ImportError("Module not found") from e
+        else:
+            raise
 
     if not hasattr(module, app):
         raise ValueError("module %s has no attribute %s" % (module, app))
@@ -73,7 +78,7 @@ def cli() -> None:
 @click.option(
     "--url",
     type=str,
-    default="amqp://guest:guest@localhost/",
+    envvar="BROKER_URL",
 )
 @click.option(
     "--username",
@@ -91,11 +96,6 @@ def cli() -> None:
     default="jararaca_ex",
 )
 @click.option(
-    "--queue",
-    type=str,
-    default="jararaca_q",
-)
-@click.option(
     "--prefetch-count",
     type=int,
     default=1,
@@ -106,7 +106,6 @@ def worker(
     username: str | None,
     password: str | None,
     exchange: str,
-    queue: str,
     prefetch_count: int,
 ) -> None:
 
@@ -134,30 +133,59 @@ def worker(
 
     url = parsed_url.geturl()
 
-    config = AioPikaWorkerConfig(
+    config = worker_v1.AioPikaWorkerConfig(
         url=url,
         exchange=exchange,
-        queue=queue,
         prefetch_count=prefetch_count,
     )
 
-    MessageBusWorker(app, config=config).start_sync()
+    worker_v1.MessageBusWorker(app, config=config).start_sync()
 
 
 @cli.command()
 @click.argument(
     "app_path",
     type=str,
+    envvar="APP_PATH",
+)
+@click.option(
+    "--broker-url",
+    type=str,
+    envvar="BROKER_URL",
+)
+@click.option(
+    "--backend-url",
+    type=str,
+    envvar="BACKEND_URL",
+)
+def worker_v2(app_path: str, broker_url: str, backend_url: str) -> None:
+
+    app = find_microservice_by_module_path(app_path)
+
+    worker_v2_mod.MessageBusWorker(
+        app=app,
+        broker_url=broker_url,
+        backend_url=backend_url,
+    ).start_sync()
+
+
+@cli.command()
+@click.argument(
+    "app_path",
+    type=str,
+    envvar="APP_PATH",
 )
 @click.option(
     "--host",
     type=str,
     default="0.0.0.0",
+    envvar="HOST",
 )
 @click.option(
     "--port",
     type=int,
     default=8000,
+    envvar="PORT",
 )
 def server(app_path: str, host: str, port: int) -> None:
 
@@ -180,9 +208,6 @@ def server(app_path: str, host: str, port: int) -> None:
     uvicorn.run(asgi_app, host=host, port=port)
 
 
-class NullBackend(SchedulerBackend): ...
-
-
 @cli.command()
 @click.argument(
     "app_path",
@@ -199,7 +224,45 @@ def scheduler(
 ) -> None:
     app = find_microservice_by_module_path(app_path)
 
-    Scheduler(app, NullBackend(), SchedulerConfig(interval=interval)).run()
+    Scheduler(app, interval=interval).run()
+
+
+@cli.command()
+@click.argument(
+    "app_path",
+    type=str,
+)
+@click.option(
+    "--interval",
+    type=int,
+    default=1,
+    required=True,
+)
+@click.option(
+    "--broker-url",
+    type=str,
+    required=True,
+)
+@click.option(
+    "--backend-url",
+    type=str,
+    required=True,
+)
+def scheduler_v2(
+    interval: int,
+    broker_url: str,
+    backend_url: str,
+    app_path: str,
+) -> None:
+
+    app = find_microservice_by_module_path(app_path)
+    scheduler = SchedulerV2(
+        app=app,
+        interval=interval,
+        backend_url=backend_url,
+        broker_url=broker_url,
+    )
+    scheduler.run()
 
 
 @cli.command()
@@ -214,13 +277,11 @@ def scheduler(
 @click.option(
     "--watch",
     is_flag=True,
-    help="Watch for file changes and regenerate TypeScript interfaces",
 )
 @click.option(
     "--src-dir",
     type=click.Path(exists=True, file_okay=False, dir_okay=True),
     default="src",
-    help="Source directory to watch for changes (default: src)",
 )
 def gen_tsi(app_path: str, file_path: StreamWriter, watch: bool, src_dir: str) -> None:
     """Generate TypeScript interfaces from a Python microservice."""

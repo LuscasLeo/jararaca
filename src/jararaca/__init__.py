@@ -2,6 +2,7 @@ from importlib import import_module
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
+    from jararaca.broker_backend.redis_broker_backend import RedisMessageBrokerBackend
     from jararaca.messagebus.bus_message_controller import (
         ack,
         nack,
@@ -60,10 +61,12 @@ if TYPE_CHECKING:
     from .messagebus.interceptors.aiopika_publisher_interceptor import (
         AIOPikaConnectionFactory,
         GenericPoolConfig,
+    )
+    from .messagebus.interceptors.publisher_interceptor import (
         MessageBusPublisherInterceptor,
     )
+    from .messagebus.message import Message, MessageOf
     from .messagebus.publisher import use_publisher
-    from .messagebus.types import Message, MessageOf
     from .messagebus.worker import MessageBusWorker
     from .microservice import Microservice, use_app_context, use_current_container
     from .persistence.base import T_BASEMODEL, BaseEntity
@@ -115,6 +118,7 @@ if TYPE_CHECKING:
     from .tools.app_config.interceptor import AppConfigurationInterceptor
 
     __all__ = [
+        "RedisMessageBrokerBackend",
         "FilterRuleApplier",
         "SortRuleApplier",
         "use_bus_message_controller",
@@ -216,6 +220,11 @@ if TYPE_CHECKING:
 __SPEC_PARENT__: str = __spec__.parent  # type: ignore
 # A mapping of {<member name>: (package, <module name>)} defining dynamic imports
 _dynamic_imports: "dict[str, tuple[str, str, str | None]]" = {
+    "RedisMessageBrokerBackend": (
+        __SPEC_PARENT__,
+        "broker_backend.redis_broker_backend",
+        None,
+    ),
     "FilterRuleApplier": (__SPEC_PARENT__, "persistence.sort_filter", None),
     "SortRuleApplier": (__SPEC_PARENT__, "persistence.sort_filter", None),
     "use_bus_message_controller": (
@@ -286,8 +295,8 @@ _dynamic_imports: "dict[str, tuple[str, str, str | None]]" = {
     ),
     "Identifiable": (__SPEC_PARENT__, "persistence.utilities", None),
     "IdentifiableEntity": (__SPEC_PARENT__, "persistence.utilities", None),
-    "MessageOf": (__SPEC_PARENT__, "messagebus.types", None),
-    "Message": (__SPEC_PARENT__, "messagebus.types", None),
+    "MessageOf": (__SPEC_PARENT__, "messagebus.message", None),
+    "Message": (__SPEC_PARENT__, "messagebus.message", None),
     "StringCriteria": (__SPEC_PARENT__, "persistence.utilities", None),
     "DateCriteria": (__SPEC_PARENT__, "persistence.utilities", None),
     "DateOrderedFilter": (__SPEC_PARENT__, "persistence.utilities", None),
@@ -339,7 +348,7 @@ _dynamic_imports: "dict[str, tuple[str, str, str | None]]" = {
     ),
     "MessageBusPublisherInterceptor": (
         __SPEC_PARENT__,
-        "messagebus.interceptors.aiopika_publisher_interceptor",
+        "messagebus.interceptors.publisher_interceptor",
         None,
     ),
     "RedisWebSocketConnectionBackend": (

@@ -24,8 +24,9 @@ from jararaca.messagebus.decorators import (
     MessageHandler,
     MessageHandlerData,
 )
-from jararaca.messagebus.types import Message, MessageOf
+from jararaca.messagebus.message import Message, MessageOf
 from jararaca.microservice import MessageBusAppContext, Microservice
+from jararaca.utils.rabbitmq_utils import RabbitmqUtils
 
 logger = logging.getLogger(__name__)
 
@@ -33,7 +34,6 @@ logger = logging.getLogger(__name__)
 @dataclass
 class AioPikaWorkerConfig:
     url: str
-    queue: str
     exchange: str
     prefetch_count: int
 
@@ -99,32 +99,28 @@ class AioPikaMicroserviceConsumer:
 
         await channel.set_qos(prefetch_count=self.config.prefetch_count)
 
-        main_x = await channel.declare_exchange(self.config.exchange, type="topic")
+        main_ex = await RabbitmqUtils.declare_main_exchange(
+            channel=channel, exchange_name=self.config.exchange
+        )
 
-        dlx = await channel.declare_exchange("dlx", type="direct")
-
-        dlq = await channel.declare_queue("dlq")
-
-        await dlq.bind(dlx, routing_key="dlq")
+        dlx, dlq = await RabbitmqUtils.delcare_dl_kit(channel=channel)
 
         for handler in self.message_handler_set:
 
-            queue_name = f"{self.config.exchange}.{handler.message_type.MESSAGE_TOPIC}.{handler.callable.__module__}.{handler.callable.__qualname__}"
-            routing_key = (
-                f"{self.config.exchange}.{handler.message_type.MESSAGE_TOPIC}.#"
-            )
+            queue_name = f"{handler.message_type.MESSAGE_TOPIC}.{handler.callable.__module__}.{handler.callable.__qualname__}"
+            routing_key = f"{handler.message_type.MESSAGE_TOPIC}.#"
 
             self.incoming_map[queue_name] = handler
 
             queue = await channel.declare_queue(
                 queue_name,
                 arguments={
-                    "x-dead-letter-exchange": "dlx",
-                    "x-dead-letter-routing-key": "dlq",
+                    "x-dead-letter-exchange": dlx.name,
+                    "x-dead-letter-routing-key": dlq.name,
                 },
             )
 
-            await queue.bind(exchange=self.config.exchange, routing_key=routing_key)
+            await queue.bind(exchange=main_ex, routing_key=routing_key)
 
             await queue.consume(
                 callback=MessageHandlerCallback(
@@ -343,7 +339,7 @@ class MessageBusWorker:
                 instance: Any = self.container.get_by_type(instance_type)
 
                 factory = controller.get_messagebus_factory()
-                handlers = factory(instance)
+                handlers, _ = factory(instance)
 
                 message_handler_data_map: dict[str, MessageHandlerData] = {}
 

@@ -1,55 +1,70 @@
 from contextlib import asynccontextmanager
-from typing import Any, AsyncContextManager, AsyncGenerator, Protocol
+from datetime import datetime, timedelta
+from datetime import tzinfo as _TzInfo
+from typing import Any, AsyncGenerator
 
 import aio_pika
 from aio_pika.abc import AbstractConnection
 from pydantic import BaseModel
 
-from jararaca.messagebus.publisher import MessagePublisher, provide_message_publisher
-from jararaca.microservice import AppContext, AppInterceptor
-
-
-class MessageBusConnectionFactory(Protocol):
-
-    def provide_connection(self) -> AsyncContextManager[MessagePublisher]: ...
-
-
-class MessageBusPublisherInterceptor(AppInterceptor):
-
-    def __init__(
-        self,
-        connection_factory: MessageBusConnectionFactory,
-        connection_name: str = "default",
-    ):
-        self.connection_factory = connection_factory
-        self.connection_name = connection_name
-
-    @asynccontextmanager
-    async def intercept(self, app_context: AppContext) -> AsyncGenerator[None, None]:
-        if app_context.context_type == "websocket":
-            yield
-            return
-
-        async with self.connection_factory.provide_connection() as connection:
-            with provide_message_publisher(self.connection_name, connection):
-                yield
+from jararaca.broker_backend import MessageBrokerBackend
+from jararaca.messagebus.interceptors.publisher_interceptor import (
+    MessageBusConnectionFactory,
+)
+from jararaca.messagebus.publisher import IMessage, MessagePublisher
+from jararaca.scheduler.types import DelayedMessageData
 
 
 class AIOPikaMessagePublisher(MessagePublisher):
 
-    def __init__(self, channel: aio_pika.abc.AbstractChannel, exchange_name: str):
+    def __init__(
+        self,
+        channel: aio_pika.abc.AbstractChannel,
+        exchange_name: str,
+        message_broker_backend: MessageBrokerBackend | None = None,
+    ):
+
         self.channel = channel
         self.exchange_name = exchange_name
+        self.message_broker_backend = message_broker_backend
 
-    async def publish(self, message: BaseModel, topic: str) -> None:
+    async def publish(self, message: IMessage, topic: str) -> None:
         exchange = await self.channel.declare_exchange(
             self.exchange_name,
             type=aio_pika.ExchangeType.TOPIC,
         )
-        routing_key = f"{self.exchange_name}.{topic}."
+        routing_key = f"{topic}."
         await exchange.publish(
             aio_pika.Message(body=message.model_dump_json().encode()),
             routing_key=routing_key,
+        )
+
+    async def delay(self, message: IMessage, seconds: int) -> None:
+        if not self.message_broker_backend:
+            raise NotImplementedError(
+                "Delay is not implemented for AIOPikaMessagePublisher"
+            )
+        await self.message_broker_backend.enqueue_delayed_message(
+            DelayedMessageData(
+                message_topic=message.MESSAGE_TOPIC,
+                payload=message.model_dump_json().encode(),
+                dispatch_time=int(
+                    (datetime.now(tz=None) + timedelta(seconds=seconds)).timestamp()
+                ),
+            )
+        )
+
+    async def schedule(self, message: IMessage, when: datetime, tz: _TzInfo) -> None:
+        if not self.message_broker_backend:
+            raise NotImplementedError(
+                "Schedule is not implemented for AIOPikaMessagePublisher"
+            )
+        await self.message_broker_backend.enqueue_delayed_message(
+            DelayedMessageData(
+                message_topic=message.MESSAGE_TOPIC,
+                payload=message.model_dump_json().encode(),
+                dispatch_time=int(when.timestamp()),
+            )
         )
 
 
@@ -65,10 +80,11 @@ class AIOPikaConnectionFactory(MessageBusConnectionFactory):
         exchange: str,
         connection_pool_config: GenericPoolConfig | None = None,
         channel_pool_config: GenericPoolConfig | None = None,
+        message_broker_backend: MessageBrokerBackend | None = None,
     ):
         self.url = url
         self.exchange = exchange
-
+        self.message_broker_backend = message_broker_backend
         self.connection_pool: aio_pika.pool.Pool[AbstractConnection] | None = None
         self.channel_pool: aio_pika.pool.Pool[aio_pika.abc.AbstractChannel] | None = (
             None
@@ -124,7 +140,11 @@ class AIOPikaConnectionFactory(MessageBusConnectionFactory):
             await tx.select()
 
             try:
-                yield AIOPikaMessagePublisher(channel, exchange_name=self.exchange)
+                yield AIOPikaMessagePublisher(
+                    channel,
+                    exchange_name=self.exchange,
+                    message_broker_backend=self.message_broker_backend,
+                )
                 await tx.commit()
             except Exception as e:
                 await tx.rollback()

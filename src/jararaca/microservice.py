@@ -22,7 +22,7 @@ from fastapi import Request, WebSocket
 
 from jararaca.core.providers import ProviderSpec, T, Token
 from jararaca.messagebus import MessageOf
-from jararaca.messagebus.types import Message
+from jararaca.messagebus.message import Message
 
 if TYPE_CHECKING:
     from typing_extensions import TypeIs
