@@ -193,10 +193,11 @@ def parse_type_to_typescript_interface(
     mapped_types.update(inherited_classes)
 
     if Enum in inherited_classes:
+        enum_values = sorted([(x._name_, x.value) for x in basemodel_type])
         return (
             set(),
             f"export enum {basemodel_type.__name__} {{\n"
-            + "\n ".join([f'\t{x._name_} = "{x.value}",' for x in basemodel_type])
+            + "\n ".join([f'\t{name} = "{value}",' for name, value in enum_values])
             + "\n}\n",
         )
 
@@ -222,31 +223,39 @@ def parse_type_to_typescript_interface(
     extends_expression = (
         " extends %s"
         % ", ".join(
-            [
-                (
-                    "%s" % get_field_type_for_ts(inherited_class)
-                    if not inherited_classes_consts_conflict[inherited_class]
-                    else "Omit<%s, %s>"
-                    % (
-                        get_field_type_for_ts(inherited_class),
-                        " | ".join(
-                            '"%s"' % field_name
-                            for field_name in inherited_classes_consts_conflict[
-                                inherited_class
-                            ]
-                        ),
+            sorted(
+                [
+                    (
+                        "%s" % get_field_type_for_ts(inherited_class)
+                        if not inherited_classes_consts_conflict[inherited_class]
+                        else "Omit<%s, %s>"
+                        % (
+                            get_field_type_for_ts(inherited_class),
+                            " | ".join(
+                                sorted(
+                                    [
+                                        '"%s"' % field_name
+                                        for field_name in inherited_classes_consts_conflict[
+                                            inherited_class
+                                        ]
+                                    ]
+                                )
+                            ),
+                        )
                     )
-                )
-                for inherited_class in valid_inherited_classes
-            ]
+                    for inherited_class in valid_inherited_classes
+                ],
+                key=lambda x: str(x),
+            )
         )
         if len(valid_inherited_classes) > 0
         else ""
     )
 
     if is_generic_type(basemodel_type):
+        generic_args = get_generic_args(basemodel_type)
         string_builder.write(
-            f"export interface {basemodel_type.__name__}<{', '.join([arg.__name__ for arg in get_generic_args(basemodel_type)])}>{extends_expression} {{\n"
+            f"export interface {basemodel_type.__name__}<{', '.join(sorted([arg.__name__ for arg in generic_args]))}>{extends_expression} {{\n"
         )
     else:
         string_builder.write(
@@ -254,12 +263,12 @@ def parse_type_to_typescript_interface(
         )
 
     if hasattr(basemodel_type, "__annotations__"):
-        # for field_name in (f for f in dir(basemodel_type) if is_constant(f)):
-        #     field = getattr(basemodel_type, field_name)
-        #     if field is None:
-        #         continue
-        #     string_builder.write(f"  {field_name}: {parse_literal_value(field)};\n")
-        for field_name, field in basemodel_type.__annotations__.items():
+        # Sort fields for consistent output
+        annotation_items = sorted(
+            basemodel_type.__annotations__.items(), key=lambda x: x[0]
+        )
+
+        for field_name, field in annotation_items:
             if field_name in cls_consts:
                 continue
 
@@ -277,8 +286,11 @@ def parse_type_to_typescript_interface(
             mapped_types.update(extract_all_envolved_types(field))
             mapped_types.add(field)
 
-    ## Loop over computed fields
-    members = inspect.getmembers(basemodel_type, lambda a: isinstance(a, property))
+    ## Loop over computed fields - sort them for consistent output
+    members = sorted(
+        inspect.getmembers(basemodel_type, lambda a: isinstance(a, property)),
+        key=lambda x: x[0],
+    )
     for field_name, field in members:
         if hasattr(field, "fget"):
             module_func_name = field.fget.__module__ + "." + field.fget.__qualname__
@@ -359,11 +371,13 @@ export type WebSocketMessageMap = {
 }
 """
         % "\n".join(
-            [
-                f'\t"{message.MESSAGE_ID}": {message.__name__};'
-                for registers in websocket_registries
-                for message in registers.message_types
-            ]
+            sorted(
+                [
+                    f'\t"{message.MESSAGE_ID}": {message.__name__};'
+                    for registers in websocket_registries
+                    for message in registers.message_types
+                ]
+            )
         )
     )
 
@@ -477,7 +491,12 @@ def write_rest_controller_to_typescript_interface(
 
     mapped_types: set[Any] = set()
 
-    for name, member in inspect.getmembers(controller, predicate=inspect.isfunction):
+    # Sort members for consistent output
+    member_items = sorted(
+        inspect.getmembers(controller, predicate=inspect.isfunction), key=lambda x: x[0]
+    )
+
+    for name, member in member_items:
         if (mapping := HttpMapping.get_http_mapping(member)) is not None:
             return_type = member.__annotations__.get("return")
 
@@ -514,17 +533,24 @@ def write_rest_controller_to_typescript_interface(
             )
             class_buffer.write(f"\t\t\tpath: `/{final_path}`,\n")
 
+            # Sort headers
+            header_params = sorted(
+                [param for param in arg_params_spec if param.type_ == "header"],
+                key=lambda x: x.name,
+            )
             class_buffer.write("\t\t\theaders: {\n")
-            for param in arg_params_spec:
-                if param.type_ == "header":
-                    class_buffer.write(f'\t\t\t\t"{param.name}": {param.name},\n')
-
+            for param in header_params:
+                class_buffer.write(f'\t\t\t\t"{param.name}": {param.name},\n')
             class_buffer.write("\t\t\t},\n")
-            class_buffer.write("\t\t\tquery: {\n")
 
-            for param in arg_params_spec:
-                if param.type_ == "query":
-                    class_buffer.write(f'\t\t\t\t"{param.name}": {param.name},\n')
+            # Sort query params
+            query_params = sorted(
+                [param for param in arg_params_spec if param.type_ == "query"],
+                key=lambda x: x.name,
+            )
+            class_buffer.write("\t\t\tquery: {\n")
+            for param in query_params:
+                class_buffer.write(f'\t\t\t\t"{param.name}": {param.name},\n')
             class_buffer.write("\t\t\t},\n")
 
             if (
