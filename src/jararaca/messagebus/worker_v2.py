@@ -174,7 +174,9 @@ class AioPikaMicroserviceConsumer(MessageBusConsumer):
 
             routing_key = queue_name
 
-            queue = await channel.declare_queue(queue_name, durable=True)
+            queue = await channel.get_queue(
+                name=queue_name, ensure=False
+            ) or await channel.declare_queue(queue_name, durable=True)
 
             await queue.bind(exchange=self.config.exchange, routing_key=routing_key)
 
