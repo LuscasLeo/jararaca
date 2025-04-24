@@ -1,3 +1,4 @@
+import logging
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta
 from datetime import tzinfo as _TzInfo
@@ -29,10 +30,10 @@ class AIOPikaMessagePublisher(MessagePublisher):
         self.message_broker_backend = message_broker_backend
 
     async def publish(self, message: IMessage, topic: str) -> None:
-        exchange = await self.channel.declare_exchange(
-            self.exchange_name,
-            type=aio_pika.ExchangeType.TOPIC,
-        )
+        exchange = await self.channel.get_exchange(self.exchange_name, ensure=False)
+        if not exchange:
+            logging.warning(f"Exchange {self.exchange_name} not found")
+            return
         routing_key = f"{topic}."
         await exchange.publish(
             aio_pika.Message(body=message.model_dump_json().encode()),
