@@ -99,8 +99,11 @@ class AioPikaMicroserviceConsumer:
 
         await channel.set_qos(prefetch_count=self.config.prefetch_count)
 
-        main_ex = await RabbitmqUtils.declare_main_exchange(
-            channel=channel, exchange_name=self.config.exchange
+        main_ex = await channel.get_exchange(
+            name=self.config.exchange, ensure=False
+        ) or await RabbitmqUtils.declare_main_exchange(
+            channel=channel,
+            exchange_name=self.config.exchange,
         )
 
         dlx, dlq = await RabbitmqUtils.delcare_dl_kit(channel=channel)
@@ -112,7 +115,9 @@ class AioPikaMicroserviceConsumer:
 
             self.incoming_map[queue_name] = handler
 
-            queue = await channel.declare_queue(
+            queue = await channel.get_queue(
+                queue_name, ensure=False
+            ) or await channel.declare_queue(
                 queue_name,
                 arguments={
                     "x-dead-letter-exchange": dlx.name,
