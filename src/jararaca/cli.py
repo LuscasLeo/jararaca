@@ -1,9 +1,11 @@
 import importlib
 import importlib.resources
+import multiprocessing
 import os
 import sys
 import time
 from codecs import StreamWriter
+from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse, urlunsplit
 
@@ -265,6 +267,30 @@ def scheduler_v2(
     scheduler.run()
 
 
+def generate_interfaces(app_path: str, file_path: str) -> None:
+    try:
+        app = find_microservice_by_module_path(app_path)
+        content = write_microservice_to_typescript_interface(app)
+
+        with open(file_path, "w", encoding="utf-8") as file:
+            # Save current position
+            file.tell()
+
+            # Reset file to beginning
+            file.seek(0)
+            file.truncate()
+
+            # Write new content
+            file.write(content)
+            file.flush()
+
+        print(
+            f"Generated TypeScript interfaces at {time.strftime('%H:%M:%S')} at {str(Path(file_path).absolute())}"
+        )
+    except Exception as e:
+        print(f"Error generating TypeScript interfaces: {e}", file=sys.stderr)
+
+
 @cli.command()
 @click.argument(
     "app_path",
@@ -272,7 +298,7 @@ def scheduler_v2(
 )
 @click.argument(
     "file_path",
-    type=click.File("w"),
+    type=click.Path(file_okay=True, dir_okay=False),
 )
 @click.option(
     "--watch",
@@ -283,32 +309,11 @@ def scheduler_v2(
     type=click.Path(exists=True, file_okay=False, dir_okay=True),
     default="src",
 )
-def gen_tsi(app_path: str, file_path: StreamWriter, watch: bool, src_dir: str) -> None:
+def gen_tsi(app_path: str, file_path: str, watch: bool, src_dir: str) -> None:
     """Generate TypeScript interfaces from a Python microservice."""
 
-    # Generate typescript interfaces
-    def generate_interfaces() -> None:
-        try:
-            app = find_microservice_by_module_path(app_path)
-            content = write_microservice_to_typescript_interface(app)
-
-            # Save current position
-            file_path.tell()
-
-            # Reset file to beginning
-            file_path.seek(0)
-            file_path.truncate()
-
-            # Write new content
-            file_path.write(content)
-            file_path.flush()
-
-            print(f"Generated TypeScript interfaces at {time.strftime('%H:%M:%S')}")
-        except Exception as e:
-            print(f"Error generating TypeScript interfaces: {e}", file=sys.stderr)
-
     # Initial generation
-    generate_interfaces()
+    generate_interfaces(app_path, file_path)
 
     # If watch mode is not enabled, exit
     if not watch:
@@ -334,7 +339,33 @@ def gen_tsi(app_path: str, file_path: StreamWriter, watch: bool, src_dir: str) -
             )
             if not event.is_directory and src_path.endswith(".py"):
                 print(f"File changed: {src_path}")
-                generate_interfaces()
+                # Create a completely detached process to ensure classes are reloaded
+                process = multiprocessing.get_context("spawn").Process(
+                    target=generate_interfaces,
+                    args=(app_path, file_path),
+                    daemon=False,  # Non-daemon to ensure it completes
+                )
+                process.start()
+                # Don't join to keep it detached from main process
+
+        def _run_generator_in_separate_process(
+            self, app_path: str, file_path: str
+        ) -> None:
+            # Using Python executable to start a completely new process
+            # This ensures all modules are freshly imported
+            generate_interfaces(app_path, file_path)
+            # cmd = [
+            #     sys.executable,
+            #     "-c",
+            #     (
+            #         f"import sys; sys.path.extend({sys.path}); "
+            #         f"from jararaca.cli import generate_interfaces; "
+            #         f"generate_interfaces('{app_path}', '{file_path}')"
+            #     ),
+            # ]
+            # import subprocess
+
+            # subprocess.run(cmd, check=False)
 
     # Set up observer
     observer = Observer()
