@@ -102,6 +102,11 @@ def cli() -> None:
     type=int,
     default=1,
 )
+@click.option(
+    "--passive-declare",
+    is_flag=True,
+    default=False,
+)
 def worker(
     app_path: str,
     url: str,
@@ -109,6 +114,7 @@ def worker(
     password: str | None,
     exchange: str,
     prefetch_count: int,
+    passive_declare: bool,
 ) -> None:
 
     app = find_microservice_by_module_path(app_path)
@@ -141,7 +147,9 @@ def worker(
         prefetch_count=prefetch_count,
     )
 
-    worker_v1.MessageBusWorker(app, config=config).start_sync()
+    worker_v1.MessageBusWorker(app, config=config).start_sync(
+        passive_declare=passive_declare,
+    )
 
 
 @cli.command()

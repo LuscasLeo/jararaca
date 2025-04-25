@@ -189,10 +189,7 @@ class RabbitMQBrokerDispatcher(MessageBrokerDispatcher):
             )
 
             for func, _ in scheduled_actions:
-                queue = await channel.get_queue(
-                    name=ScheduledAction.get_function_id(func),
-                    ensure=False,
-                ) or await channel.declare_queue(
+                queue = await channel.declare_queue(
                     name=ScheduledAction.get_function_id(func),
                     durable=True,
                 )

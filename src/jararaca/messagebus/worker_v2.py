@@ -112,6 +112,7 @@ class AioPikaMicroserviceConsumer(MessageBusConsumer):
         message_handler_set: MESSAGE_HANDLER_DATA_SET,
         scheduled_actions: SCHEDULED_ACTION_DATA_SET,
         uow_context_provider: UnitOfWorkContextProvider,
+        passive_declare: bool = False,
     ):
 
         self.broker_backend = broker_backend
@@ -123,6 +124,7 @@ class AioPikaMicroserviceConsumer(MessageBusConsumer):
         self.shutdown_event = asyncio.Event()
         self.lock = asyncio.Lock()
         self.tasks: set[asyncio.Task[Any]] = set()
+        self.passive_declare = passive_declare
 
     async def consume(self) -> None:
 
@@ -135,11 +137,16 @@ class AioPikaMicroserviceConsumer(MessageBusConsumer):
         await RabbitmqUtils.declare_main_exchange(
             channel=channel,
             exchange_name=self.config.exchange,
+            passive=self.passive_declare,
         )
 
-        dlx = await RabbitmqUtils.declare_dl_exchange(channel=channel)
+        dlx = await RabbitmqUtils.declare_dl_exchange(
+            channel=channel, passive=self.passive_declare
+        )
 
-        dlq = await RabbitmqUtils.declare_dl_queue(channel=channel)
+        dlq = await RabbitmqUtils.declare_dl_queue(
+            channel=channel, passive=self.passive_declare
+        )
 
         await dlq.bind(dlx, routing_key=RabbitmqUtils.DEAD_LETTER_EXCHANGE)
 
@@ -151,7 +158,7 @@ class AioPikaMicroserviceConsumer(MessageBusConsumer):
             self.incoming_map[queue_name] = handler
 
             queue = await RabbitmqUtils.declare_queue(
-                channel=channel, queue_name=queue_name
+                channel=channel, queue_name=queue_name, passive=self.passive_declare
             )
 
             await queue.bind(exchange=self.config.exchange, routing_key=routing_key)
@@ -174,9 +181,9 @@ class AioPikaMicroserviceConsumer(MessageBusConsumer):
 
             routing_key = queue_name
 
-            queue = await channel.get_queue(
-                name=queue_name, ensure=False
-            ) or await channel.declare_queue(queue_name, durable=True)
+            queue = await RabbitmqUtils.declare_queue(
+                channel=channel, queue_name=queue_name, passive=self.passive_declare
+            )
 
             await queue.bind(exchange=self.config.exchange, routing_key=routing_key)
 

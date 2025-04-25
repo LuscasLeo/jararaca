@@ -91,7 +91,7 @@ class AioPikaMicroserviceConsumer:
         self.lock = asyncio.Lock()
         self.tasks: set[asyncio.Task[Any]] = set()
 
-    async def consume(self) -> None:
+    async def consume(self, passive_declare: bool) -> None:
 
         connection = await aio_pika.connect(self.config.url)
 
@@ -99,14 +99,13 @@ class AioPikaMicroserviceConsumer:
 
         await channel.set_qos(prefetch_count=self.config.prefetch_count)
 
-        main_ex = await channel.get_exchange(
-            name=self.config.exchange, ensure=False
-        ) or await RabbitmqUtils.declare_main_exchange(
+        main_ex = await RabbitmqUtils.declare_main_exchange(
             channel=channel,
             exchange_name=self.config.exchange,
+            passive=passive_declare,
         )
 
-        dlx, dlq = await RabbitmqUtils.delcare_dl_kit(channel=channel)
+        dlx, dlq = await RabbitmqUtils.declare_dl_kit(channel=channel)
 
         for handler in self.message_handler_set:
 
@@ -115,10 +114,9 @@ class AioPikaMicroserviceConsumer:
 
             self.incoming_map[queue_name] = handler
 
-            queue = await channel.get_queue(
-                queue_name, ensure=False
-            ) or await channel.declare_queue(
-                queue_name,
+            queue: aio_pika.abc.AbstractQueue = await channel.declare_queue(
+                passive=passive_declare,
+                name=queue_name,
                 arguments={
                     "x-dead-letter-exchange": dlx.name,
                     "x-dead-letter-routing-key": dlq.name,
@@ -332,7 +330,7 @@ class MessageBusWorker:
             raise RuntimeError("Consumer not started")
         return self._consumer
 
-    async def start_async(self) -> None:
+    async def start_async(self, passive_declare: bool) -> None:
         all_message_handlers_set: MESSAGE_HANDLER_DATA_SET = set()
         async with self.lifecycle():
             for instance_type in self.app.controllers:
@@ -369,9 +367,9 @@ class MessageBusWorker:
                 uow_context_provider=self.uow_context_provider,
             )
 
-            await consumer.consume()
+            await consumer.consume(passive_declare=passive_declare)
 
-    def start_sync(self) -> None:
+    def start_sync(self, passive_declare: bool) -> None:
 
         def on_shutdown(loop: asyncio.AbstractEventLoop) -> None:
             logger.info("Shutting down")
@@ -381,7 +379,7 @@ class MessageBusWorker:
             runner.get_loop().add_signal_handler(
                 signal.SIGINT, on_shutdown, runner.get_loop()
             )
-            runner.run(self.start_async())
+            runner.run(self.start_async(passive_declare=passive_declare))
 
 
 class AioPikaMessageBusController(BusMessageController):
