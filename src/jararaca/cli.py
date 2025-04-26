@@ -275,10 +275,21 @@ def scheduler_v2(
     scheduler.run()
 
 
-def generate_interfaces(app_path: str, file_path: str) -> None:
+def generate_interfaces(
+    app_path: str,
+    file_path: str | None = None,
+    stdout: bool = False,
+    post_process_cmd: str | None = None,
+) -> str:
     try:
         app = find_microservice_by_module_path(app_path)
         content = write_microservice_to_typescript_interface(app)
+
+        if stdout:
+            return content
+
+        if not file_path:
+            return content
 
         with open(file_path, "w", encoding="utf-8") as file:
             # Save current position
@@ -295,8 +306,25 @@ def generate_interfaces(app_path: str, file_path: str) -> None:
         print(
             f"Generated TypeScript interfaces at {time.strftime('%H:%M:%S')} at {str(Path(file_path).absolute())}"
         )
+
+        if post_process_cmd and file_path:
+            import subprocess
+
+            try:
+                print(f"Running post-process command: {post_process_cmd}")
+                subprocess.run(
+                    post_process_cmd.replace("{file}", file_path),
+                    shell=True,
+                    check=True,
+                )
+                print(f"Post-processing completed successfully")
+            except subprocess.CalledProcessError as e:
+                print(f"Post-processing command failed: {e}", file=sys.stderr)
+
+        return content
     except Exception as e:
         print(f"Error generating TypeScript interfaces: {e}", file=sys.stderr)
+        return ""
 
 
 @cli.command()
@@ -307,6 +335,7 @@ def generate_interfaces(app_path: str, file_path: str) -> None:
 @click.argument(
     "file_path",
     type=click.Path(file_okay=True, dir_okay=False),
+    required=False,
 )
 @click.option(
     "--watch",
@@ -317,11 +346,50 @@ def generate_interfaces(app_path: str, file_path: str) -> None:
     type=click.Path(exists=True, file_okay=False, dir_okay=True),
     default="src",
 )
-def gen_tsi(app_path: str, file_path: str, watch: bool, src_dir: str) -> None:
+@click.option(
+    "--stdout",
+    is_flag=True,
+    help="Print generated interfaces to stdout instead of writing to a file",
+)
+@click.option(
+    "--post-process",
+    type=str,
+    help="Command to run after generating the interfaces, {file} will be replaced with the output file path",
+)
+def gen_tsi(
+    app_path: str,
+    file_path: str | None,
+    watch: bool,
+    src_dir: str,
+    stdout: bool,
+    post_process: str | None,
+) -> None:
     """Generate TypeScript interfaces from a Python microservice."""
 
+    if stdout and watch:
+        print(
+            "Error: --watch and --stdout options cannot be used together",
+            file=sys.stderr,
+        )
+        return
+
+    if not file_path and not stdout:
+        print("Error: either file_path or --stdout must be provided", file=sys.stderr)
+        return
+
+    if post_process and stdout:
+        print(
+            "Error: --post-process and --stdout options cannot be used together",
+            file=sys.stderr,
+        )
+        return
+
     # Initial generation
-    generate_interfaces(app_path, file_path)
+    content = generate_interfaces(app_path, file_path, stdout, post_process)
+
+    if stdout:
+        print(content)
+        return
 
     # If watch mode is not enabled, exit
     if not watch:
@@ -350,7 +418,7 @@ def gen_tsi(app_path: str, file_path: str, watch: bool, src_dir: str) -> None:
                 # Create a completely detached process to ensure classes are reloaded
                 process = multiprocessing.get_context("spawn").Process(
                     target=generate_interfaces,
-                    args=(app_path, file_path),
+                    args=(app_path, file_path, False, post_process),
                     daemon=False,  # Non-daemon to ensure it completes
                 )
                 process.start()
