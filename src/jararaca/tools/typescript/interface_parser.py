@@ -74,13 +74,23 @@ def parse_literal_value(value: Any) -> str:
         use_parse_context().mapped_types.add(value.__class__)
         return f"{value.__class__.__name__}.{value.name}"
     if isinstance(value, str):
-        return f'"{value}"'
-    if isinstance(value, int):
-        return str(value)
+        # Properly escape quotes for TypeScript string literals
+        escaped_value = value.replace("\\", "\\\\").replace('"', '\\"')
+        return f'"{escaped_value}"'
     if isinstance(value, float):
         return str(value)
     if isinstance(value, bool):
-        return str(value).lower()
+        # Ensure Python's True/False are properly converted to JavaScript's true/false
+        return "true" if value else "false"
+    # Special handling for Python symbols that might appear in literal types
+    if value is True:
+        return "true"
+    if value is False:
+        return "false"
+    if value is None:
+        return "null"
+    if isinstance(value, int):
+        return str(value)
     return "unknown"
 
 
