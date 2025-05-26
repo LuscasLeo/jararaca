@@ -213,7 +213,7 @@ class CRUDOperations(Generic[IDENTIFIABLE_T]):
 # region PaginatedFilter
 class PaginatedFilter(BaseModel):
     page: Annotated[int, Field(gt=-1)] = 0
-    page_size: int = 10
+    page_size: Annotated[int, Field(gt=0)] = 10
     sort_models: list[SortModel] = []
     filter_models: list[FilterModel] = []
 
@@ -307,51 +307,63 @@ class QueryOperations(Generic[QUERY_FILTER_T, QUERY_ENTITY_T]):
             Callable[[Select[Tuple[QUERY_ENTITY_T]]], Select[Tuple[QUERY_ENTITY_T]]]
         ] = [],
     ) -> "Paginated[QUERY_ENTITY_T]":
+        """
+        Executes a query with the provided filter and interceptors.
+        Args:
+            filter: The filter to apply to the query.
+            interceptors: A list of functions that can modify the query before execution.
+        Returns:
+            Paginated[QUERY_ENTITY_T]: A paginated result containing the items and metadata.
+        """
 
-        query = reduce(
+        tier_one_filtered_query = self.generate_filtered_query(
+            filter, select(self.entity_type)
+        )
+
+        tier_two_filtered_query = reduce(
             lambda query, interceptor: interceptor(query),
             interceptors,
-            select(self.entity_type),
+            tier_one_filtered_query,
         )
 
         if self.sort_rule_applier:
-            query = self.sort_rule_applier.create_query_for_sorting_list(
-                query, filter.sort_models
+            tier_two_filtered_query = (
+                self.sort_rule_applier.create_query_for_sorting_list(
+                    tier_two_filtered_query, filter.sort_models
+                )
             )
 
         if self.filter_rule_applier:
-            query = self.filter_rule_applier.create_query_for_filter_list(
-                query, filter.filter_models
+            tier_two_filtered_query = (
+                self.filter_rule_applier.create_query_for_filter_list(
+                    tier_two_filtered_query, filter.filter_models
+                )
             )
 
         unpaginated_total = (
             await self.session.execute(
-                select(func.count()).select_from(query.subquery())
+                select(func.count()).select_from(tier_two_filtered_query.subquery())
             )
         ).scalar_one()
 
-        filtered_query = self.generate_filtered_query(filter, query)
-
-        paginated_query = filtered_query.limit(filter.page_size).offset(
+        paginated_query = tier_two_filtered_query.limit(filter.page_size).offset(
             (filter.page) * filter.page_size
         )
 
-        filtered_total = (
+        paginated_total = (
             await self.session.execute(
                 select(func.count()).select_from(paginated_query.subquery())
             )
         ).scalar_one()
 
+        result = await self.session.execute(paginated_query)
+        result_scalars = list(self.judge_unique(result).scalars().all())
+
         return Paginated(
-            items=[
-                e
-                for e in self.judge_unique(
-                    await self.session.execute(paginated_query)
-                ).scalars()
-            ],
-            total=filtered_total,
+            items=result_scalars,
+            total=paginated_total,
             unpaginated_total=unpaginated_total,
-            total_pages=int(filtered_total / filter.page_size) + 1,
+            total_pages=int(unpaginated_total / filter.page_size) + 1,
         )
 
     def judge_unique(
