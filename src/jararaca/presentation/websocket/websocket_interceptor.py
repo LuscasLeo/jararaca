@@ -25,7 +25,9 @@ from jararaca.presentation.decorators import (
 )
 from jararaca.presentation.websocket.context import (
     WebSocketConnectionManager,
+    WebSocketMessageSender,
     provide_ws_manager,
+    provide_ws_message_sender,
 )
 from jararaca.presentation.websocket.decorators import (
     INHERITS_WS_MESSAGE,
@@ -127,9 +129,23 @@ class WebSocketConnectionManagerImpl(WebSocketConnectionManager):
     # async def setup_consumer(self, websocket: WebSocket) -> None: ...
 
 
+class StagingWebSocketMessageSender(WebSocketMessageSender):
+
+    def __init__(self, connection: WebSocketConnectionManager) -> None:
+        self.connection = connection
+        self.staged_messages: list[tuple[list[str], WebSocketMessageBase]] = []
+
+    async def send(self, rooms: list[str], message: WebSocketMessageBase) -> None:
+        self.staged_messages.append((rooms, message))
+
+    async def flush(self) -> None:
+        for rooms, message in self.staged_messages:
+            await self.connection.send(rooms, message)
+        self.staged_messages.clear()
+
+
 class WebSocketInterceptor(AppInterceptor, AppInterceptorWithLifecycle):
     """
-    @Deprecated
     WebSocketInterceptor is responsible for managing WebSocket connections and
     intercepting WebSocket requests within the application. It integrates with
     the application's lifecycle and provides a router for WebSocket endpoints.
@@ -171,8 +187,14 @@ class WebSocketInterceptor(AppInterceptor, AppInterceptorWithLifecycle):
     @asynccontextmanager
     async def intercept(self, app_context: AppContext) -> AsyncGenerator[None, None]:
 
-        with provide_ws_manager(self.connection_manager):
+        staging_ws_messages_sender = StagingWebSocketMessageSender(
+            self.connection_manager
+        )
+        with provide_ws_manager(self.connection_manager), provide_ws_message_sender(
+            staging_ws_messages_sender
+        ):
             yield
+            await staging_ws_messages_sender.flush()
 
     # def __wrap_with_uow_context_provider(
     #     self, uow: UnitOfWorkContextProvider, func: Callable[..., Any]

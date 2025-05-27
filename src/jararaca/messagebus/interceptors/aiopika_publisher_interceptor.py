@@ -15,6 +15,8 @@ from jararaca.messagebus.interceptors.publisher_interceptor import (
 from jararaca.messagebus.publisher import IMessage, MessagePublisher
 from jararaca.scheduler.types import DelayedMessageData
 
+logger = logging.getLogger(__name__)
+
 
 class AIOPikaMessagePublisher(MessagePublisher):
 
@@ -28,8 +30,13 @@ class AIOPikaMessagePublisher(MessagePublisher):
         self.channel = channel
         self.exchange_name = exchange_name
         self.message_broker_backend = message_broker_backend
+        self.staged_delayed_messages: list[DelayedMessageData] = []
+        self.staged_messages: list[IMessage] = []
 
     async def publish(self, message: IMessage, topic: str) -> None:
+        self.staged_messages.append(message)
+
+    async def _publish(self, message: IMessage, topic: str) -> None:
         exchange = await self.channel.get_exchange(self.exchange_name, ensure=False)
         if not exchange:
             logging.warning(f"Exchange {self.exchange_name} not found")
@@ -45,7 +52,7 @@ class AIOPikaMessagePublisher(MessagePublisher):
             raise NotImplementedError(
                 "Delay is not implemented for AIOPikaMessagePublisher"
             )
-        await self.message_broker_backend.enqueue_delayed_message(
+        self.staged_delayed_messages.append(
             DelayedMessageData(
                 message_topic=message.MESSAGE_TOPIC,
                 payload=message.model_dump_json().encode(),
@@ -60,13 +67,35 @@ class AIOPikaMessagePublisher(MessagePublisher):
             raise NotImplementedError(
                 "Schedule is not implemented for AIOPikaMessagePublisher"
             )
-        await self.message_broker_backend.enqueue_delayed_message(
+        self.staged_delayed_messages.append(
             DelayedMessageData(
                 message_topic=message.MESSAGE_TOPIC,
                 payload=message.model_dump_json().encode(),
                 dispatch_time=int(when.timestamp()),
             )
         )
+
+    async def flush(self) -> None:
+        print("Flushing messages to AIOPika channel")
+        for message in self.staged_messages:
+            logger.debug(
+                f"Publishing message {message.MESSAGE_TOPIC} with payload: {message.model_dump_json()}"
+            )
+            await self._publish(message, message.MESSAGE_TOPIC)
+
+        if len(self.staged_delayed_messages) > 0:
+            if not self.message_broker_backend:
+                raise NotImplementedError(
+                    "MessageBrokerBackend is required to publish delayed messages"
+                )
+
+            for delayed_message in self.staged_delayed_messages:
+                logger.debug(
+                    f"Scheduling delayed message {delayed_message.message_topic} with payload: {delayed_message.payload.decode()}"
+                )
+                await self.message_broker_backend.enqueue_delayed_message(
+                    delayed_message
+                )
 
 
 class GenericPoolConfig(BaseModel):
