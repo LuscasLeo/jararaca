@@ -1,7 +1,8 @@
+from abc import ABC, abstractmethod
 from contextlib import contextmanager, suppress
 from contextvars import ContextVar
 from datetime import datetime, tzinfo
-from typing import Any, ClassVar, Generator, Literal, Protocol
+from typing import Any, ClassVar, Generator, Literal
 
 from pydantic import BaseModel
 
@@ -19,24 +20,31 @@ class IMessage(BaseModel):
     MESSAGE_TYPE: ClassVar[Literal["task", "event"]] = "task"
 
 
-class MessagePublisher(Protocol):
+class MessagePublisher(ABC):
+    @abstractmethod
     async def publish(self, message: IMessage, topic: str) -> None:
-        raise NotImplementedError()
+        pass
 
+    @abstractmethod
     async def delay(self, message: IMessage, seconds: int) -> None:
         """
         Delay the message for a given number of seconds.
         """
 
-        raise NotImplementedError()
-
+    @abstractmethod
     async def schedule(
         self, message: IMessage, when: datetime, timezone: tzinfo
     ) -> None:
         """
         Schedule the message for a given datetime.
         """
-        raise NotImplementedError()
+
+    @abstractmethod
+    async def flush(self) -> None:
+        """
+        Publish all messages that have been delayed or scheduled.
+        This is typically called at the end of a request or task processing.
+        """
 
 
 message_publishers_ctx = ContextVar[dict[str, MessagePublisher]](

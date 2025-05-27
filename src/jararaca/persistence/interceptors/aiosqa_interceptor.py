@@ -58,6 +58,7 @@ class AIOSqlAlchemySessionInterceptor(AppInterceptor):
             with provide_session(self.config.connection_name, session):
                 try:
                     yield
+                    print("Committing session")
                     await session.commit()
                 except Exception as e:
                     await session.rollback()

@@ -32,3 +32,5 @@ class MessageBusPublisherInterceptor(AppInterceptor):
         async with self.connection_factory.provide_connection() as connection:
             with provide_message_publisher(self.connection_name, connection):
                 yield
+
+                await connection.flush()

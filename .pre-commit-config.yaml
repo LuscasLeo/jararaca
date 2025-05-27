@@ -14,8 +14,8 @@ repos:
     hooks:
       - id: autoflake
         name: autoflake
-        entry: autoflake
-        language: python
+        entry: poetry run autoflake
+        language: system
         pass_filenames: true
         args:
           - "--in-place"
@@ -30,7 +30,7 @@ repos:
     hooks:
       - id: mypy
         name: mypy
-        entry: mypy
+        entry: poetry run mypy
         args:
           - --config-file=pyproject.toml
           # - --enable-incomplete-feature=TypeVarTuple
@@ -45,7 +45,7 @@ repos:
     hooks:
       - id: black
         name: black
-        entry: black --config pyproject.toml
+        entry: poetry run black --config pyproject.toml
         language: system
         types: [python]
         pass_filenames: true
@@ -56,9 +56,9 @@ repos:
     hooks:
       - id: isort
         name: isort
-        entry: isort
+        entry: poetry run isort
         stages: [commit, merge-commit, push, manual]
-        language: python
+        language: system
 
         args:
           - --settings-path=pyproject.toml
@@ -70,7 +70,7 @@ repos:
   #     -   id: codespell
   #         name: codespell
   #         description: Checks for common misspellings in text files.
-  #         entry: codespell --ignore-words ignore-spelling-words.txt readme.md code.py
-  #         language: python
+  #         entry: poetry run codespell --ignore-words ignore-spelling-words.txt readme.md code.py
+  #         language: system
   #         pass_filenames: true
   #         types: [text]
