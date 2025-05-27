@@ -76,7 +76,6 @@ class AIOPikaMessagePublisher(MessagePublisher):
         )
 
     async def flush(self) -> None:
-        print("Flushing messages to AIOPika channel")
         for message in self.staged_messages:
             logger.debug(
                 f"Publishing message {message.MESSAGE_TOPIC} with payload: {message.model_dump_json()}"

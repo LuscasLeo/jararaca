@@ -11,7 +11,7 @@ from urllib.parse import urlparse, urlunsplit
 
 import click
 import uvicorn
-from mako.template import Template  # type: ignore
+from mako.template import Template
 
 from jararaca.messagebus import worker as worker_v1
 from jararaca.messagebus import worker_v2 as worker_v2_mod
@@ -303,7 +303,7 @@ def generate_interfaces(
             file.write(content)
             file.flush()
 
-        print(
+        click.echo(
             f"Generated TypeScript interfaces at {time.strftime('%H:%M:%S')} at {str(Path(file_path).absolute())}"
         )
 
@@ -311,19 +311,19 @@ def generate_interfaces(
             import subprocess
 
             try:
-                print(f"Running post-process command: {post_process_cmd}")
+                click.echo(f"Running post-process command: {post_process_cmd}")
                 subprocess.run(
                     post_process_cmd.replace("{file}", file_path),
                     shell=True,
                     check=True,
                 )
-                print(f"Post-processing completed successfully")
+                click.echo(f"Post-processing completed successfully")
             except subprocess.CalledProcessError as e:
-                print(f"Post-processing command failed: {e}", file=sys.stderr)
+                click.echo(f"Post-processing command failed: {e}", file=sys.stderr)
 
         return content
     except Exception as e:
-        print(f"Error generating TypeScript interfaces: {e}", file=sys.stderr)
+        click.echo(f"Error generating TypeScript interfaces: {e}", file=sys.stderr)
         return ""
 
 
@@ -367,18 +367,20 @@ def gen_tsi(
     """Generate TypeScript interfaces from a Python microservice."""
 
     if stdout and watch:
-        print(
+        click.echo(
             "Error: --watch and --stdout options cannot be used together",
             file=sys.stderr,
         )
         return
 
     if not file_path and not stdout:
-        print("Error: either file_path or --stdout must be provided", file=sys.stderr)
+        click.echo(
+            "Error: either file_path or --stdout must be provided", file=sys.stderr
+        )
         return
 
     if post_process and stdout:
-        print(
+        click.echo(
             "Error: --post-process and --stdout options cannot be used together",
             file=sys.stderr,
         )
@@ -388,7 +390,7 @@ def gen_tsi(
     content = generate_interfaces(app_path, file_path, stdout, post_process)
 
     if stdout:
-        print(content)
+        click.echo(content)
         return
 
     # If watch mode is not enabled, exit
@@ -399,7 +401,7 @@ def gen_tsi(
         from watchdog.events import FileSystemEvent, FileSystemEventHandler
         from watchdog.observers import Observer
     except ImportError:
-        print(
+        click.echo(
             "Watchdog is required for watch mode. Install it with: pip install watchdog",
             file=sys.stderr,
         )
@@ -414,7 +416,7 @@ def gen_tsi(
                 else str(event.src_path)
             )
             if not event.is_directory and src_path.endswith(".py"):
-                print(f"File changed: {src_path}")
+                click.echo(f"File changed: {src_path}")
                 # Create a completely detached process to ensure classes are reloaded
                 process = multiprocessing.get_context("spawn").Process(
                     target=generate_interfaces,
@@ -445,16 +447,16 @@ def gen_tsi(
 
     # Set up observer
     observer = Observer()
-    observer.schedule(PyFileChangeHandler(), src_dir, recursive=True)
-    observer.start()
+    observer.schedule(PyFileChangeHandler(), src_dir, recursive=True)  # type: ignore
+    observer.start()  # type: ignore
 
-    print(f"Watching for changes in {os.path.abspath(src_dir)}...")
+    click.echo(f"Watching for changes in {os.path.abspath(src_dir)}...")
     try:
         while True:
             time.sleep(1)
     except KeyboardInterrupt:
-        observer.stop()
-        print("Watch mode stopped")
+        observer.stop()  # type: ignore
+        click.echo("Watch mode stopped")
     observer.join()
 
 

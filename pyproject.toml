@@ -78,3 +78,7 @@ strict = true
 # JARARACA CONFIG
 [tool.poetry.scripts]
 jararaca = "jararaca.cli:cli"
+
+[[tool.mypy.overrides]]
+module = "mako.*"
+ignore_missing_imports = true
