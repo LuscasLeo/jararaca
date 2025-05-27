@@ -135,7 +135,7 @@ class AioPikaMicroserviceConsumer:
                 no_ack=handler.spec.auto_ack,
             )
 
-            print(f"Consuming {queue_name}")
+            logger.info(f"Consuming {queue_name}")
 
         await self.shutdown_event.wait()
         logger.info("Worker shutting down")
