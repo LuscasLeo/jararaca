@@ -1,3 +1,4 @@
+import asyncio
 import importlib
 import importlib.resources
 import multiprocessing
@@ -9,6 +10,7 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse, urlunsplit
 
+import aio_pika
 import click
 import uvicorn
 from mako.template import Template
@@ -23,6 +25,7 @@ from jararaca.scheduler.scheduler_v2 import SchedulerV2
 from jararaca.tools.typescript.interface_parser import (
     write_microservice_to_typescript_interface,
 )
+from jararaca.utils.rabbitmq_utils import RabbitmqUtils
 
 LIBRARY_FILES_PATH = importlib.resources.files("jararaca.files")
 ENTITY_TEMPLATE_PATH = LIBRARY_FILES_PATH / "entity.py.mako"
@@ -65,6 +68,230 @@ def find_microservice_by_module_path(module_path: str) -> Microservice:
         )
 
     return app
+
+
+async def declare_worker_infrastructure(
+    url: str,
+    exchange: str,
+    app: Microservice,
+    passive_declare: bool = False,
+) -> None:
+    """
+    Declare the infrastructure (exchanges and queues) for worker v1.
+    """
+    connection = await aio_pika.connect(url)
+    channel = await connection.channel()
+
+    await channel.set_qos(prefetch_count=1)
+
+    # Declare main exchange
+    main_ex = await RabbitmqUtils.declare_main_exchange(
+        channel=channel,
+        exchange_name=exchange,
+        passive=passive_declare,
+    )
+
+    # Declare dead letter infrastructure
+    dlx, dlq = await RabbitmqUtils.declare_dl_kit(
+        channel=channel, passive=passive_declare
+    )
+
+    # Find all message handlers to declare their queues
+    from jararaca.di import Container
+    from jararaca.messagebus.decorators import MessageBusController
+
+    container = Container(app)
+
+    for instance_type in app.controllers:
+        controller = MessageBusController.get_messagebus(instance_type)
+        if controller is None:
+            continue
+
+        instance: Any = container.get_by_type(instance_type)
+        factory = controller.get_messagebus_factory()
+        handlers, _ = factory(instance)
+
+        for handler in handlers:
+            queue_name = f"{handler.message_type.MESSAGE_TOPIC}.{handler.callable.__module__}.{handler.callable.__qualname__}"
+            routing_key = f"{handler.message_type.MESSAGE_TOPIC}.#"
+
+            queue = await channel.declare_queue(
+                passive=passive_declare,
+                name=queue_name,
+                arguments={
+                    "x-dead-letter-exchange": dlx.name,
+                    "x-dead-letter-routing-key": dlq.name,
+                },
+                durable=True,
+            )
+
+            await queue.bind(exchange=main_ex, routing_key=routing_key)
+            click.echo(f"✓ Declared queue: {queue_name} (routing key: {routing_key})")
+
+    await channel.close()
+    await connection.close()
+
+
+async def declare_worker_v2_infrastructure(
+    broker_url: str,
+    app: Microservice,
+    passive_declare: bool = False,
+) -> None:
+    """
+    Declare the infrastructure (exchanges and queues) for worker v2.
+    """
+    from urllib.parse import parse_qs, urlparse
+
+    parsed_url = urlparse(broker_url)
+    if parsed_url.scheme not in ["amqp", "amqps"]:
+        raise ValueError(f"Unsupported broker URL scheme: {parsed_url.scheme}")
+
+    if not parsed_url.query:
+        raise ValueError("Query string must be set for AMQP URLs")
+
+    query_params = parse_qs(parsed_url.query)
+
+    if "exchange" not in query_params or not query_params["exchange"]:
+        raise ValueError("Exchange must be set in the query string")
+
+    exchange = query_params["exchange"][0]
+
+    connection = await aio_pika.connect(broker_url)
+    channel = await connection.channel()
+
+    await channel.set_qos(prefetch_count=1)
+
+    # Declare main exchange
+    await RabbitmqUtils.declare_main_exchange(
+        channel=channel,
+        exchange_name=exchange,
+        passive=passive_declare,
+    )
+
+    # Declare dead letter infrastructure
+    dlx = await RabbitmqUtils.declare_dl_exchange(
+        channel=channel, passive=passive_declare
+    )
+    dlq = await RabbitmqUtils.declare_dl_queue(channel=channel, passive=passive_declare)
+    await dlq.bind(dlx, routing_key=RabbitmqUtils.DEAD_LETTER_EXCHANGE)
+
+    # Find all message handlers and scheduled actions
+    from jararaca.di import Container
+    from jararaca.messagebus.decorators import MessageBusController
+
+    container = Container(app)
+
+    for instance_type in app.controllers:
+        controller = MessageBusController.get_messagebus(instance_type)
+        if controller is None:
+            continue
+
+        instance: Any = container.get_by_type(instance_type)
+        factory = controller.get_messagebus_factory()
+        handlers, scheduled_actions = factory(instance)
+
+        # Declare queues for message handlers
+        for handler in handlers:
+            queue_name = f"{handler.message_type.MESSAGE_TOPIC}.{handler.callable.__module__}.{handler.callable.__qualname__}"
+            routing_key = f"{handler.message_type.MESSAGE_TOPIC}.#"
+
+            queue = await RabbitmqUtils.declare_queue(
+                channel=channel, queue_name=queue_name, passive=passive_declare
+            )
+            await queue.bind(exchange=exchange, routing_key=routing_key)
+            click.echo(
+                f"✓ Declared message handler queue: {queue_name} (routing key: {routing_key})"
+            )
+
+        # Declare queues for scheduled actions
+        for scheduled_action in scheduled_actions:
+            queue_name = f"{scheduled_action.callable.__module__}.{scheduled_action.callable.__qualname__}"
+            routing_key = queue_name
+
+            queue = await RabbitmqUtils.declare_queue(
+                channel=channel, queue_name=queue_name, passive=passive_declare
+            )
+            await queue.bind(exchange=exchange, routing_key=routing_key)
+            click.echo(
+                f"✓ Declared scheduled action queue: {queue_name} (routing key: {routing_key})"
+            )
+
+    await channel.close()
+    await connection.close()
+
+
+async def declare_scheduler_v2_infrastructure(
+    broker_url: str,
+    app: Microservice,
+    passive_declare: bool = False,
+) -> None:
+    """
+    Declare the infrastructure (exchanges and queues) for scheduler v2.
+    """
+    from urllib.parse import parse_qs, urlparse
+
+    from jararaca.scheduler.decorators import ScheduledAction
+
+    parsed_url = urlparse(broker_url)
+    if parsed_url.scheme not in ["amqp", "amqps"]:
+        raise ValueError(f"Unsupported broker URL scheme: {parsed_url.scheme}")
+
+    if not parsed_url.query:
+        raise ValueError("Query string must be set for AMQP URLs")
+
+    query_params = parse_qs(parsed_url.query)
+
+    if "exchange" not in query_params or not query_params["exchange"]:
+        raise ValueError("Exchange must be set in the query string")
+
+    exchange = query_params["exchange"][0]
+
+    connection = await aio_pika.connect(broker_url)
+    channel = await connection.channel()
+
+    await channel.set_qos(prefetch_count=1)
+
+    # Declare exchange for scheduler
+    await channel.declare_exchange(
+        name=exchange,
+        type="topic",
+        durable=True,
+        auto_delete=False,
+        passive=passive_declare,
+    )
+
+    # Find all scheduled actions and declare their queues
+    from jararaca.di import Container
+    from jararaca.messagebus.decorators import MessageBusController
+
+    container = Container(app)
+    scheduled_actions: list[Any] = []
+
+    for instance_type in app.controllers:
+        controller = MessageBusController.get_messagebus(instance_type)
+        if controller is None:
+            continue
+
+        instance: Any = container.get_by_type(instance_type)
+        factory = controller.get_messagebus_factory()
+        _, actions = factory(instance)
+        scheduled_actions.extend(actions)
+
+    for scheduled_action in scheduled_actions:
+        queue_name = ScheduledAction.get_function_id(scheduled_action.callable)
+        queue = await channel.declare_queue(
+            name=queue_name,
+            durable=True,
+            passive=passive_declare,
+        )
+        await queue.bind(
+            exchange=exchange,
+            routing_key=queue_name,
+        )
+        click.echo(f"✓ Declared scheduler queue: {queue_name}")
+
+    await channel.close()
+    await connection.close()
 
 
 @click.group()
@@ -493,3 +720,170 @@ def gen_entity(entity_name: str, file_path: StreamWriter) -> None:
             entityNameKebabCase=entity_kebab_case,
         )
     )
+
+
+@cli.command("declare-queues-v1")
+@click.argument(
+    "app_path",
+    type=str,
+)
+@click.option(
+    "--broker-url",
+    type=str,
+    envvar="BROKER_URL",
+    help="Broker URL (e.g., amqp://guest:guest@localhost/) [env: BROKER_URL]",
+)
+@click.option(
+    "--exchange",
+    type=str,
+    default="jararaca_ex",
+    envvar="EXCHANGE",
+    help="Exchange name [env: EXCHANGE]",
+)
+@click.option(
+    "--passive-declare",
+    is_flag=True,
+    default=False,
+    help="Use passive declarations (check if infrastructure exists without creating it)",
+)
+def declare_queues_v1(
+    app_path: str,
+    broker_url: str | None,
+    exchange: str,
+    passive_declare: bool,
+) -> None:
+    """
+    Declare RabbitMQ infrastructure (exchanges and queues) for worker v1.
+
+    This command pre-declares the necessary exchanges and queues that worker v1
+    needs, without starting the actual consumption processes.
+
+    Environment variables:
+    - BROKER_URL: Broker URL (e.g., amqp://guest:guest@localhost/)
+    - EXCHANGE: Exchange name (defaults to 'jararaca_ex')
+
+    Examples:
+
+    \b
+    # Declare worker v1 infrastructure
+    jararaca declare-queues-v1 myapp:app --broker-url amqp://guest:guest@localhost/
+
+    \b
+    # Use environment variables
+    export BROKER_URL="amqp://guest:guest@localhost/"
+    export EXCHANGE="my_exchange"
+    jararaca declare-queues-v1 myapp:app
+    """
+
+    app = find_microservice_by_module_path(app_path)
+
+    async def run_declarations() -> None:
+        if not broker_url:
+            click.echo(
+                "ERROR: --broker-url is required or set BROKER_URL environment variable",
+                err=True,
+            )
+            return
+
+        click.echo(
+            f"→ Declaring worker v1 infrastructure (URL: {broker_url}, Exchange: {exchange})"
+        )
+
+        try:
+            await declare_worker_infrastructure(
+                broker_url, exchange, app, passive_declare
+            )
+            click.echo("✓ Worker v1 infrastructure declared successfully!")
+        except Exception as e:
+            click.echo(
+                f"ERROR: Failed to declare worker v1 infrastructure: {e}", err=True
+            )
+            raise
+
+    asyncio.run(run_declarations())
+
+
+@cli.command("declare-queues-v2")
+@click.argument(
+    "app_path",
+    type=str,
+)
+@click.option(
+    "--broker-url",
+    type=str,
+    envvar="BROKER_URL",
+    help="Broker URL (e.g., amqp://guest:guest@localhost/) [env: BROKER_URL]",
+)
+@click.option(
+    "--exchange",
+    type=str,
+    default="jararaca_ex",
+    envvar="EXCHANGE",
+    help="Exchange name [env: EXCHANGE]",
+)
+@click.option(
+    "--passive-declare",
+    is_flag=True,
+    default=False,
+    help="Use passive declarations (check if infrastructure exists without creating it)",
+)
+def declare_queues_v2(
+    app_path: str,
+    broker_url: str | None,
+    exchange: str,
+    passive_declare: bool,
+) -> None:
+    """
+    Declare RabbitMQ infrastructure (exchanges and queues) for worker v2 and scheduler v2.
+
+    This command pre-declares the necessary exchanges and queues that worker v2
+    and scheduler v2 need, without starting the actual consumption processes.
+
+    Environment variables:
+    - BROKER_URL: Broker URL (e.g., amqp://guest:guest@localhost/)
+    - EXCHANGE: Exchange name (defaults to 'jararaca_ex')
+
+    Examples:
+
+    \b
+    # Declare worker v2 and scheduler v2 infrastructure
+    jararaca declare-queues-v2 myapp:app --broker-url amqp://guest:guest@localhost/
+
+    \b
+    # Use environment variables
+    export BROKER_URL="amqp://guest:guest@localhost/"
+    export EXCHANGE="my_exchange"
+    jararaca declare-queues-v2 myapp:app
+    """
+
+    app = find_microservice_by_module_path(app_path)
+
+    async def run_declarations() -> None:
+        if not broker_url:
+            click.echo(
+                "ERROR: --broker-url is required or set BROKER_URL environment variable",
+                err=True,
+            )
+            return
+
+        # For v2, create the broker URL with exchange parameter
+        v2_broker_url = f"{broker_url}?exchange={exchange}"
+
+        click.echo(f"→ Declaring worker v2 infrastructure (URL: {v2_broker_url})")
+        click.echo(f"→ Declaring scheduler v2 infrastructure (URL: {v2_broker_url})")
+
+        try:
+            await asyncio.gather(
+                declare_worker_v2_infrastructure(v2_broker_url, app, passive_declare),
+                declare_scheduler_v2_infrastructure(
+                    v2_broker_url, app, passive_declare
+                ),
+            )
+            click.echo(
+                "✓ Worker v2 and scheduler v2 infrastructure declared successfully!"
+            )
+        except Exception as e:
+            click.echo(f"ERROR: Failed to declare v2 infrastructure: {e}", err=True)
+            raise
+
+    asyncio.run(run_declarations())
