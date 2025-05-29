@@ -11,7 +11,7 @@ if TYPE_CHECKING:
         retry_later,
         use_bus_message_controller,
     )
-    from jararaca.microservice import AppInterceptor, AppTransactionContext
+    from jararaca.microservice import AppContext, AppInterceptor, AppTransactionContext
     from jararaca.observability.interceptor import ObservabilityInterceptor
     from jararaca.observability.providers.otel import OtelObservabilityProvider
     from jararaca.persistence.sort_filter import (
