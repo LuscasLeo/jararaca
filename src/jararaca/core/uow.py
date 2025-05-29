@@ -2,13 +2,14 @@ from contextlib import asynccontextmanager
 from typing import AsyncGenerator, Sequence
 
 from jararaca.microservice import (
-    AppContext,
     AppInterceptor,
+    AppTransactionContext,
     Container,
     Microservice,
     provide_app_context,
     provide_container,
 )
+from jararaca.reflect.metadata import provide_metadata
 
 
 class ContainerInterceptor(AppInterceptor):
@@ -17,7 +18,9 @@ class ContainerInterceptor(AppInterceptor):
         self.container = container
 
     @asynccontextmanager
-    async def intercept(self, app_context: AppContext) -> AsyncGenerator[None, None]:
+    async def intercept(
+        self, app_context: AppTransactionContext
+    ) -> AsyncGenerator[None, None]:
 
         with provide_app_context(app_context), provide_container(self.container):
             yield None
@@ -49,18 +52,20 @@ class UnitOfWorkContextProvider:
         return interceptors
 
     @asynccontextmanager
-    async def __call__(self, app_context: AppContext) -> AsyncGenerator[None, None]:
+    async def __call__(
+        self, app_context: AppTransactionContext
+    ) -> AsyncGenerator[None, None]:
 
         app_interceptors = self.factory_app_interceptors()
+        with provide_metadata(app_context.controller_member_reflect.metadata):
+            ctxs = [self.container_interceptor.intercept(app_context)] + [
+                interceptor.intercept(app_context) for interceptor in app_interceptors
+            ]
 
-        ctxs = [self.container_interceptor.intercept(app_context)] + [
-            interceptor.intercept(app_context) for interceptor in app_interceptors
-        ]
+            for ctx in ctxs:
+                await ctx.__aenter__()
 
-        for ctx in ctxs:
-            await ctx.__aenter__()
+            yield None
 
-        yield None
-
-        for ctx in reversed(ctxs):
-            await ctx.__aexit__(None, None, None)
+            for ctx in reversed(ctxs):
+                await ctx.__aexit__(None, None, None)

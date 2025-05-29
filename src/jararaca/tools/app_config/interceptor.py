@@ -7,9 +7,9 @@ from pydantic import BaseModel
 
 from jararaca.core.providers import Token
 from jararaca.microservice import (
-    AppContext,
     AppInterceptor,
     AppInterceptorWithLifecycle,
+    AppTransactionContext,
     Container,
     Microservice,
 )
@@ -40,7 +40,9 @@ class AppConfigurationInterceptor(AppInterceptor, AppInterceptorWithLifecycle):
         self.config_parser = config_parser
 
     @asynccontextmanager
-    async def intercept(self, app_context: AppContext) -> AsyncGenerator[None, None]:
+    async def intercept(
+        self, app_context: AppTransactionContext
+    ) -> AsyncGenerator[None, None]:
         yield
 
     def instance_basemodels(self, basemodel_type: Type[BaseModel]) -> BaseModel:

@@ -13,7 +13,7 @@ from typing import (
     TypeVar,
 )
 
-from jararaca.microservice import AppContext
+from jararaca.microservice import AppTransactionContext
 
 P = ParamSpec("P")
 R = TypeVar("R")
@@ -28,9 +28,13 @@ class TracingContextProvider(Protocol):
 
 class TracingContextProviderFactory(Protocol):
 
-    def root_setup(self, app_context: AppContext) -> AsyncContextManager[None]: ...
+    def root_setup(
+        self, app_context: AppTransactionContext
+    ) -> AsyncContextManager[None]: ...
 
-    def provide_provider(self, app_context: AppContext) -> TracingContextProvider: ...
+    def provide_provider(
+        self, app_context: AppTransactionContext
+    ) -> TracingContextProvider: ...
 
 
 tracing_ctx_provider_ctxv = ContextVar[TracingContextProvider]("tracing_ctx_provider")

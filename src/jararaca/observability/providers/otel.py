@@ -23,7 +23,7 @@ from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import BatchSpanProcessor
 from opentelemetry.trace.propagation.tracecontext import TraceContextTextMapPropagator
 
-from jararaca.microservice import AppContext, Container, Microservice
+from jararaca.microservice import AppTransactionContext, Container, Microservice
 from jararaca.observability.decorators import (
     TracingContextProvider,
     TracingContextProviderFactory,
@@ -36,7 +36,7 @@ tracer: trace.Tracer = trace.get_tracer(__name__)
 
 class OtelTracingContextProvider(TracingContextProvider):
 
-    def __init__(self, app_context: AppContext) -> None:
+    def __init__(self, app_context: AppTransactionContext) -> None:
         self.app_context = app_context
 
     @contextmanager
@@ -52,22 +52,26 @@ class OtelTracingContextProvider(TracingContextProvider):
 
 class OtelTracingContextProviderFactory(TracingContextProviderFactory):
 
-    def provide_provider(self, app_context: AppContext) -> TracingContextProvider:
+    def provide_provider(
+        self, app_context: AppTransactionContext
+    ) -> TracingContextProvider:
         return OtelTracingContextProvider(app_context)
 
     @asynccontextmanager
-    async def root_setup(self, app_context: AppContext) -> AsyncGenerator[None, None]:
+    async def root_setup(
+        self, app_tx_ctx: AppTransactionContext
+    ) -> AsyncGenerator[None, None]:
 
         title: str = "Unmapped App Context Execution"
         headers = {}
+        tx_data = app_tx_ctx.transaction_data
+        if tx_data.context_type == "http":
 
-        if app_context.context_type == "http":
+            headers = dict(tx_data.request.headers)
+            title = f"HTTP {tx_data.request.method} {tx_data.request.url}"
 
-            headers = dict(app_context.request.headers)
-            title = f"HTTP {app_context.request.method} {app_context.request.url}"
-
-        elif app_context.context_type == "message_bus":
-            title = f"Message Bus {app_context.topic}"
+        elif tx_data.context_type == "message_bus":
+            title = f"Message Bus {tx_data.topic}"
 
         carrier = {
             key: value

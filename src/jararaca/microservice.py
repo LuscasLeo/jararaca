@@ -23,64 +23,103 @@ from fastapi import Request, WebSocket
 from jararaca.core.providers import ProviderSpec, T, Token
 from jararaca.messagebus import MessageOf
 from jararaca.messagebus.message import Message
+from jararaca.reflect.controller_inspect import ControllerMemberReflect
 
 if TYPE_CHECKING:
     from typing_extensions import TypeIs
 
 
 @dataclass
-class SchedulerAppContext:
+class SchedulerTransactionData:
     triggered_at: datetime
     scheduled_to: datetime
     cron_expression: str
-    action: Callable[..., Any]
     context_type: Literal["scheduler"] = "scheduler"
 
 
 @dataclass
-class HttpAppContext:
+class HttpTransactionData:
     request: Request
     context_type: Literal["http"] = "http"
 
 
 @dataclass
-class MessageBusAppContext:
+class MessageBusTransactionData:
     topic: str
     message: MessageOf[Message]
     context_type: Literal["message_bus"] = "message_bus"
 
 
 @dataclass
-class WebSocketAppContext:
+class WebSocketTransactionData:
     websocket: WebSocket
     context_type: Literal["websocket"] = "websocket"
 
 
-AppContext = (
-    MessageBusAppContext | HttpAppContext | SchedulerAppContext | WebSocketAppContext
+TransactionData = (
+    MessageBusTransactionData
+    | HttpTransactionData
+    | SchedulerTransactionData
+    | WebSocketTransactionData
 )
 
-app_context_ctxvar = ContextVar[AppContext]("app_context")
+
+@dataclass
+class AppTransactionContext:
+    transaction_data: TransactionData
+    controller_member_reflect: ControllerMemberReflect
 
 
-def use_app_context() -> AppContext:
-    return app_context_ctxvar.get()
+AppContext = AppTransactionContext
+"""
+Alias for AppTransactionContext, used for compatibility with existing code.
+"""
+
+
+app_transaction_context_var = ContextVar[AppTransactionContext]("app_context")
+
+
+def use_app_transaction_context() -> AppTransactionContext:
+    """
+    Returns the current application transaction context.
+    This function is used to access the application transaction context in the context of an application transaction.
+    If no context is set, it raises a LookupError.
+    """
+
+    return app_transaction_context_var.get()
+
+
+def use_app_tx_ctx_data() -> TransactionData:
+    """
+    Returns the transaction data from the current app transaction context.
+    This function is used to access the transaction data in the context of an application transaction.
+    """
+
+    return use_app_transaction_context().transaction_data
+
+
+use_app_context = use_app_tx_ctx_data
+"""Alias for use_app_tx_ctx_data, used for compatibility with existing code."""
 
 
 @contextmanager
-def provide_app_context(app_context: AppContext) -> Generator[None, None, None]:
-    token = app_context_ctxvar.set(app_context)
+def provide_app_context(
+    app_context: AppTransactionContext,
+) -> Generator[None, None, None]:
+    token = app_transaction_context_var.set(app_context)
     try:
         yield
     finally:
         with suppress(ValueError):
-            app_context_ctxvar.reset(token)
+            app_transaction_context_var.reset(token)
 
 
 @runtime_checkable
 class AppInterceptor(Protocol):
 
-    def intercept(self, app_context: AppContext) -> AsyncContextManager[None]: ...
+    def intercept(
+        self, app_context: AppTransactionContext
+    ) -> AsyncContextManager[None]: ...
 
 
 class AppInterceptorWithLifecycle(Protocol):
@@ -227,17 +266,21 @@ def provide_container(container: Container) -> Generator[None, None, None]:
 
 
 __all__ = [
-    "AppContext",
+    "AppTransactionContext",
     "AppInterceptor",
     "AppInterceptorWithLifecycle",
     "Container",
     "Microservice",
-    "SchedulerAppContext",
-    "WebSocketAppContext",
-    "app_context_ctxvar",
+    "SchedulerTransactionData",
+    "WebSocketTransactionData",
+    "app_transaction_context_var",
     "current_container_ctx",
     "provide_app_context",
     "provide_container",
     "use_app_context",
     "use_current_container",
+    "HttpTransactionData",
+    "MessageBusTransactionData",
+    "is_interceptor_with_lifecycle",
+    "AppContext",
 ]

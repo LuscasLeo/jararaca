@@ -14,8 +14,16 @@ from jararaca.core.uow import UnitOfWorkContextProvider
 from jararaca.di import Container
 from jararaca.lifecycle import AppLifecycle
 from jararaca.messagebus.decorators import ScheduleDispatchData
-from jararaca.microservice import Microservice, SchedulerAppContext
-from jararaca.scheduler.decorators import ScheduledAction
+from jararaca.microservice import (
+    AppTransactionContext,
+    Microservice,
+    SchedulerTransactionData,
+)
+from jararaca.scheduler.decorators import (
+    ScheduledAction,
+    ScheduledActionData,
+    get_type_scheduled_actions,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -27,15 +35,13 @@ class SchedulerConfig:
 
 def extract_scheduled_actions(
     app: Microservice, container: Container
-) -> list[tuple[Callable[..., Any], "ScheduledAction"]]:
-    scheduled_actions: list[tuple[Callable[..., Any], "ScheduledAction"]] = []
+) -> list[ScheduledActionData]:
+    scheduled_actions: list[ScheduledActionData] = []
     for controllers in app.controllers:
 
         controller_instance: Any = container.get_by_type(controllers)
 
-        controller_scheduled_actions = ScheduledAction.get_type_scheduled_actions(
-            controller_instance
-        )
+        controller_scheduled_actions = get_type_scheduled_actions(controller_instance)
         scheduled_actions.extend(controller_scheduled_actions)
 
     return scheduled_actions
@@ -68,19 +74,16 @@ class Scheduler:
 
         self.lifceycle = AppLifecycle(app, self.container)
 
-    async def process_task(
-        self, func: Callable[..., Any], scheduled_action: ScheduledAction
-    ) -> None:
+    async def process_task(self, sched_act_data: ScheduledActionData) -> None:
 
         async with self.lock:
-            task = asyncio.create_task(self.handle_task(func, scheduled_action))
+            task = asyncio.create_task(self.handle_task(sched_act_data))
             self.tasks.add(task)
             task.add_done_callback(self.tasks.discard)
 
-    async def handle_task(
-        self, func: Callable[..., Any], scheduled_action: ScheduledAction
-    ) -> None:
-
+    async def handle_task(self, sched_act_data: ScheduledActionData) -> None:
+        func = sched_act_data.callable
+        scheduled_action = sched_act_data.spec
         last_check = self.last_checks.setdefault(func, datetime.now(UTC))
 
         cron = croniter(scheduled_action.cron, last_check)
@@ -105,11 +108,13 @@ class Scheduler:
 
         try:
             async with self.uow_provider(
-                SchedulerAppContext(
-                    action=func,
-                    scheduled_to=next_run,
-                    cron_expression=scheduled_action.cron,
-                    triggered_at=datetime.now(UTC),
+                app_context=AppTransactionContext(
+                    controller_member_reflect=sched_act_data.controller_member,
+                    transaction_data=SchedulerTransactionData(
+                        scheduled_to=next_run,
+                        cron_expression=scheduled_action.cron,
+                        triggered_at=datetime.now(UTC),
+                    ),
                 )
             ):
                 try:
@@ -144,11 +149,11 @@ class Scheduler:
                 scheduled_actions = extract_scheduled_actions(self.app, self.container)
 
                 while True:
-                    for func, scheduled_action in scheduled_actions:
+                    for action in scheduled_actions:
                         if self.shutdown_event.is_set():
                             break
 
-                        await self.process_task(func, scheduled_action)
+                        await self.process_task(action)
 
                     await asyncio.sleep(self.interval)
 

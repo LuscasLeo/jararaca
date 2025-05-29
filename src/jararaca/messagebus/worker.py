@@ -25,7 +25,11 @@ from jararaca.messagebus.decorators import (
     MessageHandlerData,
 )
 from jararaca.messagebus.message import Message, MessageOf
-from jararaca.microservice import MessageBusAppContext, Microservice
+from jararaca.microservice import (
+    AppTransactionContext,
+    MessageBusTransactionData,
+    Microservice,
+)
 from jararaca.utils.rabbitmq_utils import RabbitmqUtils
 
 logger = logging.getLogger(__name__)
@@ -109,7 +113,7 @@ class AioPikaMicroserviceConsumer:
 
         for handler in self.message_handler_set:
 
-            queue_name = f"{handler.message_type.MESSAGE_TOPIC}.{handler.callable.__module__}.{handler.callable.__qualname__}"
+            queue_name = f"{handler.message_type.MESSAGE_TOPIC}.{handler.instance_callable.__module__}.{handler.instance_callable.__qualname__}"
             routing_key = f"{handler.message_type.MESSAGE_TOPIC}.#"
 
             self.incoming_map[queue_name] = handler
@@ -219,7 +223,7 @@ class MessageHandlerCallback:
 
             return
 
-        handler = handler_data.callable
+        handler = handler_data.instance_callable
 
         sig = inspect.signature(handler)
 
@@ -263,9 +267,12 @@ class MessageHandlerCallback:
         assert incoming_message_spec is not None
 
         async with self.consumer.uow_context_provider(
-            MessageBusAppContext(
-                message=builded_message,
-                topic=routing_key,
+            AppTransactionContext(
+                controller_member_reflect=handler_data.controller_member,
+                transaction_data=MessageBusTransactionData(
+                    message=builded_message,
+                    topic=routing_key,
+                ),
             )
         ):
             ctx: AsyncContextManager[Any]

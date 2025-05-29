@@ -1,19 +1,39 @@
 from contextlib import contextmanager, suppress
 from contextvars import ContextVar
-from typing import Any, Awaitable, Callable, TypeVar, Union, cast
+from dataclasses import dataclass
+from typing import Any, Awaitable, Callable, Mapping, TypeVar, Union, cast
 
 DECORATED = TypeVar("DECORATED", bound=Union[Callable[..., Awaitable[Any]], type])
 
 
-metadata_context: ContextVar[dict[str, Any]] = ContextVar("metadata_context")
+@dataclass
+class ControllerInstanceMetadata:
+    value: Any
+    inherited: bool
 
 
-def get_metadata(key: str) -> Any | None:
+metadata_context: ContextVar[Mapping[str, ControllerInstanceMetadata]] = ContextVar(
+    "metadata_context"
+)
+
+
+def get_metadata(key: str) -> ControllerInstanceMetadata | None:
     return metadata_context.get({}).get(key)
 
 
+def get_metadata_value(key: str, default: Any | None = None) -> Any:
+    metadata = get_metadata(key)
+    if metadata is None:
+        return default
+    return metadata.value
+
+
+def get_all_metadata() -> Mapping[str, ControllerInstanceMetadata]:
+    return metadata_context.get({})
+
+
 @contextmanager
-def provide_metadata(metadata: dict[str, Any]) -> Any:
+def provide_metadata(metadata: Mapping[str, ControllerInstanceMetadata]) -> Any:
 
     current_metadata = metadata_context.get({})
 
@@ -39,7 +59,7 @@ class SetMetadata:
         setattr(cls, SetMetadata.METATADA_LIST, metadata_list)
 
     @staticmethod
-    def get(cls: type) -> "list[SetMetadata]":
+    def get(cls: DECORATED) -> "list[SetMetadata]":
         return cast(list[SetMetadata], getattr(cls, SetMetadata.METATADA_LIST, []))
 
     def __call__(self, cls: DECORATED) -> DECORATED:
