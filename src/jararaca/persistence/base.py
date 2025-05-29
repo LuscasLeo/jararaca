@@ -1,6 +1,7 @@
 from typing import Any, Self, Type, TypeVar
 
 from pydantic import BaseModel
+from sqlalchemy.ext.asyncio import AsyncAttrs
 from sqlalchemy.orm import DeclarativeBase
 
 IDENTIFIABLE_SCHEMA_T = TypeVar("IDENTIFIABLE_SCHEMA_T")
@@ -20,7 +21,7 @@ def recursive_get_dict(obj: Any) -> Any:
         return obj
 
 
-class BaseEntity(DeclarativeBase):
+class BaseEntity(AsyncAttrs, DeclarativeBase):
 
     @classmethod
     def from_basemodel(cls, mutation: T_BASEMODEL) -> "Self":

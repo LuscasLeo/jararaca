@@ -73,7 +73,11 @@ if TYPE_CHECKING:
     from .persistence.interceptors.aiosqa_interceptor import (
         AIOSQAConfig,
         AIOSqlAlchemySessionInterceptor,
+        providing_new_session,
+        providing_session,
+        providing_transaction,
         use_session,
+        use_transaction,
     )
     from .persistence.utilities import (
         CriteriaBasedAttributeQueryInjector,
@@ -191,6 +195,10 @@ if TYPE_CHECKING:
         "Container",
         "WebSocketInterceptor",
         "use_session",
+        "use_transaction",
+        "providing_session",
+        "providing_transaction",
+        "providing_new_session",
         "Post",
         "Get",
         "Patch",
@@ -331,6 +339,26 @@ _dynamic_imports: "dict[str, tuple[str, str, str | None]]" = {
         None,
     ),
     "use_session": (
+        __SPEC_PARENT__,
+        "persistence.interceptors.aiosqa_interceptor",
+        None,
+    ),
+    "use_transaction": (
+        __SPEC_PARENT__,
+        "persistence.interceptors.aiosqa_interceptor",
+        None,
+    ),
+    "providing_session": (
+        __SPEC_PARENT__,
+        "persistence.interceptors.aiosqa_interceptor",
+        None,
+    ),
+    "providing_new_session": (
+        __SPEC_PARENT__,
+        "persistence.interceptors.aiosqa_interceptor",
+        None,
+    ),
+    "providing_transaction": (
         __SPEC_PARENT__,
         "persistence.interceptors.aiosqa_interceptor",
         None,
