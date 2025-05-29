@@ -11,7 +11,7 @@ if TYPE_CHECKING:
         retry_later,
         use_bus_message_controller,
     )
-    from jararaca.microservice import AppContext, AppInterceptor
+    from jararaca.microservice import AppInterceptor, AppTransactionContext
     from jararaca.observability.interceptor import ObservabilityInterceptor
     from jararaca.observability.providers.otel import OtelObservabilityProvider
     from jararaca.persistence.sort_filter import (
@@ -31,6 +31,17 @@ if TYPE_CHECKING:
         raises_422_on,
         raises_500_on,
         raises_http_exception_on,
+    )
+    from jararaca.reflect.controller_inspect import (
+        ControllerMemberReflect,
+        ControllerReflect,
+    )
+    from jararaca.reflect.metadata import (
+        SetMetadata,
+        get_all_metadata,
+        get_metadata,
+        get_metadata_value,
+        provide_metadata,
     )
     from jararaca.rpc.http.backends.httpx import HTTPXHttpRPCAsyncBackend
     from jararaca.rpc.http.backends.otel import TracedRequestMiddleware
@@ -68,7 +79,13 @@ if TYPE_CHECKING:
     from .messagebus.message import Message, MessageOf
     from .messagebus.publisher import use_publisher
     from .messagebus.worker import MessageBusWorker
-    from .microservice import Microservice, use_app_context, use_current_container
+    from .microservice import (
+        Microservice,
+        use_app_context,
+        use_app_transaction_context,
+        use_app_tx_ctx_data,
+        use_current_container,
+    )
     from .persistence.base import T_BASEMODEL, BaseEntity
     from .persistence.interceptors.aiosqa_interceptor import (
         AIOSQAConfig,
@@ -122,6 +139,11 @@ if TYPE_CHECKING:
     from .tools.app_config.interceptor import AppConfigurationInterceptor
 
     __all__ = [
+        "SetMetadata",
+        "provide_metadata",
+        "get_metadata",
+        "get_all_metadata",
+        "get_metadata_value",
         "RedisMessageBrokerBackend",
         "FilterRuleApplier",
         "SortRuleApplier",
@@ -197,6 +219,7 @@ if TYPE_CHECKING:
         "use_session",
         "use_transaction",
         "providing_session",
+        "provide_session",
         "providing_transaction",
         "providing_new_session",
         "Post",
@@ -220,7 +243,12 @@ if TYPE_CHECKING:
         "HttpRpcClientBuilder",
         "HTTPXHttpRPCAsyncBackend",
         "use_app_context",
+        "use_app_transaction_context",
+        "use_app_tx_ctx_data",
+        "AppTransactionContext",
         "AppContext",
+        "ControllerMemberReflect",
+        "ControllerReflect",
         "AppInterceptor",
         "OtelObservabilityProvider",
     ]
@@ -228,6 +256,11 @@ if TYPE_CHECKING:
 __SPEC_PARENT__: str = __spec__.parent  # type: ignore
 # A mapping of {<member name>: (package, <module name>)} defining dynamic imports
 _dynamic_imports: "dict[str, tuple[str, str, str | None]]" = {
+    "SetMetadata": (__SPEC_PARENT__, "reflect.metadata", None),
+    "provide_metadata": (__SPEC_PARENT__, "reflect.metadata", None),
+    "get_metadata": (__SPEC_PARENT__, "reflect.metadata", None),
+    "get_all_metadata": (__SPEC_PARENT__, "reflect.metadata", None),
+    "get_metadata_value": (__SPEC_PARENT__, "reflect.metadata", None),
     "RedisMessageBrokerBackend": (
         __SPEC_PARENT__,
         "broker_backend.redis_broker_backend",
@@ -353,6 +386,11 @@ _dynamic_imports: "dict[str, tuple[str, str, str | None]]" = {
         "persistence.interceptors.aiosqa_interceptor",
         None,
     ),
+    "provide_session": (
+        __SPEC_PARENT__,
+        "persistence.interceptors.aiosqa_interceptor",
+        None,
+    ),
     "providing_new_session": (
         __SPEC_PARENT__,
         "persistence.interceptors.aiosqa_interceptor",
@@ -403,8 +441,13 @@ _dynamic_imports: "dict[str, tuple[str, str, str | None]]" = {
     "HttpRpcClientBuilder": (__SPEC_PARENT__, "rpc.http.decorators", None),
     "HTTPXHttpRPCAsyncBackend": (__SPEC_PARENT__, "rpc.http.backends.httpx", None),
     "use_app_context": (__SPEC_PARENT__, "microservice", None),
+    "use_app_transaction_context": (__SPEC_PARENT__, "microservice", None),
+    "use_app_tx_ctx_data": (__SPEC_PARENT__, "microservice", None),
     "AppContext": (__SPEC_PARENT__, "microservice", None),
     "AppInterceptor": (__SPEC_PARENT__, "microservice", None),
+    "AppTransactionContext": (__SPEC_PARENT__, "microservice", None),
+    "ControllerMemberReflect": (__SPEC_PARENT__, "reflect.controller_inspect", None),
+    "ControllerReflect": (__SPEC_PARENT__, "reflect.controller_inspect", None),
 }
 
 

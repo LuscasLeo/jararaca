@@ -112,7 +112,7 @@ async def declare_worker_infrastructure(
         handlers, _ = factory(instance)
 
         for handler in handlers:
-            queue_name = f"{handler.message_type.MESSAGE_TOPIC}.{handler.callable.__module__}.{handler.callable.__qualname__}"
+            queue_name = f"{handler.message_type.MESSAGE_TOPIC}.{handler.instance_callable.__module__}.{handler.instance_callable.__qualname__}"
             routing_key = f"{handler.message_type.MESSAGE_TOPIC}.#"
 
             queue = await channel.declare_queue(
@@ -192,7 +192,7 @@ async def declare_worker_v2_infrastructure(
 
         # Declare queues for message handlers
         for handler in handlers:
-            queue_name = f"{handler.message_type.MESSAGE_TOPIC}.{handler.callable.__module__}.{handler.callable.__qualname__}"
+            queue_name = f"{handler.message_type.MESSAGE_TOPIC}.{handler.instance_callable.__module__}.{handler.instance_callable.__qualname__}"
             routing_key = f"{handler.message_type.MESSAGE_TOPIC}.#"
 
             queue = await RabbitmqUtils.declare_queue(

@@ -2,9 +2,9 @@ from contextlib import asynccontextmanager
 from typing import AsyncContextManager, AsyncGenerator, Protocol
 
 from jararaca.microservice import (
-    AppContext,
     AppInterceptor,
     AppInterceptorWithLifecycle,
+    AppTransactionContext,
     Container,
     Microservice,
 )
@@ -32,7 +32,9 @@ class ObservabilityInterceptor(AppInterceptor, AppInterceptorWithLifecycle):
         self.observability_provider = observability_provider
 
     @asynccontextmanager
-    async def intercept(self, app_context: AppContext) -> AsyncGenerator[None, None]:
+    async def intercept(
+        self, app_context: AppTransactionContext
+    ) -> AsyncGenerator[None, None]:
 
         async with self.observability_provider.tracing_provider.root_setup(app_context):
 

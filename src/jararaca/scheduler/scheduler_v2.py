@@ -7,7 +7,7 @@ from abc import ABC, abstractmethod
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from types import FrameType
-from typing import Any, AsyncGenerator, Callable
+from typing import Any, AsyncGenerator
 from urllib.parse import parse_qs
 
 import aio_pika
@@ -25,25 +25,25 @@ from jararaca.core.uow import UnitOfWorkContextProvider
 from jararaca.di import Container
 from jararaca.lifecycle import AppLifecycle
 from jararaca.microservice import Microservice
-from jararaca.scheduler.decorators import ScheduledAction
+from jararaca.scheduler.decorators import (
+    ScheduledAction,
+    ScheduledActionData,
+    get_type_scheduled_actions,
+)
 from jararaca.scheduler.types import DelayedMessageData
 
 logger = logging.getLogger(__name__)
 
-SCHEDULED_ACTION_LIST = list[tuple[Callable[..., Any], "ScheduledAction"]]
-
 
 def extract_scheduled_actions(
     app: Microservice, container: Container
-) -> SCHEDULED_ACTION_LIST:
-    scheduled_actions: SCHEDULED_ACTION_LIST = []
+) -> list[ScheduledActionData]:
+    scheduled_actions: list[ScheduledActionData] = []
     for controllers in app.controllers:
 
         controller_instance: Any = container.get_by_type(controllers)
 
-        controller_scheduled_actions = ScheduledAction.get_type_scheduled_actions(
-            controller_instance
-        )
+        controller_scheduled_actions = get_type_scheduled_actions(controller_instance)
         scheduled_actions.extend(controller_scheduled_actions)
 
     return scheduled_actions
@@ -81,7 +81,7 @@ class MessageBrokerDispatcher(ABC):
         raise NotImplementedError("dispatch_delayed_message() is not implemented yet.")
 
     @abstractmethod
-    async def initialize(self, scheduled_actions: SCHEDULED_ACTION_LIST) -> None:
+    async def initialize(self, scheduled_actions: list[ScheduledActionData]) -> None:
         raise NotImplementedError("initialize() is not implemented yet.")
 
     async def dispose(self) -> None:
@@ -171,7 +171,7 @@ class RabbitMQBrokerDispatcher(MessageBrokerDispatcher):
                 routing_key=f"{delayed_message.message_topic}.",
             )
 
-    async def initialize(self, scheduled_actions: SCHEDULED_ACTION_LIST) -> None:
+    async def initialize(self, scheduled_actions: list[ScheduledActionData]) -> None:
         """
         Initialize the RabbitMQ server.
         This is used to create the exchange and queues for the scheduled actions.
@@ -188,15 +188,17 @@ class RabbitMQBrokerDispatcher(MessageBrokerDispatcher):
                 auto_delete=False,
             )
 
-            for func, _ in scheduled_actions:
+            for sched_act_data in scheduled_actions:
                 queue = await channel.declare_queue(
-                    name=ScheduledAction.get_function_id(func),
+                    name=ScheduledAction.get_function_id(sched_act_data.callable),
                     durable=True,
                 )
 
                 await queue.bind(
                     exchange=self.exchange,
-                    routing_key=ScheduledAction.get_function_id(func),
+                    routing_key=ScheduledAction.get_function_id(
+                        sched_act_data.callable
+                    ),
                 )
 
     async def dispose(self) -> None:
@@ -269,12 +271,14 @@ class SchedulerV2:
             await self.run_scheduled_actions(scheduled_actions)
 
     async def run_scheduled_actions(
-        self, scheduled_actions: SCHEDULED_ACTION_LIST
+        self, scheduled_actions: list[ScheduledActionData]
     ) -> None:
 
         while not self.shutdown_event.is_set():
             now = int(time.time())
-            for func, scheduled_action in scheduled_actions:
+            for sched_act_data in scheduled_actions:
+                func = sched_act_data.callable
+                scheduled_action = sched_act_data.spec
                 if self.shutdown_event.is_set():
                     break
 

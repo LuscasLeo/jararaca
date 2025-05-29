@@ -1,5 +1,11 @@
 import inspect
-from typing import Any, Callable, TypeVar, cast
+from dataclasses import dataclass
+from typing import Any, Awaitable, Callable, TypeVar, cast
+
+from jararaca.reflect.controller_inspect import (
+    ControllerMemberReflect,
+    inspect_controller,
+)
 
 DECORATED_FUNC = TypeVar("DECORATED_FUNC", bound=Callable[..., Any])
 
@@ -67,25 +73,6 @@ class ScheduledAction:
         )
 
     @staticmethod
-    def get_type_scheduled_actions(
-        instance: Any,
-    ) -> list[tuple[Callable[..., Any], "ScheduledAction"]]:
-
-        members = inspect.getmembers(instance, predicate=inspect.ismethod)
-
-        scheduled_actions: list[tuple[Callable[..., Any], "ScheduledAction"]] = []
-
-        for _, member in members:
-            scheduled_action = ScheduledAction.get_scheduled_action(member)
-
-            if scheduled_action is None:
-                continue
-
-            scheduled_actions.append((member, scheduled_action))
-
-        return scheduled_actions
-
-    @staticmethod
     def get_function_id(
         func: Callable[..., Any],
     ) -> str:
@@ -94,3 +81,44 @@ class ScheduledAction:
         This is used to identify the scheduled action in the message broker.
         """
         return f"{func.__module__}.{func.__qualname__}"
+
+
+@dataclass(frozen=True)
+class ScheduledActionData:
+    spec: ScheduledAction
+    controller_member: ControllerMemberReflect
+    callable: Callable[..., Awaitable[None]]
+
+
+def get_type_scheduled_actions(
+    instance: Any,
+) -> list[ScheduledActionData]:
+
+    _, member_metadata_map = inspect_controller(instance.__class__)
+
+    members = inspect.getmembers(instance, predicate=inspect.ismethod)
+
+    scheduled_actions: list[ScheduledActionData] = []
+
+    for name, member in members:
+        scheduled_action = ScheduledAction.get_scheduled_action(member)
+
+        if scheduled_action is None:
+            continue
+
+        if name not in member_metadata_map:
+            raise Exception(
+                f"Member '{name}' is not a valid controller member in '{instance.__class__.__name__}'"
+            )
+
+        member_metadata = member_metadata_map[name]
+
+        scheduled_actions.append(
+            ScheduledActionData(
+                callable=member,
+                spec=scheduled_action,
+                controller_member=member_metadata,
+            )
+        )
+
+    return scheduled_actions

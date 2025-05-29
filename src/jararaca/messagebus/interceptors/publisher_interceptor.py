@@ -3,7 +3,7 @@ from typing import AsyncContextManager, AsyncGenerator, Protocol
 
 from jararaca.broker_backend import MessageBrokerBackend
 from jararaca.messagebus.publisher import MessagePublisher, provide_message_publisher
-from jararaca.microservice import AppContext, AppInterceptor
+from jararaca.microservice import AppInterceptor, AppTransactionContext
 
 
 class MessageBusConnectionFactory(Protocol):
@@ -24,8 +24,10 @@ class MessageBusPublisherInterceptor(AppInterceptor):
         self.message_scheduler = message_scheduler
 
     @asynccontextmanager
-    async def intercept(self, app_context: AppContext) -> AsyncGenerator[None, None]:
-        if app_context.context_type == "websocket":
+    async def intercept(
+        self, app_context: AppTransactionContext
+    ) -> AsyncGenerator[None, None]:
+        if app_context.transaction_data.context_type == "websocket":
             yield
             return
 

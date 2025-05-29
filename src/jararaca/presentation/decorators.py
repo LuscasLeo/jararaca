@@ -1,5 +1,7 @@
-import inspect
-from typing import Any, Callable, Literal, Protocol, TypeVar, cast
+from contextlib import contextmanager
+from contextvars import ContextVar
+from functools import wraps
+from typing import Any, Awaitable, Callable, Literal, Protocol, TypeVar, cast
 
 from fastapi import APIRouter
 from fastapi import Depends as DependsF
@@ -9,6 +11,10 @@ from fastapi.params import Depends
 from jararaca.lifecycle import AppLifecycle
 from jararaca.presentation.http_microservice import HttpMiddleware
 from jararaca.presentation.websocket.decorators import WebSocketEndpoint
+from jararaca.reflect.controller_inspect import (
+    ControllerMemberReflect,
+    inspect_controller,
+)
 
 DECORATED_FUNC = TypeVar("DECORATED_FUNC", bound=Callable[..., Any])
 DECORATED_CLASS = TypeVar("DECORATED_CLASS", bound=Any)
@@ -73,15 +79,15 @@ class RestController:
                 **(self.options or {}),
             )
 
-            members = inspect.getmembers(cls, predicate=inspect.isfunction)
+            controller, members = inspect_controller(cls)
 
             router_members = [
-                (name, mapping)
-                for name, member in members
+                (name, mapping, member)
+                for name, member in members.items()
                 if (
                     mapping := (
-                        HttpMapping.get_http_mapping(member)
-                        or WebSocketEndpoint.get(member)
+                        HttpMapping.get_http_mapping(member.member_function)
+                        or WebSocketEndpoint.get(member.member_function)
                     )
                 )
                 is not None
@@ -89,7 +95,7 @@ class RestController:
 
             router_members.sort(key=lambda x: x[1].order)
 
-            for name, mapping in router_members:
+            for name, mapping, member in router_members:
                 route_dependencies: list[Depends] = []
                 for middlewares_by_hook in UseMiddleware.get_middlewares(
                     getattr(instance, name)
@@ -104,12 +110,18 @@ class RestController:
                 ):
                     route_dependencies.append(DependsF(dependency.dependency))
 
+                instance_method = getattr(instance, name)
+                instance_method = wraps_with_attributes(
+                    instance_method,
+                    controller_member_reflect=member,
+                )
+
                 if isinstance(mapping, HttpMapping):
                     try:
                         router.add_api_route(
                             methods=[mapping.method],
                             path=mapping.path,
-                            endpoint=getattr(instance, name),
+                            endpoint=instance_method,
                             dependencies=route_dependencies,
                             **(mapping.options or {}),
                         )
@@ -120,7 +132,7 @@ class RestController:
                 else:
                     router.add_api_websocket_route(
                         path=mapping.path,
-                        endpoint=getattr(instance, name),
+                        endpoint=instance_method,
                         dependencies=route_dependencies,
                         **(mapping.options or {}),
                     )
@@ -299,3 +311,77 @@ class UseDependency:
     @staticmethod
     def get_dependencies(subject: DECORATED_FUNC) -> list["UseDependency"]:
         return getattr(subject, UseDependency.__DEPENDENCY_ATTR__, [])
+
+
+def wraps_with_member_data(
+    controller_member: ControllerMemberReflect, func: Callable[..., Awaitable[Any]]
+) -> Callable[..., Any]:
+    """
+    A decorator that wraps a function and preserves its metadata.
+    This is useful for preserving metadata when using decorators.
+    """
+
+    @wraps(func)
+    async def wrapper(*args: Any, **kwargs: Any) -> Any:
+
+        with providing_controller_member(
+            controller_member=controller_member,
+        ):
+
+            return await func(*args, **kwargs)
+
+    # Copy metadata from the original function to the wrapper
+    # for attr in dir(func):
+    #     if not attr.startswith("__"):
+    #         setattr(wrapper, attr, getattr(func, attr))
+
+    return wrapper
+
+
+controller_member_ctxvar = ContextVar[ControllerMemberReflect](
+    "controller_member_ctxvar"
+)
+
+
+@contextmanager
+def providing_controller_member(
+    controller_member: ControllerMemberReflect,
+) -> Any:
+    """
+    Context manager to provide the controller member metadata.
+    This is used to preserve the metadata of the controller member
+    when using decorators.
+    """
+    token = controller_member_ctxvar.set(controller_member)
+    try:
+        yield
+    finally:
+        controller_member_ctxvar.reset(token)
+
+
+def use_controller_member() -> ControllerMemberReflect:
+    """
+    Get the current controller member metadata.
+    This is used to access the metadata of the controller member
+    when using decorators.
+    """
+    return controller_member_ctxvar.get()
+
+
+def wraps_with_attributes(
+    func: Callable[..., Awaitable[Any]], **attributes: Any
+) -> Callable[..., Awaitable[Any]]:
+    """
+    A decorator that wraps a function and preserves its attributes.
+    This is useful for preserving attributes when using decorators.
+    """
+
+    @wraps(func)
+    async def wrapper(*args: Any, **kwargs: Any) -> Any:
+        return await func(*args, **kwargs)
+
+    # Copy attributes from the original function to the wrapper
+    for key, value in attributes.items():
+        setattr(wrapper, key, value)
+
+    return wrapper

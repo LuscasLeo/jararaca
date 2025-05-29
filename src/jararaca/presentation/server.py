@@ -7,9 +7,14 @@ from starlette.types import ASGIApp
 from jararaca.core.uow import UnitOfWorkContextProvider
 from jararaca.di import Container
 from jararaca.lifecycle import AppLifecycle
-from jararaca.microservice import HttpAppContext, WebSocketAppContext
+from jararaca.microservice import (
+    AppTransactionContext,
+    HttpTransactionData,
+    WebSocketTransactionData,
+)
 from jararaca.presentation.decorators import RestController
 from jararaca.presentation.http_microservice import HttpMicroservice
+from jararaca.reflect.controller_inspect import ControllerMemberReflect
 
 
 class HttpAppLifecycle:
@@ -79,10 +84,32 @@ class HttpUowContextProviderDependency:
     async def __call__(
         self, websocket: WebSocket = None, request: Request = None  # type: ignore
     ) -> AsyncGenerator[None, None]:
+        if request:
+            endpoint = request.scope["endpoint"]
+        elif websocket:
+            endpoint = websocket.scope["endpoint"]
+        else:
+            raise ValueError("Either request or websocket must be provided.")
+
+        member = getattr(endpoint, "controller_member_reflect", None)
+
+        if member is None:
+            raise ValueError("The endpoint does not have a controller member reflect.")
+
+        assert isinstance(member, ControllerMemberReflect), (
+            "Expected endpoint.controller_member_reflect to be of type "
+            "ControllerMemberReflect, but got: {}".format(type(member))
+        )
+
         async with self.uow_provider(
-            HttpAppContext(request=request)
-            if request
-            else WebSocketAppContext(websocket=websocket)
+            AppTransactionContext(
+                controller_member_reflect=member,
+                transaction_data=(
+                    HttpTransactionData(request=request)
+                    if request
+                    else WebSocketTransactionData(websocket=websocket)
+                ),
+            )
         ):
             yield
 

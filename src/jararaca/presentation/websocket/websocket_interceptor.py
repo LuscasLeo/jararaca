@@ -13,9 +13,9 @@ from pydantic import BaseModel
 from jararaca.core.uow import UnitOfWorkContextProvider
 from jararaca.di import Container
 from jararaca.microservice import (
-    AppContext,
     AppInterceptor,
     AppInterceptorWithLifecycle,
+    AppTransactionContext,
     Microservice,
 )
 from jararaca.presentation.decorators import (
@@ -185,7 +185,9 @@ class WebSocketInterceptor(AppInterceptor, AppInterceptorWithLifecycle):
         self.shutdown_event.set()
 
     @asynccontextmanager
-    async def intercept(self, app_context: AppContext) -> AsyncGenerator[None, None]:
+    async def intercept(
+        self, app_context: AppTransactionContext
+    ) -> AsyncGenerator[None, None]:
 
         staging_ws_messages_sender = StagingWebSocketMessageSender(
             self.connection_manager

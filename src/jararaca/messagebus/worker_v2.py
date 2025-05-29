@@ -6,15 +6,7 @@ from abc import ABC
 from contextlib import asynccontextmanager, suppress
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import (
-    Any,
-    AsyncContextManager,
-    AsyncGenerator,
-    Awaitable,
-    Callable,
-    Type,
-    get_origin,
-)
+from typing import Any, AsyncContextManager, AsyncGenerator, Type, get_origin
 from urllib.parse import parse_qs, urlparse
 
 import aio_pika
@@ -37,15 +29,16 @@ from jararaca.messagebus.decorators import (
     MessageBusController,
     MessageHandler,
     MessageHandlerData,
-    ScheduledActionData,
     ScheduleDispatchData,
 )
 from jararaca.messagebus.message import Message, MessageOf
 from jararaca.microservice import (
-    MessageBusAppContext,
+    AppTransactionContext,
+    MessageBusTransactionData,
     Microservice,
-    SchedulerAppContext,
+    SchedulerTransactionData,
 )
+from jararaca.scheduler.decorators import ScheduledActionData
 from jararaca.utils.rabbitmq_utils import RabbitmqUtils
 
 logger = logging.getLogger(__name__)
@@ -152,7 +145,7 @@ class AioPikaMicroserviceConsumer(MessageBusConsumer):
 
         for handler in self.message_handler_set:
 
-            queue_name = f"{handler.message_type.MESSAGE_TOPIC}.{handler.callable.__module__}.{handler.callable.__qualname__}"
+            queue_name = f"{handler.message_type.MESSAGE_TOPIC}.{handler.instance_callable.__module__}.{handler.instance_callable.__qualname__}"
             routing_key = f"{handler.message_type.MESSAGE_TOPIC}.#"
 
             self.incoming_map[queue_name] = handler
@@ -311,7 +304,6 @@ class ScheduledMessageHandlerCallback:
 
             task = asyncio.create_task(
                 self.run_with_context(
-                    self.scheduled_action.callable,
                     self.scheduled_action,
                     (ScheduleDispatchData(int(aio_pika_message.body.decode("utf-8"))),),
                     {},
@@ -321,7 +313,6 @@ class ScheduledMessageHandlerCallback:
         elif len(sig.parameters) == 0:
             task = asyncio.create_task(
                 self.run_with_context(
-                    self.scheduled_action.callable,
                     self.scheduled_action,
                     (),
                     {},
@@ -347,21 +338,22 @@ class ScheduledMessageHandlerCallback:
 
     async def run_with_context(
         self,
-        func: Callable[..., Awaitable[None]],
         scheduled_action: ScheduledActionData,
         args: tuple[Any, ...],
         kwargs: dict[str, Any],
     ) -> None:
         async with self.consumer.uow_context_provider(
-            SchedulerAppContext(
-                action=func,
-                scheduled_to=datetime.now(UTC),
-                cron_expression=scheduled_action.spec.cron,
-                triggered_at=datetime.now(UTC),
+            AppTransactionContext(
+                controller_member_reflect=scheduled_action.controller_member,
+                transaction_data=SchedulerTransactionData(
+                    scheduled_to=datetime.now(UTC),
+                    cron_expression=scheduled_action.spec.cron,
+                    triggered_at=datetime.now(UTC),
+                ),
             )
         ):
 
-            await func(*args, **kwargs)
+            await scheduled_action.callable(*args, **kwargs)
 
 
 class MessageHandlerCallback:
@@ -427,7 +419,7 @@ class MessageHandlerCallback:
 
         handler_data = self.message_handler
 
-        handler = handler_data.callable
+        handler = handler_data.instance_callable
 
         sig = inspect.signature(handler)
 
@@ -471,9 +463,12 @@ class MessageHandlerCallback:
         assert incoming_message_spec is not None
 
         async with self.consumer.uow_context_provider(
-            MessageBusAppContext(
-                message=builded_message,
-                topic=routing_key,
+            AppTransactionContext(
+                controller_member_reflect=handler_data.controller_member,
+                transaction_data=MessageBusTransactionData(
+                    message=builded_message,
+                    topic=routing_key,
+                ),
             )
         ):
             ctx: AsyncContextManager[Any]
