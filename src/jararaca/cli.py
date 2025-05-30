@@ -82,8 +82,6 @@ async def declare_worker_infrastructure(
     connection = await aio_pika.connect(url)
     channel = await connection.channel()
 
-    await channel.set_qos(prefetch_count=1)
-
     # Declare main exchange
     main_ex = await RabbitmqUtils.declare_main_exchange(
         channel=channel,
@@ -158,8 +156,6 @@ async def declare_worker_v2_infrastructure(
 
     connection = await aio_pika.connect(broker_url)
     channel = await connection.channel()
-
-    await channel.set_qos(prefetch_count=1)
 
     # Declare main exchange
     await RabbitmqUtils.declare_main_exchange(
@@ -248,8 +244,6 @@ async def declare_scheduler_v2_infrastructure(
 
     connection = await aio_pika.connect(broker_url)
     channel = await connection.channel()
-
-    await channel.set_qos(prefetch_count=1)
 
     # Declare exchange for scheduler
     await channel.declare_exchange(

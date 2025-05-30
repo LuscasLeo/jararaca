@@ -13,7 +13,7 @@ class RabbitmqUtils:
         """
         Declare a Dead Letter Exchange (DLX) for the given channel.
         """
-        await channel.set_qos(prefetch_count=1)
+
         return await channel.declare_exchange(
             cls.DEAD_LETTER_EXCHANGE,
             passive=passive,
@@ -29,7 +29,7 @@ class RabbitmqUtils:
         """
         Declare a Dead Letter Queue (DLQ) for the given queue.
         """
-        await channel.set_qos(prefetch_count=1)
+
         return await channel.declare_queue(
             cls.DEAD_LETTER_QUEUE,
             durable=True,
@@ -61,7 +61,7 @@ class RabbitmqUtils:
         """
         Declare a main exchange for the given channel.
         """
-        await channel.set_qos(prefetch_count=1)
+
         return await channel.declare_exchange(
             exchange_name,
             passive=passive,
@@ -80,7 +80,7 @@ class RabbitmqUtils:
         """
         Declare a queue with the given name and properties.
         """
-        await channel.set_qos(prefetch_count=1)
+
         return await channel.declare_queue(
             queue_name,
             passive=passive,
