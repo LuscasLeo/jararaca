@@ -179,8 +179,6 @@ class RabbitMQBrokerDispatcher(MessageBrokerDispatcher):
 
         async with self.channel_pool.acquire() as channel:
 
-            await channel.set_qos(prefetch_count=1)
-
             await channel.declare_exchange(
                 name=self.exchange,
                 type="topic",
