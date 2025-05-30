@@ -12,6 +12,7 @@ from urllib.parse import parse_qs, urlparse
 import aio_pika
 import aio_pika.abc
 import uvloop
+from aio_pika.exceptions import AMQPError, ChannelClosed, ChannelNotFoundEntity
 from pydantic import BaseModel
 
 from jararaca.broker_backend import MessageBrokerBackend
@@ -105,7 +106,6 @@ class AioPikaMicroserviceConsumer(MessageBusConsumer):
         message_handler_set: MESSAGE_HANDLER_DATA_SET,
         scheduled_actions: SCHEDULED_ACTION_DATA_SET,
         uow_context_provider: UnitOfWorkContextProvider,
-        passive_declare: bool = False,
     ):
 
         self.broker_backend = broker_backend
@@ -117,7 +117,6 @@ class AioPikaMicroserviceConsumer(MessageBusConsumer):
         self.shutdown_event = asyncio.Event()
         self.lock = asyncio.Lock()
         self.tasks: set[asyncio.Task[Any]] = set()
-        self.passive_declare = passive_declare
 
     async def consume(self) -> None:
 
@@ -127,21 +126,22 @@ class AioPikaMicroserviceConsumer(MessageBusConsumer):
 
         await channel.set_qos(prefetch_count=self.config.prefetch_count)
 
-        await RabbitmqUtils.declare_main_exchange(
-            channel=channel,
-            exchange_name=self.config.exchange,
-            passive=self.passive_declare,
-        )
+        # Get existing exchange and queues
+        try:
+            exchange = await RabbitmqUtils.get_main_exchange(
+                channel=channel,
+                exchange_name=self.config.exchange,
+            )
 
-        dlx = await RabbitmqUtils.declare_dl_exchange(
-            channel=channel, passive=self.passive_declare
-        )
-
-        dlq = await RabbitmqUtils.declare_dl_queue(
-            channel=channel, passive=self.passive_declare
-        )
-
-        await dlq.bind(dlx, routing_key=RabbitmqUtils.DEAD_LETTER_EXCHANGE)
+            dlx = await RabbitmqUtils.get_dl_exchange(channel=channel)
+            dlq = await RabbitmqUtils.get_dl_queue(channel=channel)
+        except (ChannelNotFoundEntity, ChannelClosed, AMQPError) as e:
+            logger.critical(
+                f"Required exchange or queue infrastructure not found and passive mode is enabled. "
+                f"Please use the declare command first to create the required infrastructure. Error: {e}"
+            )
+            self.shutdown_event.set()
+            return
 
         for handler in self.message_handler_set:
 
@@ -150,11 +150,16 @@ class AioPikaMicroserviceConsumer(MessageBusConsumer):
 
             self.incoming_map[queue_name] = handler
 
-            queue = await RabbitmqUtils.declare_queue(
-                channel=channel, queue_name=queue_name, passive=self.passive_declare
-            )
-
-            await queue.bind(exchange=self.config.exchange, routing_key=routing_key)
+            try:
+                queue = await RabbitmqUtils.get_queue(
+                    channel=channel, queue_name=queue_name
+                )
+            except (ChannelNotFoundEntity, ChannelClosed, AMQPError) as e:
+                logger.error(
+                    f"Queue '{queue_name}' not found and passive mode is enabled. "
+                    f"Please use the declare command first to create the queue. Error: {e}"
+                )
+                continue
 
             await queue.consume(
                 callback=MessageHandlerCallback(
@@ -174,11 +179,16 @@ class AioPikaMicroserviceConsumer(MessageBusConsumer):
 
             routing_key = queue_name
 
-            queue = await RabbitmqUtils.declare_queue(
-                channel=channel, queue_name=queue_name, passive=self.passive_declare
-            )
-
-            await queue.bind(exchange=self.config.exchange, routing_key=routing_key)
+            try:
+                queue = await RabbitmqUtils.get_queue(
+                    channel=channel, queue_name=queue_name
+                )
+            except (ChannelNotFoundEntity, ChannelClosed, AMQPError) as e:
+                logger.error(
+                    f"Scheduler queue '{queue_name}' not found and passive mode is enabled. "
+                    f"Please use the declare command first to create the queue. Error: {e}"
+                )
+                continue
 
             await queue.consume(
                 callback=ScheduledMessageHandlerCallback(
