@@ -21,8 +21,8 @@ from jararaca.microservice import Microservice
 from jararaca.presentation.http_microservice import HttpMicroservice
 from jararaca.presentation.server import create_http_server
 from jararaca.reflect.controller_inspect import inspect_controller
+from jararaca.scheduler.beat_worker import BeatWorker
 from jararaca.scheduler.decorators import ScheduledAction
-from jararaca.scheduler.scheduler import SchedulerV2 as Scheduler
 from jararaca.tools.typescript.interface_parser import (
     write_microservice_to_typescript_interface,
 )
@@ -286,35 +286,33 @@ def server(app_path: str, host: str, port: int) -> None:
     required=True,
 )
 @click.option(
-    "--schedulers",
+    "--actions",
     type=str,
-    help="Comma-separated list of scheduler names to run (only run schedulers with these names)",
+    help="Comma-separated list of action names to run (only run actions with these names)",
 )
-def scheduler(
+def beat(
     interval: int,
     broker_url: str,
     backend_url: str,
     app_path: str,
-    schedulers: str | None = None,
+    actions: str | None = None,
 ) -> None:
 
     app = find_microservice_by_module_path(app_path)
 
     # Parse scheduler names if provided
     scheduler_names: set[str] | None = None
-    if schedulers:
-        scheduler_names = {
-            name.strip() for name in schedulers.split(",") if name.strip()
-        }
+    if actions:
+        scheduler_names = {name.strip() for name in actions.split(",") if name.strip()}
 
-    scheduler = Scheduler(
+    beat_worker = BeatWorker(
         app=app,
         interval=interval,
         backend_url=backend_url,
         broker_url=broker_url,
-        scheduler_names=scheduler_names,
+        scheduled_action_names=scheduler_names,
     )
-    scheduler.run()
+    beat_worker.run()
 
 
 def generate_interfaces(

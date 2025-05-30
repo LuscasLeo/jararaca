@@ -4,10 +4,9 @@ import logging
 import signal
 import time
 from abc import ABC, abstractmethod
-from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from types import FrameType
-from typing import Any, AsyncGenerator
+from typing import Any
 from urllib.parse import parse_qs
 
 import aio_pika
@@ -36,7 +35,7 @@ from jararaca.utils.rabbitmq_utils import RabbitmqUtils
 logger = logging.getLogger(__name__)
 
 
-def extract_scheduled_actions(
+def _extract_scheduled_actions(
     app: Microservice, container: Container, scheduler_names: set[str] | None = None
 ) -> list[ScheduledActionData]:
     scheduled_actions: list[ScheduledActionData] = []
@@ -64,7 +63,7 @@ def extract_scheduled_actions(
 # region Message Broker Dispatcher
 
 
-class MessageBrokerDispatcher(ABC):
+class _MessageBrokerDispatcher(ABC):
 
     @abstractmethod
     async def dispatch_scheduled_action(
@@ -100,7 +99,7 @@ class MessageBrokerDispatcher(ABC):
         pass
 
 
-class RabbitMQBrokerDispatcher(MessageBrokerDispatcher):
+class _RabbitMQBrokerDispatcher(_MessageBrokerDispatcher):
 
     def __init__(self, url: str) -> None:
         self.url = url
@@ -206,13 +205,13 @@ class RabbitMQBrokerDispatcher(MessageBrokerDispatcher):
         await self.conn_pool.close()
 
 
-def get_message_broker_dispatcher_from_url(url: str) -> MessageBrokerDispatcher:
+def _get_message_broker_dispatcher_from_url(url: str) -> _MessageBrokerDispatcher:
     """
     Factory function to create a message broker instance from a URL.
     Currently, only RabbitMQ is supported.
     """
     if url.startswith("amqp://") or url.startswith("amqps://"):
-        return RabbitMQBrokerDispatcher(url=url)
+        return _RabbitMQBrokerDispatcher(url=url)
     else:
         raise ValueError(f"Unsupported message broker URL: {url}")
 
@@ -220,7 +219,7 @@ def get_message_broker_dispatcher_from_url(url: str) -> MessageBrokerDispatcher:
 # endregion
 
 
-class SchedulerV2:
+class BeatWorker:
 
     def __init__(
         self,
@@ -228,11 +227,11 @@ class SchedulerV2:
         interval: int,
         broker_url: str,
         backend_url: str,
-        scheduler_names: set[str] | None = None,
+        scheduled_action_names: set[str] | None = None,
     ) -> None:
         self.app = app
 
-        self.broker: MessageBrokerDispatcher = get_message_broker_dispatcher_from_url(
+        self.broker: _MessageBrokerDispatcher = _get_message_broker_dispatcher_from_url(
             broker_url
         )
         self.backend: MessageBrokerBackend = get_message_broker_backend_from_url(
@@ -240,7 +239,7 @@ class SchedulerV2:
         )
 
         self.interval = interval
-        self.scheduler_names = scheduler_names
+        self.scheduler_names = scheduled_action_names
         self.container = Container(self.app)
         self.uow_provider = UnitOfWorkContextProvider(app, self.container)
 
@@ -266,7 +265,7 @@ class SchedulerV2:
         """
         async with self.lifecycle():
 
-            scheduled_actions = extract_scheduled_actions(
+            scheduled_actions = _extract_scheduled_actions(
                 self.app, self.container, self.scheduler_names
             )
 
@@ -341,14 +340,3 @@ class SchedulerV2:
 
         await self.backend.dispose()
         await self.broker.dispose()
-
-
-@asynccontextmanager
-async def none_context() -> AsyncGenerator[None, None]:
-    yield
-
-
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-)
