@@ -222,7 +222,7 @@ class RabbitmqUtils:
             raise
 
     @classmethod
-    async def declare_queue(
+    async def declare_worker_queue(
         cls,
         channel: AbstractChannel,
         queue_name: str,
@@ -243,64 +243,13 @@ class RabbitmqUtils:
         )
 
     @classmethod
-    async def get_worker_v1_queue(
+    async def get_scheduled_action_queue(
         cls,
         channel: AbstractChannel,
         queue_name: str,
     ) -> AbstractQueue:
         """
-        Get a worker v1 queue.
-        """
-        try:
-            return await channel.get_queue(queue_name)
-        except ChannelNotFoundEntity as e:
-            logger.error(
-                f"Worker queue '{queue_name}' does not exist. "
-                f"Please use the declare command to create it first. Error: {e}"
-            )
-            raise
-        except ChannelClosed as e:
-            logger.error(
-                f"Channel closed while getting worker queue '{queue_name}'. "
-                f"Error: {e}"
-            )
-            raise
-        except AMQPError as e:
-            logger.error(
-                f"AMQP error while getting worker queue '{queue_name}'. " f"Error: {e}"
-            )
-            raise
-
-    @classmethod
-    async def declare_worker_v1_queue(
-        cls,
-        channel: AbstractChannel,
-        queue_name: str,
-        dlx_name: str,
-        dlq_name: str,
-        passive: bool = False,
-    ) -> AbstractQueue:
-        """
-        Declare a worker v1 queue with custom dead letter exchange and routing key.
-        """
-        return await channel.declare_queue(
-            passive=passive,
-            name=queue_name,
-            arguments={
-                "x-dead-letter-exchange": dlx_name,
-                "x-dead-letter-routing-key": dlq_name,
-            },
-            durable=True,
-        )
-
-    @classmethod
-    async def get_scheduler_queue(
-        cls,
-        channel: AbstractChannel,
-        queue_name: str,
-    ) -> AbstractQueue:
-        """
-        Get a scheduler queue.
+        Get a scheduled action queue.
         """
         try:
             return await channel.get_queue(queue_name)
@@ -324,14 +273,14 @@ class RabbitmqUtils:
             raise
 
     @classmethod
-    async def declare_scheduler_queue(
+    async def declare_scheduled_action_queue(
         cls,
         channel: AbstractChannel,
         queue_name: str,
         passive: bool = False,
     ) -> AbstractQueue:
         """
-        Declare a scheduler queue with simple durable configuration.
+        Declare a scheduled action queue with simple durable configuration.
         The queue has a max length of 1 to ensure only one scheduled task
         is processed at a time.
         """

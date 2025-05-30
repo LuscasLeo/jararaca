@@ -195,7 +195,7 @@ class _RabbitMQBrokerDispatcher(_MessageBrokerDispatcher):
                 queue_name = ScheduledAction.get_function_id(sched_act_data.callable)
 
                 # Try to get existing queue
-                await RabbitmqUtils.get_scheduler_queue(
+                await RabbitmqUtils.get_scheduled_action_queue(
                     channel=channel,
                     queue_name=queue_name,
                 )
