@@ -95,40 +95,44 @@ class AioPikaMicroserviceConsumer:
         self.lock = asyncio.Lock()
         self.tasks: set[asyncio.Task[Any]] = set()
 
-    async def consume(self, passive_declare: bool) -> None:
-
+    async def consume(self) -> None:
         connection = await aio_pika.connect(self.config.url)
-
         channel = await connection.channel()
-
         await channel.set_qos(prefetch_count=self.config.prefetch_count)
 
-        main_ex = await RabbitmqUtils.declare_main_exchange(
-            channel=channel,
-            exchange_name=self.config.exchange,
-            passive=passive_declare,
-        )
-
-        dlx, dlq = await RabbitmqUtils.declare_dl_kit(channel=channel)
+        # Get existing exchange and DL kit
+        try:
+            main_ex = await RabbitmqUtils.get_main_exchange(
+                channel=channel,
+                exchange_name=self.config.exchange,
+            )
+            dlx, dlq = await RabbitmqUtils.get_dl_kit(channel=channel)
+        except Exception as e:
+            logger.error(
+                f"Required exchange or queue infrastructure not found. "
+                f"Please use the declare command first to create the required infrastructure. Error: {e}"
+            )
+            self.shutdown_event.set()
+            return
 
         for handler in self.message_handler_set:
-
             queue_name = f"{handler.message_type.MESSAGE_TOPIC}.{handler.instance_callable.__module__}.{handler.instance_callable.__qualname__}"
             routing_key = f"{handler.message_type.MESSAGE_TOPIC}.#"
 
             self.incoming_map[queue_name] = handler
 
-            queue: aio_pika.abc.AbstractQueue = (
-                await RabbitmqUtils.declare_worker_v1_queue(
+            # Get existing queue
+            try:
+                queue = await RabbitmqUtils.get_worker_v1_queue(
                     channel=channel,
                     queue_name=queue_name,
-                    dlx_name=dlx.name,
-                    dlq_name=dlq.name,
-                    passive=passive_declare,
                 )
-            )
-
-            await queue.bind(exchange=main_ex, routing_key=routing_key)
+            except Exception as e:
+                logger.error(
+                    f"Worker queue '{queue_name}' not found. "
+                    f"Please use the declare command first to create the queue. Error: {e}"
+                )
+                continue
 
             await queue.consume(
                 callback=MessageHandlerCallback(
@@ -338,9 +342,7 @@ class MessageBusWorker:
             raise RuntimeError("Consumer not started")
         return self._consumer
 
-    async def start_async(
-        self, passive_declare: bool, handler_names: set[str] | None = None
-    ) -> None:
+    async def start_async(self, handler_names: set[str] | None = None) -> None:
         all_message_handlers_set: MESSAGE_HANDLER_DATA_SET = set()
         async with self.lifecycle():
             for instance_type in self.app.controllers:
@@ -386,11 +388,9 @@ class MessageBusWorker:
                 uow_context_provider=self.uow_context_provider,
             )
 
-            await consumer.consume(passive_declare=passive_declare)
+            await consumer.consume()
 
-    def start_sync(
-        self, passive_declare: bool, handler_names: set[str] | None = None
-    ) -> None:
+    def start_sync(self, handler_names: set[str] | None = None) -> None:
 
         def on_shutdown(loop: asyncio.AbstractEventLoop) -> None:
             logger.info("Shutting down")
@@ -400,11 +400,7 @@ class MessageBusWorker:
             runner.get_loop().add_signal_handler(
                 signal.SIGINT, on_shutdown, runner.get_loop()
             )
-            runner.run(
-                self.start_async(
-                    passive_declare=passive_declare, handler_names=handler_names
-                )
-            )
+            runner.run(self.start_async(handler_names=handler_names))
 
 
 class AioPikaMessageBusController(BusMessageController):

@@ -1,4 +1,5 @@
 import inspect
+import logging
 from contextlib import contextmanager, suppress
 from contextvars import ContextVar
 from dataclasses import dataclass, field
@@ -24,6 +25,8 @@ from jararaca.core.providers import ProviderSpec, T, Token
 from jararaca.messagebus import MessageOf
 from jararaca.messagebus.message import Message
 from jararaca.reflect.controller_inspect import ControllerMemberReflect
+
+logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from typing_extensions import TypeIs
@@ -145,6 +148,49 @@ class Microservice:
     )
 
 
+@dataclass
+class InstantiationNode:
+    property_name: str
+    parent: "InstantiationNode | None" = None
+    source_type: Any | None = None
+    target_type: Any | None = None
+
+
+instantiation_vector_ctxvar = ContextVar[list[InstantiationNode]](
+    "instantiation_vector", default=[]
+)
+
+
+def print_instantiation_vector(
+    instantiation_vector: list[InstantiationNode],
+) -> None:
+    """
+    Prints the instantiation vector for debugging purposes.
+    """
+    for node in instantiation_vector:
+        print(
+            f"Property: {node.property_name}, Source: {node.source_type}, Target: {node.target_type}"
+        )
+
+
+@contextmanager
+def span_instantiation_vector(
+    instantiation_node: InstantiationNode,
+) -> Generator[None, None, None]:
+    """
+    Context manager to track instantiation nodes in a vector.
+    This is useful for debugging and tracing instantiation paths.
+    """
+    current_vector = list(instantiation_vector_ctxvar.get())
+    current_vector.append(instantiation_node)
+    token = instantiation_vector_ctxvar.set(current_vector)
+    try:
+        yield
+    finally:
+        with suppress(ValueError):
+            instantiation_vector_ctxvar.reset(token)
+
+
 class Container:
 
     def __init__(self, app: Microservice) -> None:
@@ -161,40 +207,54 @@ class Container:
                 if provider.use_value:
                     self.instances_map[provider.provide] = provider.use_value
                 elif provider.use_class:
-                    self.get_and_register(provider.use_class, provider.provide)
+                    self._get_and_register(provider.use_class, provider.provide)
                 elif provider.use_factory:
-                    self.get_and_register(provider.use_factory, provider.provide)
+                    self._get_and_register(provider.use_factory, provider.provide)
             else:
-                self.get_and_register(provider, provider)
+                self._get_and_register(provider, provider)
 
-    def instantiate(self, type_: type[Any] | Callable[..., Any]) -> Any:
+    def _instantiate(self, type_: type[Any] | Callable[..., Any]) -> Any:
 
-        dependencies = self.parse_dependencies(type_)
+        dependencies = self._parse_dependencies(type_)
 
-        evaluated_dependencies = {
-            name: self.get_or_register_token_or_type(dependency)
-            for name, dependency in dependencies.items()
-        }
+        evaluated_dependencies: dict[str, Any] = {}
+        for name, dependency in dependencies.items():
+            with span_instantiation_vector(
+                InstantiationNode(
+                    property_name=name,
+                    source_type=type_,
+                    target_type=dependency,
+                )
+            ):
+                evaluated_dependencies[name] = self.get_or_register_token_or_type(
+                    dependency
+                )
 
         instance = type_(**evaluated_dependencies)
 
         return instance
 
-    def parse_dependencies(
+    def _parse_dependencies(
         self, provider: type[Any] | Callable[..., Any]
     ) -> dict[str, type[Any]]:
 
-        signature = inspect.signature(provider)
+        vector = instantiation_vector_ctxvar.get()
+        try:
+            signature = inspect.signature(provider)
+        except ValueError:
+            print("VECTOR:", vector)
+            print_instantiation_vector(vector)
+            raise
 
         parameters = signature.parameters
 
         return {
-            name: self.lookup_parameter_type(parameter)
+            name: self._lookup_parameter_type(parameter)
             for name, parameter in parameters.items()
             if parameter.annotation != inspect.Parameter.empty
         }
 
-    def lookup_parameter_type(self, parameter: inspect.Parameter) -> Any:
+    def _lookup_parameter_type(self, parameter: inspect.Parameter) -> Any:
         if parameter.annotation == inspect.Parameter.empty:
             raise Exception(f"Parameter {parameter.name} has no type annotation")
 
@@ -227,14 +287,14 @@ class Container:
             item_type = bind_to = token_or_type
 
         if token_or_type not in self.instances_map:
-            return self.get_and_register(item_type, bind_to)
+            return self._get_and_register(item_type, bind_to)
 
         return cast(T, self.instances_map[bind_to])
 
-    def get_and_register(
+    def _get_and_register(
         self, item_type: Type[T] | Callable[..., T], bind_to: Any
     ) -> T:
-        instance = self.instantiate(item_type)
+        instance = self._instantiate(item_type)
         self.register(instance, bind_to)
         return cast(T, instance)
 

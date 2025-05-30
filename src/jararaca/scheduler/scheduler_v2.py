@@ -157,7 +157,7 @@ class RabbitMQBrokerDispatcher(MessageBrokerDispatcher):
 
         logger.info(f"Dispatching message to {action_id} at {timestamp}")
         async with self.channel_pool.acquire() as channel:
-            exchange = await channel.get_exchange(self.exchange)
+            exchange = await RabbitmqUtils.get_main_exchange(channel, self.exchange)
 
             await exchange.publish(
                 aio_pika.Message(body=str(timestamp).encode()),
@@ -175,7 +175,7 @@ class RabbitMQBrokerDispatcher(MessageBrokerDispatcher):
         """
         async with self.channel_pool.acquire() as channel:
 
-            exchange = await channel.get_exchange(self.exchange)
+            exchange = await RabbitmqUtils.get_main_exchange(channel, self.exchange)
             await exchange.publish(
                 aio_pika.Message(
                     body=delayed_message.payload,
@@ -190,26 +190,15 @@ class RabbitMQBrokerDispatcher(MessageBrokerDispatcher):
         """
 
         async with self.channel_pool.acquire() as channel:
-
-            await channel.declare_exchange(
-                name=self.exchange,
-                type="topic",
-                durable=True,
-                auto_delete=False,
-            )
+            await RabbitmqUtils.get_main_exchange(channel, self.exchange)
 
             for sched_act_data in scheduled_actions:
-                queue = await RabbitmqUtils.declare_scheduler_queue(
-                    channel=channel,
-                    queue_name=ScheduledAction.get_function_id(sched_act_data.callable),
-                    passive=False,
-                )
+                queue_name = ScheduledAction.get_function_id(sched_act_data.callable)
 
-                await queue.bind(
-                    exchange=self.exchange,
-                    routing_key=ScheduledAction.get_function_id(
-                        sched_act_data.callable
-                    ),
+                # Try to get existing queue
+                await RabbitmqUtils.get_scheduler_queue(
+                    channel=channel,
+                    queue_name=queue_name,
                 )
 
     async def dispose(self) -> None:

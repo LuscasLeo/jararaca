@@ -108,7 +108,7 @@ class MessageBusController:
 
             schedulers: SCHEDULED_ACTION_DATA_SET = set()
 
-            controller, members = inspect_controller(cls_t)
+            _, members = inspect_controller(cls_t)
 
             for name, member in members.items():
                 message_handler_decoration = MessageHandler.get_message_incoming(
