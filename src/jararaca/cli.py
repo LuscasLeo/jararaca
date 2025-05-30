@@ -142,7 +142,7 @@ async def declare_worker_infrastructure(
                     await RabbitmqUtils.delete_queue(channel, queue_name)
 
                 # Declare queue
-                queue = await RabbitmqUtils.declare_queue(
+                queue = await RabbitmqUtils.declare_worker_queue(
                     channel=channel, queue_name=queue_name, passive=not force
                 )
                 await queue.bind(exchange=exchange, routing_key=routing_key)
@@ -164,7 +164,7 @@ async def declare_worker_infrastructure(
                 if force:
                     await RabbitmqUtils.delete_queue(channel, queue_name)
 
-                queue = await RabbitmqUtils.declare_queue(
+                queue = await RabbitmqUtils.declare_scheduled_action_queue(
                     channel=channel, queue_name=queue_name, passive=not force
                 )
                 await queue.bind(exchange=exchange, routing_key=routing_key)
@@ -539,6 +539,7 @@ def gen_entity(entity_name: str, file_path: StreamWriter) -> None:
 @click.argument(
     "app_path",
     type=str,
+    envvar="APP_PATH",
 )
 @click.option(
     "--broker-url",
@@ -642,13 +643,9 @@ def declare(
             click.echo(
                 f"→ Declaring worker infrastructure (URL: {broker_url_with_exchange})"
             )
-            click.echo(
-                f"→ Declaring scheduler infrastructure (URL: {broker_url_with_exchange})"
-            )
-
             await declare_worker_infrastructure(broker_url_with_exchange, app, force)
 
-            click.echo("✓ Worker and scheduler infrastructure declared successfully!")
+            click.echo("✓ Workers infrastructure declared successfully!")
         except Exception as e:
             click.echo(f"ERROR: Failed to declare infrastructure: {e}", err=True)
             raise
