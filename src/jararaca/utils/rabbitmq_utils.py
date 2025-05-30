@@ -90,3 +90,81 @@ class RabbitmqUtils:
                 "x-dead-letter-routing-key": cls.DEAD_LETTER_EXCHANGE,
             },
         )
+
+    @classmethod
+    async def declare_worker_v1_queue(
+        cls,
+        channel: AbstractChannel,
+        queue_name: str,
+        dlx_name: str,
+        dlq_name: str,
+        passive: bool = False,
+    ) -> AbstractQueue:
+        """
+        Declare a worker v1 queue with custom dead letter exchange and routing key.
+        """
+        return await channel.declare_queue(
+            passive=passive,
+            name=queue_name,
+            arguments={
+                "x-dead-letter-exchange": dlx_name,
+                "x-dead-letter-routing-key": dlq_name,
+            },
+            durable=True,
+        )
+
+    @classmethod
+    async def declare_scheduler_queue(
+        cls,
+        channel: AbstractChannel,
+        queue_name: str,
+        passive: bool = False,
+    ) -> AbstractQueue:
+        """
+        Declare a scheduler queue with simple durable configuration.
+        """
+        return await channel.declare_queue(
+            name=queue_name,
+            durable=True,
+            passive=passive,
+        )
+
+    @classmethod
+    async def delete_queue(
+        cls,
+        channel: AbstractChannel,
+        queue_name: str,
+        if_unused: bool = False,
+        if_empty: bool = False,
+    ) -> None:
+        """
+        Delete a queue.
+        """
+        try:
+            await channel.queue_delete(
+                queue_name=queue_name,
+                if_unused=if_unused,
+                if_empty=if_empty,
+            )
+        except Exception:
+            # Queue might not exist, which is fine
+            pass
+
+    @classmethod
+    async def delete_exchange(
+        cls,
+        channel: AbstractChannel,
+        exchange_name: str,
+        if_unused: bool = False,
+    ) -> None:
+        """
+        Delete an exchange.
+        """
+        try:
+            await channel.exchange_delete(
+                exchange_name=exchange_name,
+                if_unused=if_unused,
+            )
+        except Exception:
+            # Exchange might not exist, which is fine
+            pass

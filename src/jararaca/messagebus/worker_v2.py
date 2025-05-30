@@ -515,10 +515,17 @@ async def none_context() -> AsyncGenerator[None, None]:
 
 
 class MessageBusWorker:
-    def __init__(self, app: Microservice, broker_url: str, backend_url: str) -> None:
+    def __init__(
+        self,
+        app: Microservice,
+        broker_url: str,
+        backend_url: str,
+        handler_names: set[str] | None = None,
+    ) -> None:
         self.app = app
         self.backend_url = backend_url
         self.broker_url = broker_url
+        self.handler_names = handler_names
 
         self.container = Container(app)
         self.lifecycle = AppLifecycle(app, self.container)
@@ -555,6 +562,21 @@ class MessageBusWorker:
                 for handler_data in handlers:
                     message_type = handler_data.spec.message_type
                     topic = message_type.MESSAGE_TOPIC
+
+                    # Filter handlers by name if specified
+                    if (
+                        self.handler_names is not None
+                        and handler_data.spec.name is not None
+                    ):
+                        if handler_data.spec.name not in self.handler_names:
+                            continue
+                    elif (
+                        self.handler_names is not None
+                        and handler_data.spec.name is None
+                    ):
+                        # Skip handlers without names when filtering is requested
+                        continue
+
                     if (
                         topic in message_handler_data_map
                         and message_type.MESSAGE_TYPE == "task"

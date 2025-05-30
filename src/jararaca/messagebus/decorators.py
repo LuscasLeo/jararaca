@@ -24,6 +24,7 @@ class MessageHandler(Generic[INHERITS_MESSAGE_CO]):
         exception_handler: Callable[[BaseException], None] | None = None,
         nack_on_exception: bool = False,
         auto_ack: bool = True,
+        name: str | None = None,
     ) -> None:
         self.message_type = message
 
@@ -31,6 +32,7 @@ class MessageHandler(Generic[INHERITS_MESSAGE_CO]):
         self.exception_handler = exception_handler
         self.requeue_on_exception = nack_on_exception
         self.auto_ack = auto_ack
+        self.name = name
 
     def __call__(
         self, func: Callable[[Any, MessageOf[INHERITS_MESSAGE_CO]], Awaitable[None]]

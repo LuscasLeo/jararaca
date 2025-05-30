@@ -20,6 +20,7 @@ class ScheduledAction:
         exclusive: bool = True,
         timeout: int | None = None,
         exception_handler: Callable[[BaseException], None] | None = None,
+        name: str | None = None,
     ) -> None:
         """
         :param cron: A string representing the cron expression for the scheduled action.
@@ -27,6 +28,7 @@ class ScheduledAction:
         :param exclusive: A boolean indicating if the scheduled action should be executed in one instance of the application. (Requires a distributed lock provided by a backend)
         :param exception_handler: A callable that will be called when an exception is raised during the execution of the scheduled action.
         :param timeout: An integer representing the timeout for the scheduled action in seconds. If the scheduled action takes longer than this time, it will be terminated.
+        :param name: An optional name for the scheduled action, used for filtering which actions to run.
         """
         self.cron = cron
         """
@@ -53,6 +55,11 @@ class ScheduledAction:
         """
         An integer representing the timeout for the scheduled action in seconds.
         If the scheduled action takes longer than this time, it will be terminated.
+        """
+
+        self.name = name
+        """
+        An optional name for the scheduled action, used for filtering which actions to run.
         """
 
     def __call__(self, func: DECORATED_FUNC) -> DECORATED_FUNC:

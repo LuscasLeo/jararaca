@@ -17,6 +17,7 @@ from mako.template import Template
 
 from jararaca.messagebus import worker as worker_v1
 from jararaca.messagebus import worker_v2 as worker_v2_mod
+from jararaca.messagebus.decorators import SCHEDULED_ACTION_DATA_SET
 from jararaca.microservice import Microservice
 from jararaca.presentation.http_microservice import HttpMicroservice
 from jararaca.presentation.server import create_http_server
@@ -75,12 +76,21 @@ async def declare_worker_infrastructure(
     exchange: str,
     app: Microservice,
     passive_declare: bool = False,
+    handler_names: set[str] | None = None,
+    force: bool = False,
 ) -> None:
     """
     Declare the infrastructure (exchanges and queues) for worker v1.
     """
     connection = await aio_pika.connect(url)
     channel = await connection.channel()
+
+    # Force delete infrastructure if requested
+    if force:
+        click.echo(f"→ Force deleting existing infrastructure for exchange: {exchange}")
+        await RabbitmqUtils.delete_exchange(channel, exchange)
+        await RabbitmqUtils.delete_exchange(channel, RabbitmqUtils.DEAD_LETTER_EXCHANGE)
+        await RabbitmqUtils.delete_queue(channel, RabbitmqUtils.DEAD_LETTER_QUEUE)
 
     # Declare main exchange
     main_ex = await RabbitmqUtils.declare_main_exchange(
@@ -110,17 +120,27 @@ async def declare_worker_infrastructure(
         handlers, _ = factory(instance)
 
         for handler in handlers:
+            # Filter handlers by name if specified
+            if handler_names is not None and handler.spec.name is not None:
+                if handler.spec.name not in handler_names:
+                    continue
+            elif handler_names is not None and handler.spec.name is None:
+                # Skip handlers without names when filtering is requested
+                continue
+
             queue_name = f"{handler.message_type.MESSAGE_TOPIC}.{handler.instance_callable.__module__}.{handler.instance_callable.__qualname__}"
             routing_key = f"{handler.message_type.MESSAGE_TOPIC}.#"
 
-            queue = await channel.declare_queue(
+            # Force delete queue if requested
+            if force:
+                await RabbitmqUtils.delete_queue(channel, queue_name)
+
+            queue = await RabbitmqUtils.declare_worker_v1_queue(
+                channel=channel,
+                queue_name=queue_name,
+                dlx_name=dlx.name,
+                dlq_name=dlq.name,
                 passive=passive_declare,
-                name=queue_name,
-                arguments={
-                    "x-dead-letter-exchange": dlx.name,
-                    "x-dead-letter-routing-key": dlq.name,
-                },
-                durable=True,
             )
 
             await queue.bind(exchange=main_ex, routing_key=routing_key)
@@ -134,6 +154,8 @@ async def declare_worker_v2_infrastructure(
     broker_url: str,
     app: Microservice,
     passive_declare: bool = False,
+    handler_names: set[str] | None = None,
+    force: bool = False,
 ) -> None:
     """
     Declare the infrastructure (exchanges and queues) for worker v2.
@@ -156,6 +178,13 @@ async def declare_worker_v2_infrastructure(
 
     connection = await aio_pika.connect(broker_url)
     channel = await connection.channel()
+
+    # Force delete infrastructure if requested
+    if force:
+        click.echo(f"→ Force deleting existing infrastructure for exchange: {exchange}")
+        await RabbitmqUtils.delete_exchange(channel, exchange)
+        await RabbitmqUtils.delete_exchange(channel, RabbitmqUtils.DEAD_LETTER_EXCHANGE)
+        await RabbitmqUtils.delete_queue(channel, RabbitmqUtils.DEAD_LETTER_QUEUE)
 
     # Declare main exchange
     await RabbitmqUtils.declare_main_exchange(
@@ -188,8 +217,20 @@ async def declare_worker_v2_infrastructure(
 
         # Declare queues for message handlers
         for handler in handlers:
+            # Filter handlers by name if specified
+            if handler_names is not None and handler.spec.name is not None:
+                if handler.spec.name not in handler_names:
+                    continue
+            elif handler_names is not None and handler.spec.name is None:
+                # Skip handlers without names when filtering is requested
+                continue
+
             queue_name = f"{handler.message_type.MESSAGE_TOPIC}.{handler.instance_callable.__module__}.{handler.instance_callable.__qualname__}"
             routing_key = f"{handler.message_type.MESSAGE_TOPIC}.#"
+
+            # Force delete queue if requested
+            if force:
+                await RabbitmqUtils.delete_queue(channel, queue_name)
 
             queue = await RabbitmqUtils.declare_queue(
                 channel=channel, queue_name=queue_name, passive=passive_declare
@@ -203,6 +244,10 @@ async def declare_worker_v2_infrastructure(
         for scheduled_action in scheduled_actions:
             queue_name = f"{scheduled_action.callable.__module__}.{scheduled_action.callable.__qualname__}"
             routing_key = queue_name
+
+            # Force delete queue if requested
+            if force:
+                await RabbitmqUtils.delete_queue(channel, queue_name)
 
             queue = await RabbitmqUtils.declare_queue(
                 channel=channel, queue_name=queue_name, passive=passive_declare
@@ -220,6 +265,8 @@ async def declare_scheduler_v2_infrastructure(
     broker_url: str,
     app: Microservice,
     passive_declare: bool = False,
+    scheduler_names: set[str] | None = None,
+    force: bool = False,
 ) -> None:
     """
     Declare the infrastructure (exchanges and queues) for scheduler v2.
@@ -245,6 +292,10 @@ async def declare_scheduler_v2_infrastructure(
     connection = await aio_pika.connect(broker_url)
     channel = await connection.channel()
 
+    # Force delete exchange if requested
+    if force:
+        await RabbitmqUtils.delete_exchange(channel, exchange)
+
     # Declare exchange for scheduler
     await channel.declare_exchange(
         name=exchange,
@@ -269,13 +320,29 @@ async def declare_scheduler_v2_infrastructure(
         instance: Any = container.get_by_type(instance_type)
         factory = controller.get_messagebus_factory()
         _, actions = factory(instance)
+
+        # Filter scheduled actions by name if specified
+        if scheduler_names is not None:
+            filtered_actions: SCHEDULED_ACTION_DATA_SET = set()
+            for action in actions:
+                # Include actions that have a name and it's in the provided set
+                if action.spec.name and action.spec.name in scheduler_names:
+                    filtered_actions.add(action)
+                # Skip actions without names when filtering is active
+            actions = filtered_actions
+
         scheduled_actions.extend(actions)
 
     for scheduled_action in scheduled_actions:
         queue_name = ScheduledAction.get_function_id(scheduled_action.callable)
-        queue = await channel.declare_queue(
-            name=queue_name,
-            durable=True,
+
+        # Force delete queue if requested
+        if force:
+            await RabbitmqUtils.delete_queue(channel, queue_name)
+
+        queue = await RabbitmqUtils.declare_scheduler_queue(
+            channel=channel,
+            queue_name=queue_name,
             passive=passive_declare,
         )
         await queue.bind(
@@ -328,6 +395,11 @@ def cli() -> None:
     is_flag=True,
     default=False,
 )
+@click.option(
+    "--handlers",
+    type=str,
+    help="Comma-separated list of handler names to listen to. If not specified, all handlers will be used.",
+)
 def worker(
     app_path: str,
     url: str,
@@ -336,6 +408,7 @@ def worker(
     exchange: str,
     prefetch_count: int,
     passive_declare: bool,
+    handlers: str | None,
 ) -> None:
 
     app = find_microservice_by_module_path(app_path)
@@ -362,6 +435,11 @@ def worker(
 
     url = parsed_url.geturl()
 
+    # Parse handler names if provided
+    handler_names: set[str] | None = None
+    if handlers:
+        handler_names = {name.strip() for name in handlers.split(",") if name.strip()}
+
     config = worker_v1.AioPikaWorkerConfig(
         url=url,
         exchange=exchange,
@@ -370,6 +448,7 @@ def worker(
 
     worker_v1.MessageBusWorker(app, config=config).start_sync(
         passive_declare=passive_declare,
+        handler_names=handler_names,
     )
 
 
@@ -389,14 +468,27 @@ def worker(
     type=str,
     envvar="BACKEND_URL",
 )
-def worker_v2(app_path: str, broker_url: str, backend_url: str) -> None:
+@click.option(
+    "--handlers",
+    type=str,
+    help="Comma-separated list of handler names to listen to. If not specified, all handlers will be used.",
+)
+def worker_v2(
+    app_path: str, broker_url: str, backend_url: str, handlers: str | None
+) -> None:
 
     app = find_microservice_by_module_path(app_path)
+
+    # Parse handler names if provided
+    handler_names: set[str] | None = None
+    if handlers:
+        handler_names = {name.strip() for name in handlers.split(",") if name.strip()}
 
     worker_v2_mod.MessageBusWorker(
         app=app,
         broker_url=broker_url,
         backend_url=backend_url,
+        handler_names=handler_names,
     ).start_sync()
 
 
@@ -449,13 +541,26 @@ def server(app_path: str, host: str, port: int) -> None:
     type=int,
     default=1,
 )
+@click.option(
+    "--schedulers",
+    type=str,
+    help="Comma-separated list of scheduler names to run (only run schedulers with these names)",
+)
 def scheduler(
     app_path: str,
     interval: int,
+    schedulers: str | None = None,
 ) -> None:
     app = find_microservice_by_module_path(app_path)
 
-    Scheduler(app, interval=interval).run()
+    # Parse scheduler names if provided
+    scheduler_names: set[str] | None = None
+    if schedulers:
+        scheduler_names = {
+            name.strip() for name in schedulers.split(",") if name.strip()
+        }
+
+    Scheduler(app, interval=interval, scheduler_names=scheduler_names).run()
 
 
 @cli.command()
@@ -479,19 +584,34 @@ def scheduler(
     type=str,
     required=True,
 )
+@click.option(
+    "--schedulers",
+    type=str,
+    help="Comma-separated list of scheduler names to run (only run schedulers with these names)",
+)
 def scheduler_v2(
     interval: int,
     broker_url: str,
     backend_url: str,
     app_path: str,
+    schedulers: str | None = None,
 ) -> None:
 
     app = find_microservice_by_module_path(app_path)
+
+    # Parse scheduler names if provided
+    scheduler_names: set[str] | None = None
+    if schedulers:
+        scheduler_names = {
+            name.strip() for name in schedulers.split(",") if name.strip()
+        }
+
     scheduler = SchedulerV2(
         app=app,
         interval=interval,
         backend_url=backend_url,
         broker_url=broker_url,
+        scheduler_names=scheduler_names,
     )
     scheduler.run()
 
@@ -740,11 +860,24 @@ def gen_entity(entity_name: str, file_path: StreamWriter) -> None:
     default=False,
     help="Use passive declarations (check if infrastructure exists without creating it)",
 )
+@click.option(
+    "--handlers",
+    type=str,
+    help="Comma-separated list of handler names to declare queues for. If not specified, all handlers will be declared.",
+)
+@click.option(
+    "--force",
+    is_flag=True,
+    default=False,
+    help="Force recreation by deleting existing exchanges and queues before declaring them",
+)
 def declare_queues_v1(
     app_path: str,
     broker_url: str | None,
     exchange: str,
     passive_declare: bool,
+    handlers: str | None,
+    force: bool,
 ) -> None:
     """
     Declare RabbitMQ infrastructure (exchanges and queues) for worker v1.
@@ -779,13 +912,20 @@ def declare_queues_v1(
             )
             return
 
+        # Parse handler names if provided
+        handler_names: set[str] | None = None
+        if handlers:
+            handler_names = {
+                name.strip() for name in handlers.split(",") if name.strip()
+            }
+
         click.echo(
             f"→ Declaring worker v1 infrastructure (URL: {broker_url}, Exchange: {exchange})"
         )
 
         try:
             await declare_worker_infrastructure(
-                broker_url, exchange, app, passive_declare
+                broker_url, exchange, app, passive_declare, handler_names, force
             )
             click.echo("✓ Worker v1 infrastructure declared successfully!")
         except Exception as e:
@@ -821,11 +961,30 @@ def declare_queues_v1(
     default=False,
     help="Use passive declarations (check if infrastructure exists without creating it)",
 )
+@click.option(
+    "--handlers",
+    type=str,
+    help="Comma-separated list of handler names to declare queues for. If not specified, all handlers will be declared.",
+)
+@click.option(
+    "--schedulers",
+    type=str,
+    help="Comma-separated list of scheduler names to declare queues for. If not specified, all schedulers will be declared.",
+)
+@click.option(
+    "--force",
+    is_flag=True,
+    default=False,
+    help="Force recreation by deleting existing exchanges and queues before declaring them",
+)
 def declare_queues_v2(
     app_path: str,
     broker_url: str | None,
     exchange: str,
     passive_declare: bool,
+    handlers: str | None,
+    schedulers: str | None,
+    force: bool,
 ) -> None:
     """
     Declare RabbitMQ infrastructure (exchanges and queues) for worker v2 and scheduler v2.
@@ -860,6 +1019,20 @@ def declare_queues_v2(
             )
             return
 
+        # Parse handler names if provided
+        handler_names: set[str] | None = None
+        if handlers:
+            handler_names = {
+                name.strip() for name in handlers.split(",") if name.strip()
+            }
+
+        # Parse scheduler names if provided
+        scheduler_names: set[str] | None = None
+        if schedulers:
+            scheduler_names = {
+                name.strip() for name in schedulers.split(",") if name.strip()
+            }
+
         # For v2, create the broker URL with exchange parameter
         v2_broker_url = f"{broker_url}?exchange={exchange}"
 
@@ -868,9 +1041,11 @@ def declare_queues_v2(
 
         try:
             await asyncio.gather(
-                declare_worker_v2_infrastructure(v2_broker_url, app, passive_declare),
+                declare_worker_v2_infrastructure(
+                    v2_broker_url, app, passive_declare, handler_names, force
+                ),
                 declare_scheduler_v2_infrastructure(
-                    v2_broker_url, app, passive_declare
+                    v2_broker_url, app, passive_declare, scheduler_names, force
                 ),
             )
             click.echo(
