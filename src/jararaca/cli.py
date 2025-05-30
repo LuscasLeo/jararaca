@@ -8,23 +8,21 @@ import time
 from codecs import StreamWriter
 from pathlib import Path
 from typing import Any
-from urllib.parse import parse_qs, urlparse, urlunsplit
+from urllib.parse import parse_qs, urlparse
 
 import aio_pika
 import click
 import uvicorn
 from mako.template import Template
 
-from jararaca.messagebus import worker as worker_v1
-from jararaca.messagebus import worker_v2 as worker_v2_mod
+from jararaca.messagebus import worker_v2 as worker_mod
 from jararaca.messagebus.decorators import MessageBusController, MessageHandler
 from jararaca.microservice import Microservice
 from jararaca.presentation.http_microservice import HttpMicroservice
 from jararaca.presentation.server import create_http_server
 from jararaca.reflect.controller_inspect import inspect_controller
 from jararaca.scheduler.decorators import ScheduledAction
-from jararaca.scheduler.scheduler import Scheduler
-from jararaca.scheduler.scheduler_v2 import SchedulerV2
+from jararaca.scheduler.scheduler_v2 import SchedulerV2 as Scheduler
 from jararaca.tools.typescript.interface_parser import (
     write_microservice_to_typescript_interface,
 )
@@ -187,37 +185,21 @@ def cli() -> None:
 @click.argument(
     "app_path",
     type=str,
+    envvar="APP_PATH",
 )
 @click.option(
-    "--url",
+    "--broker-url",
     type=str,
     envvar="BROKER_URL",
+    required=True,
+    help="The URL for the message broker",
 )
 @click.option(
-    "--username",
+    "--backend-url",
     type=str,
-    default=None,
-)
-@click.option(
-    "--password",
-    type=str,
-    default=None,
-)
-@click.option(
-    "--exchange",
-    type=str,
-    default="jararaca_ex",
-)
-@click.option(
-    "--prefetch-count",
-    type=int,
-    default=1,
-)
-@click.option(
-    "--passive-declare",
-    is_flag=True,
-    default=False,
-    help="[DEPRECATED] Use passive declarations (check if infrastructure exists without creating it)",
+    envvar="BACKEND_URL",
+    required=True,
+    help="The URL for the message broker backend",
 )
 @click.option(
     "--handlers",
@@ -225,81 +207,9 @@ def cli() -> None:
     help="Comma-separated list of handler names to listen to. If not specified, all handlers will be used.",
 )
 def worker(
-    app_path: str,
-    url: str,
-    username: str | None,
-    password: str | None,
-    exchange: str,
-    prefetch_count: int,
-    handlers: str | None,
-    passive_declare: bool,
-) -> None:
-
-    app = find_microservice_by_module_path(app_path)
-
-    parsed_url = urlparse(url)
-
-    if password is not None:
-        parsed_url = urlparse(
-            urlunsplit(
-                parsed_url._replace(
-                    netloc=f"{parsed_url.username or ''}:{password}@{parsed_url.netloc}"
-                )
-            )
-        )
-
-    if username is not None:
-        parsed_url = urlparse(
-            urlunsplit(
-                parsed_url._replace(
-                    netloc=f"{username}{':%s' % password if password is not None else ''}@{parsed_url.netloc}"
-                )
-            )
-        )
-
-    url = parsed_url.geturl()
-
-    # Parse handler names if provided
-    handler_names: set[str] | None = None
-    if handlers:
-        handler_names = {name.strip() for name in handlers.split(",") if name.strip()}
-
-    config = worker_v1.AioPikaWorkerConfig(
-        url=url,
-        exchange=exchange,
-        prefetch_count=prefetch_count,
-    )
-
-    worker_v1.MessageBusWorker(app, config=config).start_sync(
-        handler_names=handler_names,
-    )
-
-
-@cli.command()
-@click.argument(
-    "app_path",
-    type=str,
-    envvar="APP_PATH",
-)
-@click.option(
-    "--broker-url",
-    type=str,
-    envvar="BROKER_URL",
-)
-@click.option(
-    "--backend-url",
-    type=str,
-    envvar="BACKEND_URL",
-)
-@click.option(
-    "--handlers",
-    type=str,
-    help="Comma-separated list of handler names to listen to. If not specified, all handlers will be used.",
-)
-def worker_v2(
     app_path: str, broker_url: str, backend_url: str, handlers: str | None
 ) -> None:
-
+    """Start a message bus worker that processes asynchronous messages from a message queue."""
     app = find_microservice_by_module_path(app_path)
 
     # Parse handler names if provided
@@ -307,7 +217,7 @@ def worker_v2(
     if handlers:
         handler_names = {name.strip() for name in handlers.split(",") if name.strip()}
 
-    worker_v2_mod.MessageBusWorker(
+    worker_mod.MessageBusWorker(
         app=app,
         broker_url=broker_url,
         backend_url=backend_url,
@@ -363,38 +273,6 @@ def server(app_path: str, host: str, port: int) -> None:
     "--interval",
     type=int,
     default=1,
-)
-@click.option(
-    "--schedulers",
-    type=str,
-    help="Comma-separated list of scheduler names to run (only run schedulers with these names)",
-)
-def scheduler(
-    app_path: str,
-    interval: int,
-    schedulers: str | None = None,
-) -> None:
-    app = find_microservice_by_module_path(app_path)
-
-    # Parse scheduler names if provided
-    scheduler_names: set[str] | None = None
-    if schedulers:
-        scheduler_names = {
-            name.strip() for name in schedulers.split(",") if name.strip()
-        }
-
-    Scheduler(app, interval=interval, scheduler_names=scheduler_names).run()
-
-
-@cli.command()
-@click.argument(
-    "app_path",
-    type=str,
-)
-@click.option(
-    "--interval",
-    type=int,
-    default=1,
     required=True,
 )
 @click.option(
@@ -412,7 +290,7 @@ def scheduler(
     type=str,
     help="Comma-separated list of scheduler names to run (only run schedulers with these names)",
 )
-def scheduler_v2(
+def scheduler(
     interval: int,
     broker_url: str,
     backend_url: str,
@@ -429,7 +307,7 @@ def scheduler_v2(
             name.strip() for name in schedulers.split(",") if name.strip()
         }
 
-    scheduler = SchedulerV2(
+    scheduler = Scheduler(
         app=app,
         interval=interval,
         backend_url=backend_url,
