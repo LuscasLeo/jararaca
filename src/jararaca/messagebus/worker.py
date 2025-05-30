@@ -118,13 +118,14 @@ class AioPikaMicroserviceConsumer:
 
             self.incoming_map[queue_name] = handler
 
-            queue: aio_pika.abc.AbstractQueue = await channel.declare_queue(
-                passive=passive_declare,
-                name=queue_name,
-                arguments={
-                    "x-dead-letter-exchange": dlx.name,
-                    "x-dead-letter-routing-key": dlq.name,
-                },
+            queue: aio_pika.abc.AbstractQueue = (
+                await RabbitmqUtils.declare_worker_v1_queue(
+                    channel=channel,
+                    queue_name=queue_name,
+                    dlx_name=dlx.name,
+                    dlq_name=dlq.name,
+                    passive=passive_declare,
+                )
             )
 
             await queue.bind(exchange=main_ex, routing_key=routing_key)
@@ -337,7 +338,9 @@ class MessageBusWorker:
             raise RuntimeError("Consumer not started")
         return self._consumer
 
-    async def start_async(self, passive_declare: bool) -> None:
+    async def start_async(
+        self, passive_declare: bool, handler_names: set[str] | None = None
+    ) -> None:
         all_message_handlers_set: MESSAGE_HANDLER_DATA_SET = set()
         async with self.lifecycle():
             for instance_type in self.app.controllers:
@@ -356,6 +359,15 @@ class MessageBusWorker:
                 for handler_data in handlers:
                     message_type = handler_data.spec.message_type
                     topic = message_type.MESSAGE_TOPIC
+
+                    # Filter handlers by name if specified
+                    if handler_names is not None and handler_data.spec.name is not None:
+                        if handler_data.spec.name not in handler_names:
+                            continue
+                    elif handler_names is not None and handler_data.spec.name is None:
+                        # Skip handlers without names when filtering is requested
+                        continue
+
                     if (
                         topic in message_handler_data_map
                         and message_type.MESSAGE_TYPE == "task"
@@ -376,7 +388,9 @@ class MessageBusWorker:
 
             await consumer.consume(passive_declare=passive_declare)
 
-    def start_sync(self, passive_declare: bool) -> None:
+    def start_sync(
+        self, passive_declare: bool, handler_names: set[str] | None = None
+    ) -> None:
 
         def on_shutdown(loop: asyncio.AbstractEventLoop) -> None:
             logger.info("Shutting down")
@@ -386,7 +400,11 @@ class MessageBusWorker:
             runner.get_loop().add_signal_handler(
                 signal.SIGINT, on_shutdown, runner.get_loop()
             )
-            runner.run(self.start_async(passive_declare=passive_declare))
+            runner.run(
+                self.start_async(
+                    passive_declare=passive_declare, handler_names=handler_names
+                )
+            )
 
 
 class AioPikaMessageBusController(BusMessageController):

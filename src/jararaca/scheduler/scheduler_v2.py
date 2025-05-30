@@ -31,12 +31,13 @@ from jararaca.scheduler.decorators import (
     get_type_scheduled_actions,
 )
 from jararaca.scheduler.types import DelayedMessageData
+from jararaca.utils.rabbitmq_utils import RabbitmqUtils
 
 logger = logging.getLogger(__name__)
 
 
 def extract_scheduled_actions(
-    app: Microservice, container: Container
+    app: Microservice, container: Container, scheduler_names: set[str] | None = None
 ) -> list[ScheduledActionData]:
     scheduled_actions: list[ScheduledActionData] = []
     for controllers in app.controllers:
@@ -44,6 +45,17 @@ def extract_scheduled_actions(
         controller_instance: Any = container.get_by_type(controllers)
 
         controller_scheduled_actions = get_type_scheduled_actions(controller_instance)
+
+        # Filter scheduled actions by name if scheduler_names is provided
+        if scheduler_names is not None:
+            filtered_actions = []
+            for action in controller_scheduled_actions:
+                # Include actions that have a name and it's in the provided set
+                if action.spec.name and action.spec.name in scheduler_names:
+                    filtered_actions.append(action)
+                # Skip actions without names when filtering is active
+            controller_scheduled_actions = filtered_actions
+
         scheduled_actions.extend(controller_scheduled_actions)
 
     return scheduled_actions
@@ -187,9 +199,10 @@ class RabbitMQBrokerDispatcher(MessageBrokerDispatcher):
             )
 
             for sched_act_data in scheduled_actions:
-                queue = await channel.declare_queue(
-                    name=ScheduledAction.get_function_id(sched_act_data.callable),
-                    durable=True,
+                queue = await RabbitmqUtils.declare_scheduler_queue(
+                    channel=channel,
+                    queue_name=ScheduledAction.get_function_id(sched_act_data.callable),
+                    passive=False,
                 )
 
                 await queue.bind(
@@ -226,6 +239,7 @@ class SchedulerV2:
         interval: int,
         broker_url: str,
         backend_url: str,
+        scheduler_names: set[str] | None = None,
     ) -> None:
         self.app = app
 
@@ -237,6 +251,7 @@ class SchedulerV2:
         )
 
         self.interval = interval
+        self.scheduler_names = scheduler_names
         self.container = Container(self.app)
         self.uow_provider = UnitOfWorkContextProvider(app, self.container)
 
@@ -262,7 +277,9 @@ class SchedulerV2:
         """
         async with self.lifecycle():
 
-            scheduled_actions = extract_scheduled_actions(self.app, self.container)
+            scheduled_actions = extract_scheduled_actions(
+                self.app, self.container, self.scheduler_names
+            )
 
             await self.broker.initialize(scheduled_actions)
 

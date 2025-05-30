@@ -34,7 +34,7 @@ class SchedulerConfig:
 
 
 def extract_scheduled_actions(
-    app: Microservice, container: Container
+    app: Microservice, container: Container, scheduler_names: set[str] | None = None
 ) -> list[ScheduledActionData]:
     scheduled_actions: list[ScheduledActionData] = []
     for controllers in app.controllers:
@@ -42,6 +42,17 @@ def extract_scheduled_actions(
         controller_instance: Any = container.get_by_type(controllers)
 
         controller_scheduled_actions = get_type_scheduled_actions(controller_instance)
+
+        # Filter scheduled actions by name if scheduler_names is provided
+        if scheduler_names is not None:
+            filtered_actions = []
+            for action in controller_scheduled_actions:
+                # Include actions that have a name and it's in the provided set
+                if action.spec.name and action.spec.name in scheduler_names:
+                    filtered_actions.append(action)
+                # Skip actions without names when filtering is active
+            controller_scheduled_actions = filtered_actions
+
         scheduled_actions.extend(controller_scheduled_actions)
 
     return scheduled_actions
@@ -59,10 +70,12 @@ class Scheduler:
         self,
         app: Microservice,
         interval: int,
+        scheduler_names: set[str] | None = None,
     ) -> None:
         self.app = app
 
         self.interval = interval
+        self.scheduler_names = scheduler_names
         self.container = Container(self.app)
         self.uow_provider = UnitOfWorkContextProvider(app, self.container)
 
@@ -146,7 +159,9 @@ class Scheduler:
         async def run_scheduled_actions() -> None:
 
             async with self.lifceycle():
-                scheduled_actions = extract_scheduled_actions(self.app, self.container)
+                scheduled_actions = extract_scheduled_actions(
+                    self.app, self.container, self.scheduler_names
+                )
 
                 while True:
                     for action in scheduled_actions:
