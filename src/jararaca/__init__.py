@@ -79,7 +79,6 @@ if TYPE_CHECKING:
     )
     from .messagebus.message import Message, MessageOf
     from .messagebus.publisher import use_publisher
-    from .messagebus.worker import MessageBusWorker
     from .microservice import (
         Microservice,
         use_app_context,
@@ -215,7 +214,6 @@ if TYPE_CHECKING:
         "AIOSqlAlchemySessionInterceptor",
         "AIOSQAConfig",
         "create_http_server",
-        "MessageBusWorker",
         "Container",
         "WebSocketInterceptor",
         "use_session",
@@ -367,7 +365,6 @@ _dynamic_imports: "dict[str, tuple[str, str, str | None]]" = {
         None,
     ),
     "create_http_server": (__SPEC_PARENT__, "presentation.server", None),
-    "MessageBusWorker": (__SPEC_PARENT__, "messagebus.worker", None),
     "Container": (__SPEC_PARENT__, "di", None),
     "WebSocketInterceptor": (
         __SPEC_PARENT__,

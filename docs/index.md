@@ -33,25 +33,9 @@ Starts a message bus worker that processes asynchronous messages from a message 
 
 **Options:**
 
-- `--url`: AMQP URL (default: "amqp://guest:guest@localhost/")
-- `--username`: AMQP username (optional)
-- `--password`: AMQP password (optional)
-- `--exchange`: Exchange name (default: "jararaca_ex")
-- `--queue`: Queue name (default: "jararaca_q")
-- `--prefetch-count`: Number of messages to prefetch (default: 1)
-
-### `worker_v2` - Enhanced Message Bus Worker
-
-```bash
-jararaca worker_v2 APP_PATH [OPTIONS]
-```
-
-Starts an enhanced version of the message bus worker with improved backend support.
-
-**Options:**
-
 - `--broker-url`: The URL for the message broker (required)
 - `--backend-url`: The URL for the message broker backend (required)
+- `--handlers`: Comma-separated list of handler names to listen to (optional)
 
 ### `server` - HTTP Server
 
