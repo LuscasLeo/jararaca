@@ -332,11 +332,16 @@ class RabbitmqUtils:
     ) -> AbstractQueue:
         """
         Declare a scheduler queue with simple durable configuration.
+        The queue has a max length of 1 to ensure only one scheduled task
+        is processed at a time.
         """
         return await channel.declare_queue(
             name=queue_name,
             durable=True,
             passive=passive,
+            arguments={
+                "x-max-length": 1,
+            },
         )
 
     @classmethod
