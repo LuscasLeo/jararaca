@@ -64,6 +64,7 @@ if TYPE_CHECKING:
         RestClient,
         RouteHttpErrorHandler,
         RPCRequestNetworkError,
+        RPCUnhandleError,
     )
 
     from .core.providers import ProviderSpec, Token
@@ -154,6 +155,7 @@ if TYPE_CHECKING:
         "retry",
         "retry_later",
         "RPCRequestNetworkError",
+        "RPCUnhandleError",
         "FILTER_SORT_ENTITY_ATTR_MAP",
         "FilterModel",
         "SortFilterRunner",
@@ -284,6 +286,7 @@ _dynamic_imports: "dict[str, tuple[str, str, str | None]]" = {
     "retry": (__SPEC_PARENT__, "messagebus.bus_message_controller", None),
     "retry_later": (__SPEC_PARENT__, "messagebus.bus_message_controller", None),
     "RPCRequestNetworkError": (__SPEC_PARENT__, "rpc.http.decorators", None),
+    "RPCUnhandleError": (__SPEC_PARENT__, "rpc.http.decorators", None),
     "FILTER_SORT_ENTITY_ATTR_MAP": (__SPEC_PARENT__, "persistence.sort_filter", None),
     "FilterModel": (__SPEC_PARENT__, "persistence.sort_filter", None),
     "SortFilterRunner": (__SPEC_PARENT__, "persistence.sort_filter", None),
