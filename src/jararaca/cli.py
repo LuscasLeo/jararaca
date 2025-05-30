@@ -15,14 +15,14 @@ import click
 import uvicorn
 from mako.template import Template
 
-from jararaca.messagebus import worker_v2 as worker_mod
+from jararaca.messagebus import worker as worker_mod
 from jararaca.messagebus.decorators import MessageBusController, MessageHandler
 from jararaca.microservice import Microservice
 from jararaca.presentation.http_microservice import HttpMicroservice
 from jararaca.presentation.server import create_http_server
 from jararaca.reflect.controller_inspect import inspect_controller
 from jararaca.scheduler.decorators import ScheduledAction
-from jararaca.scheduler.scheduler_v2 import SchedulerV2 as Scheduler
+from jararaca.scheduler.scheduler import SchedulerV2 as Scheduler
 from jararaca.tools.typescript.interface_parser import (
     write_microservice_to_typescript_interface,
 )
