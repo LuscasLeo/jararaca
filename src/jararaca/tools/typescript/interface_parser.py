@@ -406,6 +406,7 @@ export type ResponseType =
 export interface HttpBackendRequest {
   method: string;
   path: string;
+  pathParams: { [key: string]: string };
   headers: { [key: string]: string };
   query: { [key: string]: unknown };
   body: unknown;
@@ -543,6 +544,16 @@ def write_rest_controller_to_typescript_interface(
             )
             class_buffer.write(f"\t\t\tpath: `/{final_path}`,\n")
 
+            # Sort path params
+            path_params = sorted(
+                [param for param in arg_params_spec if param.type_ == "path"],
+                key=lambda x: x.name,
+            )
+            class_buffer.write("\t\t\tpathParams: {\n")
+            for param in path_params:
+                class_buffer.write(f'\t\t\t\t"{param.name}": {param.name},\n')
+            class_buffer.write("\t\t\t},\n")
+
             # Sort headers
             header_params = sorted(
                 [param for param in arg_params_spec if param.type_ == "header"],
@@ -593,7 +604,7 @@ class HttpParemeterSpec:
 
 def parse_path_with_params(path: str, parameters: list[HttpParemeterSpec]) -> str:
     for parameter in parameters:
-        path = path.replace(f"{{{parameter.name}}}", f"${{{parameter.name}}}")
+        path = path.replace(f"{{{parameter.name}}}", f":{parameter.name}")
     return path
 
 
