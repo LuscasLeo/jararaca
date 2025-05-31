@@ -97,6 +97,9 @@ class MessageBusConsumer(ABC):
 
     def shutdown(self) -> None: ...
 
+    async def close(self) -> None:
+        """Close all resources related to the consumer"""
+
 
 class AioPikaMicroserviceConsumer(MessageBusConsumer):
     def __init__(
@@ -117,46 +120,57 @@ class AioPikaMicroserviceConsumer(MessageBusConsumer):
         self.shutdown_event = asyncio.Event()
         self.lock = asyncio.Lock()
         self.tasks: set[asyncio.Task[Any]] = set()
+        self.connection: aio_pika.abc.AbstractConnection | None = None
+        self.channels: dict[str, aio_pika.abc.AbstractChannel] = {}
 
     async def consume(self) -> None:
 
-        connection = await aio_pika.connect(self.config.url)
+        self.connection = await aio_pika.connect(self.config.url)
 
-        channel = await connection.channel()
+        # Create a main channel just for checking infrastructure
+        main_channel = await self.connection.channel()
 
-        await channel.set_qos(prefetch_count=self.config.prefetch_count)
-
-        # Get existing exchange and queues
+        # Get existing exchange and queues to verify infrastructure is in place
         try:
             await RabbitmqUtils.get_main_exchange(
-                channel=channel,
+                channel=main_channel,
                 exchange_name=self.config.exchange,
             )
 
-            await RabbitmqUtils.get_dl_exchange(channel=channel)
-            await RabbitmqUtils.get_dl_queue(channel=channel)
+            await RabbitmqUtils.get_dl_exchange(channel=main_channel)
+            await RabbitmqUtils.get_dl_queue(channel=main_channel)
         except (ChannelNotFoundEntity, ChannelClosed, AMQPError) as e:
             logger.critical(
                 f"Required exchange or queue infrastructure not found."
                 f"Please use the declare command first to create the required infrastructure. Error: {e}"
             )
             self.shutdown_event.set()
+            await main_channel.close()
+            await self.connection.close()
             return
 
-        for handler in self.message_handler_set:
+        # Close the main channel as we'll create separate channels for each queue
+        await main_channel.close()
 
+        # Setup message handlers
+        for handler in self.message_handler_set:
             queue_name = f"{handler.message_type.MESSAGE_TOPIC}.{handler.instance_callable.__module__}.{handler.instance_callable.__qualname__}"
             routing_key = f"{handler.message_type.MESSAGE_TOPIC}.#"
 
             self.incoming_map[queue_name] = handler
 
             try:
+                # Create a dedicated channel for this queue
+                channel = await self.connection.channel()
+                await channel.set_qos(prefetch_count=self.config.prefetch_count)
+                self.channels[queue_name] = channel
+
                 queue = await RabbitmqUtils.get_queue(
                     channel=channel, queue_name=queue_name
                 )
             except (ChannelNotFoundEntity, ChannelClosed, AMQPError) as e:
                 logger.error(
-                    f"Queue '{queue_name}' not found. "
+                    f"Queue '{queue_name}' not found or channel error. "
                     f"Please use the declare command first to create the queue. Error: {e}"
                 )
                 continue
@@ -171,21 +185,25 @@ class AioPikaMicroserviceConsumer(MessageBusConsumer):
                 no_ack=handler.spec.auto_ack,
             )
 
-            logger.info(f"Consuming message handler {queue_name}")
+            logger.info(f"Consuming message handler {queue_name} on dedicated channel")
 
+        # Setup scheduled actions
         for scheduled_action in self.scheduled_actions:
-
             queue_name = f"{scheduled_action.callable.__module__}.{scheduled_action.callable.__qualname__}"
-
             routing_key = queue_name
 
             try:
+                # Create a dedicated channel for this queue
+                channel = await self.connection.channel()
+                await channel.set_qos(prefetch_count=self.config.prefetch_count)
+                self.channels[queue_name] = channel
+
                 queue = await RabbitmqUtils.get_queue(
                     channel=channel, queue_name=queue_name
                 )
             except (ChannelNotFoundEntity, ChannelClosed, AMQPError) as e:
                 logger.error(
-                    f"Scheduler queue '{queue_name}' not found. "
+                    f"Scheduler queue '{queue_name}' not found or channel error. "
                     f"Please use the declare command first to create the queue. Error: {e}"
                 )
                 continue
@@ -200,22 +218,108 @@ class AioPikaMicroserviceConsumer(MessageBusConsumer):
                 no_ack=True,
             )
 
-            logger.info(f"Consuming scheduler {queue_name}")
+            logger.info(f"Consuming scheduler {queue_name} on dedicated channel")
 
+        # Wait for shutdown signal
         await self.shutdown_event.wait()
         logger.info("Worker shutting down")
 
+        # Wait for all tasks to complete
         await self.wait_all_tasks_done()
 
-        await channel.close()
-        await connection.close()
+        # Close all channels and the connection
+        await self.close_channels_and_connection()
 
     async def wait_all_tasks_done(self) -> None:
+        if not self.tasks:
+            return
+
+        logger.info(f"Waiting for {len(self.tasks)} in-flight tasks to complete")
         async with self.lock:
-            await asyncio.gather(*self.tasks)
+            # Use gather with return_exceptions=True to ensure all tasks are awaited
+            # even if some raise exceptions
+            results = await asyncio.gather(*self.tasks, return_exceptions=True)
+
+            # Log any exceptions that occurred
+            for result in results:
+                if isinstance(result, Exception):
+                    logger.error(f"Task raised an exception during shutdown: {result}")
+
+    async def close_channels_and_connection(self) -> None:
+        """Close all channels and then the connection"""
+        # Close all channels
+        channel_close_tasks = []
+        for queue_name, channel in self.channels.items():
+            try:
+                if not channel.is_closed:
+                    logger.info(f"Closing channel for queue {queue_name}")
+                    channel_close_tasks.append(channel.close())
+                else:
+                    logger.info(f"Channel for queue {queue_name} already closed")
+            except Exception as e:
+                logger.error(
+                    f"Error preparing to close channel for queue {queue_name}: {e}"
+                )
+
+        # Wait for all channels to close (if any)
+        if channel_close_tasks:
+            try:
+                await asyncio.gather(*channel_close_tasks, return_exceptions=True)
+            except Exception as e:
+                logger.error(f"Error during channel closures: {e}")
+
+        # Clear channels dictionary
+        self.channels.clear()
+
+        # Close the connection
+        if self.connection:
+            try:
+                if not self.connection.is_closed:
+                    logger.info("Closing RabbitMQ connection")
+                    await self.connection.close()
+                else:
+                    logger.info("RabbitMQ connection already closed")
+            except Exception as e:
+                logger.error(f"Error closing RabbitMQ connection: {e}")
+            self.connection = None
 
     def shutdown(self) -> None:
+        """Signal for shutdown"""
+        logger.info("Initiating graceful shutdown")
         self.shutdown_event.set()
+
+    async def close(self) -> None:
+        """Implement MessageBusConsumer.close for cleanup"""
+        self.shutdown()
+        await self.wait_all_tasks_done()
+        await self.close_channels_and_connection()
+
+    async def get_channel(self, queue_name: str) -> aio_pika.abc.AbstractChannel | None:
+        """
+        Get the channel for a specific queue, or None if not found.
+        This helps with error handling when a channel might have been closed.
+        """
+        if queue_name not in self.channels:
+            logger.warning(f"No channel found for queue {queue_name}")
+            return None
+
+        try:
+            channel = self.channels[queue_name]
+            if channel.is_closed:
+                logger.warning(f"Channel for queue {queue_name} is closed")
+                # Attempt to recreate the channel if needed
+                if self.connection and not self.connection.is_closed:
+                    logger.info(f"Creating new channel for {queue_name}")
+                    self.channels[queue_name] = await self.connection.channel()
+                    await self.channels[queue_name].set_qos(
+                        prefetch_count=self.config.prefetch_count
+                    )
+                    return self.channels[queue_name]
+                return None
+            return channel
+        except Exception as e:
+            logger.error(f"Error accessing channel for queue {queue_name}: {e}")
+            return None
 
 
 def create_message_bus(
@@ -291,6 +395,15 @@ class ScheduledMessageHandlerCallback:
     ) -> None:
 
         if self.consumer.shutdown_event.is_set():
+            logger.info(
+                f"Shutdown in progress. Requeuing scheduled message for {self.queue_name}"
+            )
+            try:
+                await aio_pika_message.reject(requeue=True)
+            except Exception as e:
+                logger.error(
+                    f"Failed to requeue scheduled message during shutdown: {e}"
+                )
             return
 
         async with self.consumer.lock:
@@ -300,14 +413,27 @@ class ScheduledMessageHandlerCallback:
 
     def handle_message_consume_done(self, task: asyncio.Task[Any]) -> None:
         self.consumer.tasks.discard(task)
+        if task.cancelled():
+            logger.warning(f"Scheduled task for {self.queue_name} was cancelled")
+            return
+
+        if (error := task.exception()) is not None:
+            logger.exception(
+                f"Error processing scheduled action {self.queue_name}", exc_info=error
+            )
 
     async def handle_message(
         self, aio_pika_message: aio_pika.abc.AbstractIncomingMessage
     ) -> None:
 
         if self.consumer.shutdown_event.is_set():
-            logger.info("Shutdown event set. Rqueuing message")
-            await aio_pika_message.reject(requeue=True)
+            logger.info(f"Shutdown event set. Requeuing message for {self.queue_name}")
+            try:
+                await aio_pika_message.reject(requeue=True)
+                return
+            except Exception as e:
+                logger.error(f"Failed to requeue message during shutdown: {e}")
+                return
 
         sig = inspect.signature(self.scheduled_action.callable)
         if len(sig.parameters) == 1:
@@ -384,6 +510,13 @@ class MessageHandlerCallback:
         self, aio_pika_message: aio_pika.abc.AbstractIncomingMessage
     ) -> None:
         if self.consumer.shutdown_event.is_set():
+            logger.info(
+                f"Shutdown in progress. Requeuing message for {self.queue_name}"
+            )
+            try:
+                await aio_pika_message.reject(requeue=True)
+            except Exception as e:
+                logger.error(f"Failed to requeue message during shutdown: {e}")
             return
 
         async with self.consumer.lock:
@@ -394,10 +527,13 @@ class MessageHandlerCallback:
     def handle_message_consume_done(self, task: asyncio.Task[Any]) -> None:
         self.consumer.tasks.discard(task)
         if task.cancelled():
+            logger.warning(f"Task for queue {self.queue_name} was cancelled")
             return
 
         if (error := task.exception()) is not None:
-            logger.exception("Error processing message", exc_info=error)
+            logger.exception(
+                f"Error processing message for queue {self.queue_name}", exc_info=error
+            )
 
     async def __call__(
         self, aio_pika_message: aio_pika.abc.AbstractIncomingMessage
@@ -614,14 +750,23 @@ class MessageBusWorker:
     def start_sync(self) -> None:
 
         def on_shutdown(loop: asyncio.AbstractEventLoop) -> None:
-            logger.info("Shutting down")
-            self.consumer.shutdown()
+            logger.info("Shutting down - signal received")
+            # Schedule the shutdown to run in the event loop
+            asyncio.create_task(self._graceful_shutdown())
 
         with asyncio.Runner(loop_factory=uvloop.new_event_loop) as runner:
-            runner.get_loop().add_signal_handler(
-                signal.SIGINT, on_shutdown, runner.get_loop()
-            )
+            loop = runner.get_loop()
+            loop.add_signal_handler(signal.SIGINT, on_shutdown, loop)
+            # Add graceful shutdown handler for SIGTERM as well
+            loop.add_signal_handler(signal.SIGTERM, on_shutdown, loop)
             runner.run(self.start_async())
+
+    async def _graceful_shutdown(self) -> None:
+        """Handles graceful shutdown process"""
+        logger.info("Initiating graceful shutdown sequence")
+        # Use the comprehensive close method that handles shutdown, task waiting and connection cleanup
+        await self.consumer.close()
+        logger.info("Graceful shutdown completed")
 
 
 class AioPikaMessageBusController(BusMessageController):
