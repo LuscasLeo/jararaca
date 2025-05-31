@@ -455,12 +455,15 @@ jararaca worker APP_PATH [OPTIONS]
 
 Options:
 
-- `--url`: AMQP URL (default: "amqp://guest:guest@localhost/")
-- `--username`: AMQP username (optional)
-- `--password`: AMQP password (optional)
-- `--exchange`: Exchange name (default: "jararaca_ex")
-- `--queue`: Queue name (default: "jararaca_q")
-- `--prefetch-count`: Number of messages to prefetch (default: 1)
+- `--broker-url`: The URL for the message broker (required)
+- `--backend-url`: The URL for the message broker backend (required)
+- `--handlers`: Comma-separated list of handler names to listen to (optional)
+
+Example:
+
+```bash
+jararaca worker myapp.main:app --broker-url "amqp://guest:guest@localhost:5672/?exchange=jararaca" --backend-url "redis://localhost:6379"
+```
 
 ## Conclusion
 

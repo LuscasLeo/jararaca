@@ -12,22 +12,16 @@ The Jararaca scheduler allows you to:
 - Distribute scheduled tasks across multiple instances
 - Handle delayed message execution
 
-The scheduler has two implementations:
-1. **Basic Scheduler** - Simple scheduler for local execution
-2. **Enhanced Scheduler (V2)** - Distributed scheduler with improved backend support and message broker integration
+The scheduler is implemented through the BeatWorker which provides distributed task scheduling via a message broker:
 
 ```mermaid
 graph TD
-    A[Microservice] --> B[Scheduler System]
-    B --> C[Basic Scheduler]
-    B --> D[Enhanced Scheduler V2]
-
-    C --> E[Local Task Execution]
-    D --> F[Message Broker]
-    F --> G[Workers]
-    D --> H[Backend Store]
-    H --> I[Last Execution Time]
-    H --> J[Delayed Messages]
+    A[Microservice] --> B[BeatWorker]
+    B --> C[Message Broker]
+    B --> D[Backend Store]
+    C --> E[Message Processing]
+    D --> F[Last Execution Time]
+    D --> G[Delayed Messages]
 ```
 
 ## Using the Scheduler
@@ -73,31 +67,34 @@ Jararaca uses standard cron expressions for scheduling. Here are some examples:
 - `0 0 * * 0` - Run at midnight every Sunday
 - `0 0 1 * *` - Run at midnight on the first day of every month
 
-## Basic Scheduler Implementation
+## Using the BeatWorker Scheduler
 
-The basic scheduler is suitable for simpler applications where tasks run locally:
+The BeatWorker scheduler provides distributed task execution through a message broker:
 
 ```python
 from jararaca import Microservice, ScheduledAction
+from jararaca.scheduler.beat_worker import BeatWorker
 
 app = Microservice(
     # Your microservice configuration
 )
 
 # Run the scheduler
-from jararaca.scheduler.scheduler import Scheduler
-
-scheduler = Scheduler(app, interval=1)
-scheduler.run()
+beat_worker = BeatWorker(
+    app=app,
+    interval=1,
+    backend_url="redis://localhost:6379",
+    broker_url="amqp://guest:guest@localhost:5672/?exchange=jararaca",
+    scheduled_action_names=None  # Optional set of action names to run
+)
+beat_worker.run()
 ```
 
-## Enhanced Scheduler V2 Implementation
+You can also use the CLI command to run the scheduler:
 
-The V2 scheduler adds support for distributed execution and message broker integration, making it ideal for more complex applications:
-
-```python
-from jararaca import Microservice, ScheduledAction
-from jararaca.scheduler.scheduler_v2 import SchedulerV2
+```bash
+jararaca beat app_module:app --interval 1 --broker-url "amqp://guest:guest@localhost:5672/?exchange=jararaca" --backend-url "redis://localhost:6379"
+```
 
 app = Microservice(
     # Your microservice configuration

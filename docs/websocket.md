@@ -57,24 +57,38 @@ class WebSocketMessage(WebSocketMessageBase):
 
 ### 3. WebSocketConnectionManager
 
-Manages WebSocket connections, rooms, and message distribution:
+A Protocol that defines the interface for managing WebSocket connections:
 
+```python
+class WebSocketConnectionManager(Protocol):
+    async def broadcast(self, message: bytes) -> None: ...
+    async def send(self, rooms: list[str], message: WebSocketMessageBase) -> None: ...
+    async def join(self, rooms: list[str], websocket: WebSocket) -> None: ...
+    async def add_websocket(self, websocket: WebSocket) -> None: ...
+    async def remove_websocket(self, websocket: WebSocket) -> None: ...
+```
+
+The WebSocketConnectionManager:
 - Maintains a registry of active WebSocket connections
 - Groups connections into named rooms
 - Provides methods for broadcasting and sending targeted messages
 
-### 4. WebSocketConnectionBackend
+### 4. Context-based WebSocket Access
 
-A protocol defining the contract for backend implementations:
+Jararaca uses context variables to provide access to WebSocket functionality anywhere in your application:
 
 ```python
-class WebSocketConnectionBackend(Protocol):
-    async def broadcast(self, message: bytes) -> None: ...
-    async def send(self, rooms: list[str], message: bytes) -> None: ...
-    def configure(
-        self, broadcast: BroadcastFunc, send: SendFunc, shutdown_event: asyncio.Event
-    ) -> None: ...
-    async def shutdown(self) -> None: ...
+from jararaca.presentation.websocket.context import use_ws_manager, use_ws_message_sender
+
+# Send a message to specific rooms
+async def notify_users(message_data: dict, room_id: str):
+    message = UserNotificationMessage(**message_data)
+    await use_ws_message_sender().send([room_id], message)
+
+# Or directly from a WebSocketMessage instance
+async def send_update(update_data: dict, room_id: str):
+    message = SystemUpdateMessage(**update_data)
+    await message.send(room_id)
 ```
 
 ### 5. RedisWebSocketConnectionBackend

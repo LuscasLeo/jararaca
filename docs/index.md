@@ -9,9 +9,9 @@ Jararaca is a powerful Python microservice framework that provides a comprehensi
 - 📦 **Dependency Injection**: Flexible dependency injection system with interceptors
 - 📊 **Database Integration**: SQLAlchemy integration with async support
 - 📡 **Message Bus**: RabbitMQ integration for event-driven architecture
-- 🔒 **Authentication**: Built-in JWT authentication with token blacklisting
+- ⚡ **Retry Mechanism**: Robust retry system with exponential backoff for resilient operations
 - 🔍 **Query Operations**: Advanced query capabilities with pagination and filtering
-- ⏱️ **Scheduled Tasks**: Cron-based task scheduling
+- ⏱️ **Scheduled Tasks**: Distributed cron-based task scheduling with message broker integration
 
 ## Installation
 
@@ -43,11 +43,26 @@ Starts a message bus worker that processes asynchronous messages from a message 
 jararaca server APP_PATH [OPTIONS]
 ```
 
-#### Perfer `uvicorn` for production
-
 Starts a FastAPI HTTP server for your microservice.
 
+**Options:**
+
+- `--host`: Host to bind the server (default: "0.0.0.0")
+- `--port`: Port to bind the server (default: 8000)
+
+#### Alternative: Using `uvicorn` directly
+
+For production environments, you can create an ASGI application and run it with uvicorn:
+
 ```python
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.types import Lifespan
+
+from jararaca.presentation.http_microservice import HttpMicroservice
+from jararaca.presentation.server import create_http_server
+
+
 def fastapi_factory(lifespan: Lifespan[FastAPI]) -> FastAPI:
     app = FastAPI(
         lifespan=lifespan,
@@ -78,17 +93,10 @@ Then run the server with:
 uvicorn app_module:asgi_app
 ```
 
-Starts a FastAPI HTTP server for your microservice.
-
-**Options:**
-
-- `--host`: Host to bind the server (default: "0.0.0.0")
-- `--port`: Port to bind the server (default: 8000)
-
-### `scheduler` - Task Scheduler
+### `beat` - Task Scheduler
 
 ```bash
-jararaca scheduler APP_PATH [OPTIONS]
+jararaca beat APP_PATH [OPTIONS]
 ```
 
 Runs scheduled tasks defined in your application using cron expressions.
@@ -96,8 +104,9 @@ Runs scheduled tasks defined in your application using cron expressions.
 **Options:**
 
 - `--interval`: Polling interval in seconds (default: 1)
-
-### `scheduler_v2` - Enhanced Task Scheduler
+- `--broker-url`: The URL for the message broker (required)
+- `--backend-url`: The URL for the message broker backend (required)
+- `--actions`: Comma-separated list of action names to run (optional)
 
 ```bash
 jararaca scheduler_v2 APP_PATH [OPTIONS]
