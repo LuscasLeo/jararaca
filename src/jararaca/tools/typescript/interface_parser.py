@@ -603,8 +603,19 @@ class HttpParemeterSpec:
 
 
 def parse_path_with_params(path: str, parameters: list[HttpParemeterSpec]) -> str:
+    # Use a regular expression to match both simple parameters {param} and
+    # parameters with converters {param:converter}
+    import re
+
+    pattern = re.compile(r"{([^:}]+)(?::[^}]*)?}")
+
+    # For each parameter found in the path, replace it with :param format
     for parameter in parameters:
-        path = path.replace(f"{{{parameter.name}}}", f":{parameter.name}")
+        path = pattern.sub(
+            lambda m: f":{m.group(1)}" if m.group(1) == parameter.name else m.group(0),
+            path,
+        )
+
     return path
 
 
@@ -728,7 +739,9 @@ def extract_parameters(
                         )
                         mapped_types.update(rec_mapped_types)
                         parameters_list.extend(rec_parameters)
-                elif controller.path.find(f":{parameter_name}") != -1:
+                elif (
+                    re.search(f":{parameter_name}(?:/|$)", controller.path) is not None
+                ):
                     mapped_types.add(annotated_type)
                     parameters_list.append(
                         HttpParemeterSpec(
@@ -762,8 +775,9 @@ def extract_parameters(
                     )
                 )
             elif (
-                controller.path.find(f"{{{parameter_name}}}") != -1
-                or mapping.path.find(f"{{{parameter_name}}}") != -1
+                # Match both simple parameters {param} and parameters with converters {param:converter}
+                re.search(f"{{{parameter_name}(:.*?)?}}", controller.path) is not None
+                or re.search(f"{{{parameter_name}(:.*?)?}}", mapping.path) is not None
             ):
                 mapped_types.add(parameter_type)
                 parameters_list.append(
