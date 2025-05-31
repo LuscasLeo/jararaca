@@ -78,6 +78,7 @@ async def declare_worker_infrastructure(
     broker_url: str,
     app: Microservice,
     force: bool = False,
+    interactive_mode: bool = False,
 ) -> None:
     """
     Declare the infrastructure (exchanges and queues) for worker.
@@ -100,25 +101,38 @@ async def declare_worker_infrastructure(
     connection = await aio_pika.connect(broker_url)
     channel = await connection.channel()
 
-    # Force delete infrastructure if requested
-    if force:
-        click.echo(f"→ Force deleting existing infrastructure for exchange: {exchange}")
+    # Only force delete infrastructure if requested at the beginning
+    if force or (
+        interactive_mode
+        and click.confirm(f"Delete existing infrastructure for exchange: {exchange}?")
+    ):
+        click.echo(f"→ Deleting existing infrastructure for exchange: {exchange}")
         await RabbitmqUtils.delete_exchange(channel, exchange)
         await RabbitmqUtils.delete_exchange(channel, RabbitmqUtils.DEAD_LETTER_EXCHANGE)
         await RabbitmqUtils.delete_queue(channel, RabbitmqUtils.DEAD_LETTER_QUEUE)
 
-    await RabbitmqUtils.declare_main_exchange(
-        channel=channel,
-        exchange_name=exchange,
-        passive=not force,  # If force is True, we already deleted the exchange
-    )
+    try:
+        await RabbitmqUtils.declare_main_exchange(
+            channel=channel,
+            exchange_name=exchange,
+            passive=False,
+        )
 
-    dlx = await RabbitmqUtils.declare_dl_exchange(channel=channel, passive=not force)
-    dlq = await RabbitmqUtils.declare_dl_queue(channel=channel, passive=not force)
-    await dlq.bind(dlx, routing_key=RabbitmqUtils.DEAD_LETTER_EXCHANGE)
+        dlx = await RabbitmqUtils.declare_dl_exchange(channel=channel, passive=False)
+        dlq = await RabbitmqUtils.declare_dl_queue(channel=channel, passive=False)
+        await dlq.bind(dlx, routing_key=RabbitmqUtils.DEAD_LETTER_EXCHANGE)
+    except Exception as e:
+        click.echo(f"Error during exchange declaration: {e}")
+        if force or (
+            interactive_mode
+            and click.confirm("Error occurred. Recreate infrastructure?")
+        ):
+            await channel.close()
+            await connection.close()
+            raise
+        click.echo("Skipping main exchange declaration due to error")
 
     # Find all message handlers and scheduled actions
-
     for instance_type in app.controllers:
         controller_spec = MessageBusController.get_messagebus(instance_type)
         if controller_spec is None:
@@ -127,50 +141,50 @@ async def declare_worker_infrastructure(
         _, members = inspect_controller(instance_type)
 
         # Declare queues for message handlers
-        for name, member in members.items():
-
+        for _, member in members.items():
             message_handler = MessageHandler.get_message_incoming(
                 member.member_function
             )
             if message_handler is not None:
-
                 queue_name = f"{message_handler.message_type.MESSAGE_TOPIC}.{member.member_function.__module__}.{member.member_function.__qualname__}"
                 routing_key = f"{message_handler.message_type.MESSAGE_TOPIC}.#"
 
-                # Force delete queue if requested
-                if force:
-                    await RabbitmqUtils.delete_queue(channel, queue_name)
-
-                # Declare queue
-                queue = await RabbitmqUtils.declare_worker_queue(
-                    channel=channel, queue_name=queue_name, passive=not force
-                )
-                await queue.bind(exchange=exchange, routing_key=routing_key)
-                click.echo(
-                    f"✓ Declared message handler queue: {queue_name} (routing key: {routing_key})"
-                )
+                try:
+                    # Try to declare queue
+                    queue = await RabbitmqUtils.declare_worker_queue(
+                        channel=channel, queue_name=queue_name, passive=False
+                    )
+                    await queue.bind(exchange=exchange, routing_key=routing_key)
+                    click.echo(
+                        f"✓ Declared message handler queue: {queue_name} (routing key: {routing_key})"
+                    )
+                except Exception as e:
+                    click.echo(
+                        f"⚠ Skipping message handler queue {queue_name} due to error: {e}"
+                    )
+                    continue
 
             scheduled_action = ScheduledAction.get_scheduled_action(
                 member.member_function
             )
             if scheduled_action is not None:
-
-                # Declare queues for scheduled actions
-
                 queue_name = f"{member.member_function.__module__}.{member.member_function.__qualname__}"
                 routing_key = queue_name
 
-                # Force delete queue if requested
-                if force:
-                    await RabbitmqUtils.delete_queue(channel, queue_name)
-
-                queue = await RabbitmqUtils.declare_scheduled_action_queue(
-                    channel=channel, queue_name=queue_name, passive=not force
-                )
-                await queue.bind(exchange=exchange, routing_key=routing_key)
-                click.echo(
-                    f"✓ Declared scheduled action queue: {queue_name} (routing key: {routing_key})"
-                )
+                try:
+                    # Try to declare queue
+                    queue = await RabbitmqUtils.declare_scheduled_action_queue(
+                        channel=channel, queue_name=queue_name, passive=False
+                    )
+                    await queue.bind(exchange=exchange, routing_key=routing_key)
+                    click.echo(
+                        f"✓ Declared scheduled action queue: {queue_name} (routing key: {routing_key})"
+                    )
+                except Exception as e:
+                    click.echo(
+                        f"⚠ Skipping scheduled action queue {queue_name} due to error: {e}"
+                    )
+                    continue
 
     await channel.close()
     await connection.close()
