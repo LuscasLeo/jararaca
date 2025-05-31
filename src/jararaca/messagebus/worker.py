@@ -128,16 +128,16 @@ class AioPikaMicroserviceConsumer(MessageBusConsumer):
 
         # Get existing exchange and queues
         try:
-            exchange = await RabbitmqUtils.get_main_exchange(
+            await RabbitmqUtils.get_main_exchange(
                 channel=channel,
                 exchange_name=self.config.exchange,
             )
 
-            dlx = await RabbitmqUtils.get_dl_exchange(channel=channel)
-            dlq = await RabbitmqUtils.get_dl_queue(channel=channel)
+            await RabbitmqUtils.get_dl_exchange(channel=channel)
+            await RabbitmqUtils.get_dl_queue(channel=channel)
         except (ChannelNotFoundEntity, ChannelClosed, AMQPError) as e:
             logger.critical(
-                f"Required exchange or queue infrastructure not found and passive mode is enabled. "
+                f"Required exchange or queue infrastructure not found."
                 f"Please use the declare command first to create the required infrastructure. Error: {e}"
             )
             self.shutdown_event.set()
@@ -156,7 +156,7 @@ class AioPikaMicroserviceConsumer(MessageBusConsumer):
                 )
             except (ChannelNotFoundEntity, ChannelClosed, AMQPError) as e:
                 logger.error(
-                    f"Queue '{queue_name}' not found and passive mode is enabled. "
+                    f"Queue '{queue_name}' not found. "
                     f"Please use the declare command first to create the queue. Error: {e}"
                 )
                 continue
@@ -185,7 +185,7 @@ class AioPikaMicroserviceConsumer(MessageBusConsumer):
                 )
             except (ChannelNotFoundEntity, ChannelClosed, AMQPError) as e:
                 logger.error(
-                    f"Scheduler queue '{queue_name}' not found and passive mode is enabled. "
+                    f"Scheduler queue '{queue_name}' not found. "
                     f"Please use the declare command first to create the queue. Error: {e}"
                 )
                 continue
