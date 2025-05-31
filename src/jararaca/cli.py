@@ -7,7 +7,7 @@ import sys
 import time
 from codecs import StreamWriter
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 from urllib.parse import parse_qs, urlparse
 
 import aio_pika
@@ -421,25 +421,42 @@ def cli() -> None:
 @click.option(
     "--handlers",
     type=str,
+    envvar="HANDLERS",
     help="Comma-separated list of handler names to listen to. If not specified, all handlers will be used.",
 )
+@click.option(
+    "--reload",
+    is_flag=True,
+    envvar="RELOAD",
+    help="Enable auto-reload when Python files change.",
+)
+@click.option(
+    "--src-dir",
+    type=click.Path(exists=True, file_okay=False, dir_okay=True),
+    default="src",
+    envvar="SRC_DIR",
+    help="The source directory to watch for changes when --reload is enabled.",
+)
 def worker(
-    app_path: str, broker_url: str, backend_url: str, handlers: str | None
+    app_path: str,
+    broker_url: str,
+    backend_url: str,
+    handlers: str | None,
+    reload: bool,
+    src_dir: str,
 ) -> None:
     """Start a message bus worker that processes asynchronous messages from a message queue."""
-    app = find_microservice_by_module_path(app_path)
 
-    # Parse handler names if provided
-    handler_names: set[str] | None = None
-    if handlers:
-        handler_names = {name.strip() for name in handlers.split(",") if name.strip()}
-
-    worker_mod.MessageBusWorker(
-        app=app,
-        broker_url=broker_url,
-        backend_url=backend_url,
-        handler_names=handler_names,
-    ).start_sync()
+    if reload:
+        process_args = {
+            "app_path": app_path,
+            "broker_url": broker_url,
+            "backend_url": backend_url,
+            "handlers": handlers,
+        }
+        run_with_reload_watcher(process_args, run_worker_process, src_dir)
+    else:
+        run_worker_process(app_path, broker_url, backend_url, handlers)
 
 
 @cli.command()
@@ -485,27 +502,45 @@ def server(app_path: str, host: str, port: int) -> None:
 @click.argument(
     "app_path",
     type=str,
+    envvar="APP_PATH",
 )
 @click.option(
     "--interval",
     type=int,
     default=1,
     required=True,
+    envvar="INTERVAL",
 )
 @click.option(
     "--broker-url",
     type=str,
     required=True,
+    envvar="BROKER_URL",
 )
 @click.option(
     "--backend-url",
     type=str,
     required=True,
+    envvar="BACKEND_URL",
 )
 @click.option(
     "--actions",
     type=str,
+    envvar="ACTIONS",
     help="Comma-separated list of action names to run (only run actions with these names)",
+)
+@click.option(
+    "--reload",
+    is_flag=True,
+    envvar="RELOAD",
+    help="Enable auto-reload when Python files change.",
+)
+@click.option(
+    "--src-dir",
+    type=click.Path(exists=True, file_okay=False, dir_okay=True),
+    default="src",
+    envvar="SRC_DIR",
+    help="The source directory to watch for changes when --reload is enabled.",
 )
 def beat(
     interval: int,
@@ -513,23 +548,22 @@ def beat(
     backend_url: str,
     app_path: str,
     actions: str | None = None,
+    reload: bool = False,
+    src_dir: str = "src",
 ) -> None:
+    """Start a scheduler that dispatches scheduled actions to workers."""
 
-    app = find_microservice_by_module_path(app_path)
-
-    # Parse scheduler names if provided
-    scheduler_names: set[str] | None = None
-    if actions:
-        scheduler_names = {name.strip() for name in actions.split(",") if name.strip()}
-
-    beat_worker = BeatWorker(
-        app=app,
-        interval=interval,
-        backend_url=backend_url,
-        broker_url=broker_url,
-        scheduled_action_names=scheduler_names,
-    )
-    beat_worker.run()
+    if reload:
+        process_args = {
+            "app_path": app_path,
+            "interval": interval,
+            "broker_url": broker_url,
+            "backend_url": backend_url,
+            "actions": actions,
+        }
+        run_with_reload_watcher(process_args, run_beat_process, src_dir)
+    else:
+        run_beat_process(app_path, interval, broker_url, backend_url, actions)
 
 
 def generate_interfaces(
@@ -588,29 +622,35 @@ def generate_interfaces(
 @click.argument(
     "app_path",
     type=str,
+    envvar="APP_PATH",
 )
 @click.argument(
     "file_path",
     type=click.Path(file_okay=True, dir_okay=False),
     required=False,
+    envvar="FILE_PATH",
 )
 @click.option(
     "--watch",
     is_flag=True,
+    envvar="WATCH",
 )
 @click.option(
     "--src-dir",
     type=click.Path(exists=True, file_okay=False, dir_okay=True),
     default="src",
+    envvar="SRC_DIR",
 )
 @click.option(
     "--stdout",
     is_flag=True,
+    envvar="STDOUT",
     help="Print generated interfaces to stdout instead of writing to a file",
 )
 @click.option(
     "--post-process",
     type=str,
+    envvar="POST_PROCESS",
     help="Command to run after generating the interfaces, {file} will be replaced with the output file path",
 )
 def gen_tsi(
@@ -730,10 +770,11 @@ def camel_case_to_pascal_case(name: str) -> str:
 
 
 @cli.command()
-@click.argument("entity_name", type=click.STRING)
+@click.argument("entity_name", type=click.STRING, envvar="ENTITY_NAME")
 @click.argument(
     "file_path",
     type=click.File("w"),
+    envvar="FILE_PATH",
 )
 def gen_entity(entity_name: str, file_path: StreamWriter) -> None:
 
@@ -769,6 +810,7 @@ def gen_entity(entity_name: str, file_path: StreamWriter) -> None:
     "--interactive-mode",
     is_flag=True,
     default=False,
+    envvar="INTERACTIVE_MODE",
     help="Enable interactive mode for queue declaration (confirm before deleting existing queues)",
 )
 @click.option(
@@ -776,6 +818,7 @@ def gen_entity(entity_name: str, file_path: StreamWriter) -> None:
     "--force",
     is_flag=True,
     default=False,
+    envvar="FORCE",
     help="Force recreation by deleting existing exchanges and queues before declaring them",
 )
 def declare(
@@ -835,3 +878,143 @@ def declare(
             raise
 
     asyncio.run(run_declarations())
+
+
+def run_worker_process(
+    app_path: str, broker_url: str, backend_url: str, handlers: str | None
+) -> None:
+    """Run a worker process with the given parameters."""
+    app = find_microservice_by_module_path(app_path)
+
+    # Parse handler names if provided
+    handler_names: set[str] | None = None
+    if handlers:
+        handler_names = {name.strip() for name in handlers.split(",") if name.strip()}
+
+    click.echo(f"Starting worker for {app_path}...")
+    worker_mod.MessageBusWorker(
+        app=app,
+        broker_url=broker_url,
+        backend_url=backend_url,
+        handler_names=handler_names,
+    ).start_sync()
+
+
+def run_beat_process(
+    app_path: str, interval: int, broker_url: str, backend_url: str, actions: str | None
+) -> None:
+    """Run a beat scheduler process with the given parameters."""
+    app = find_microservice_by_module_path(app_path)
+
+    # Parse scheduler names if provided
+    scheduler_names: set[str] | None = None
+    if actions:
+        scheduler_names = {name.strip() for name in actions.split(",") if name.strip()}
+
+    click.echo(f"Starting beat scheduler for {app_path}...")
+    beat_worker = BeatWorker(
+        app=app,
+        interval=interval,
+        backend_url=backend_url,
+        broker_url=broker_url,
+        scheduled_action_names=scheduler_names,
+    )
+    beat_worker.run()
+
+
+def run_with_reload_watcher(
+    process_args: dict[str, Any],
+    process_target: Callable[..., Any],
+    src_dir: str = "src",
+) -> None:
+    """
+    Run a process with a file watcher that will restart it when Python files change.
+
+    Args:
+        process_args: Arguments to pass to the process function
+        process_target: The function to run as the process
+        src_dir: The directory to watch for changes
+    """
+    try:
+        from watchdog.events import FileSystemEvent, FileSystemEventHandler
+        from watchdog.observers import Observer
+    except ImportError:
+        click.echo(
+            "Watchdog is required for reload mode. Install it with: pip install watchdog",
+            file=sys.stderr,
+        )
+        return
+
+    # Run the initial process
+    process = multiprocessing.get_context("spawn").Process(
+        target=process_target,
+        kwargs=process_args,
+        daemon=False,  # Non-daemon to ensure it completes properly
+    )
+    process.start()  # Set up file system event handler
+
+    class PyFileChangeHandler(FileSystemEventHandler):
+        def __init__(self) -> None:
+            self.last_modified_time = time.time()
+            self.debounce_seconds = 1.0  # Debounce to avoid multiple restarts
+            self.active_process = process
+
+        def on_modified(self, event: FileSystemEvent) -> None:
+            src_path = (
+                event.src_path
+                if isinstance(event.src_path, str)
+                else str(event.src_path)
+            )
+
+            # Ignore non-Python files and directories
+            if event.is_directory or not src_path.endswith(".py"):
+                return
+
+            # Debounce to avoid multiple restarts
+            current_time = time.time()
+            if current_time - self.last_modified_time < self.debounce_seconds:
+                return
+            self.last_modified_time = current_time
+
+            click.echo(f"Detected change in {src_path}")
+            click.echo("Restarting process...")
+
+            # Terminate the current process
+            if self.active_process and self.active_process.is_alive():
+                self.active_process.terminate()
+                self.active_process.join(timeout=5)
+
+                # If process doesn't terminate, kill it
+                if self.active_process.is_alive():
+                    click.echo("Process did not terminate gracefully, killing it")
+                    self.active_process.kill()
+                    self.active_process.join()
+
+            # Create a new process
+            self.active_process = multiprocessing.get_context("spawn").Process(
+                target=process_target,
+                kwargs=process_args,
+                daemon=False,
+            )
+            self.active_process.start()
+
+    # Set up observer
+    observer = Observer()
+    observer.schedule(PyFileChangeHandler(), src_dir, recursive=True)  # type: ignore[no-untyped-call]
+    observer.start()  # type: ignore[no-untyped-call]
+
+    click.echo(f"Watching for changes in {os.path.abspath(src_dir)}...")
+    try:
+        while True:
+            time.sleep(1)
+    except KeyboardInterrupt:
+        observer.stop()  # type: ignore[no-untyped-call]
+        if process.is_alive():
+            click.echo("Stopping process...")
+            process.terminate()
+            process.join(timeout=5)
+            if process.is_alive():
+                process.kill()
+                process.join()
+        click.echo("Reload mode stopped")
+    observer.join()

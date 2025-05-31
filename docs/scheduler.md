@@ -93,7 +93,30 @@ beat_worker.run()
 You can also use the CLI command to run the scheduler:
 
 ```bash
+# Standard beat scheduler execution
 jararaca beat app_module:app --interval 1 --broker-url "amqp://guest:guest@localhost:5672/?exchange=jararaca" --backend-url "redis://localhost:6379"
+
+# With auto-reload for development (automatically restarts when Python files change)
+jararaca beat app_module:app --interval 1 --broker-url "amqp://guest:guest@localhost:5672/?exchange=jararaca" --backend-url "redis://localhost:6379" --reload
+
+# Using environment variables
+export APP_PATH="app_module:app"
+export INTERVAL="1"
+export BROKER_URL="amqp://guest:guest@localhost:5672/?exchange=jararaca"
+export BACKEND_URL="redis://localhost:6379"
+export RELOAD="true"
+export SRC_DIR="src"
+jararaca beat
+```
+
+All command options support environment variables:
+- `APP_PATH`: The application module path [required]
+- `INTERVAL`: Polling interval in seconds [default: 1]
+- `BROKER_URL`: The URL for the message broker [required]
+- `BACKEND_URL`: The URL for the message broker backend [required]
+- `ACTIONS`: Comma-separated list of action names to run [optional]
+- `RELOAD`: Enable auto-reload when Python files change [optional]
+- `SRC_DIR`: The source directory to watch for changes when using reload [default: "src"]
 ```
 
 app = Microservice(
