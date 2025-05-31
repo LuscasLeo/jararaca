@@ -52,6 +52,7 @@ nav:
   - Message Bus: messagebus.md
   - WebSocket: websocket.md
   - Scheduler: scheduler.md
+  - Interceptors: interceptors.md
 
 markdown_extensions:
   - pymdownx.highlight:
