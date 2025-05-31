@@ -33,9 +33,27 @@ Starts a message bus worker that processes asynchronous messages from a message 
 
 **Options:**
 
-- `--broker-url`: The URL for the message broker (required)
-- `--backend-url`: The URL for the message broker backend (required)
-- `--handlers`: Comma-separated list of handler names to listen to (optional)
+- `--broker-url`: The URL for the message broker (required) [env: BROKER_URL]
+- `--backend-url`: The URL for the message broker backend (required) [env: BACKEND_URL]
+- `--handlers`: Comma-separated list of handler names to listen to (optional) [env: HANDLERS]
+- `--reload`: Enable auto-reload when Python files change (for development) [env: RELOAD]
+- `--src-dir`: The source directory to watch for changes when --reload is enabled (default: "src") [env: SRC_DIR]
+
+**Environment Variables:**
+- `APP_PATH`: The application module path
+- All options support environment variables as indicated above
+
+**Example with environment variables:**
+```bash
+export APP_PATH="app.module:app"
+export BROKER_URL="amqp://guest:guest@localhost:5672/?exchange=jararaca&prefetch_count=1"
+export BACKEND_URL="redis://localhost:6379"
+export HANDLERS="send_email,process_payment"
+export RELOAD="true"
+jararaca worker
+```
+- `--reload`: Enable auto-reload when Python files change (for development)
+- `--src-dir`: The source directory to watch for changes when --reload is enabled (default: "src")
 
 ### `server` - HTTP Server
 
@@ -47,8 +65,21 @@ Starts a FastAPI HTTP server for your microservice.
 
 **Options:**
 
-- `--host`: Host to bind the server (default: "0.0.0.0")
-- `--port`: Port to bind the server (default: 8000)
+- `--host`: Host to bind the server (default: "0.0.0.0") [env: HOST]
+- `--port`: Port to bind the server (default: 8000) [env: PORT]
+
+**Environment Variables:**
+- `APP_PATH`: The application module path
+- `HOST`: Host to bind the server
+- `PORT`: Port to bind the server
+
+**Example with environment variables:**
+```bash
+export APP_PATH="app.module:app"
+export HOST="127.0.0.1"
+export PORT="8080"
+jararaca server
+```
 
 #### Alternative: Using `uvicorn` directly
 
@@ -103,10 +134,27 @@ Runs scheduled tasks defined in your application using cron expressions.
 
 **Options:**
 
-- `--interval`: Polling interval in seconds (default: 1)
-- `--broker-url`: The URL for the message broker (required)
-- `--backend-url`: The URL for the message broker backend (required)
-- `--actions`: Comma-separated list of action names to run (optional)
+- `--interval`: Polling interval in seconds (default: 1) [env: INTERVAL]
+- `--broker-url`: The URL for the message broker (required) [env: BROKER_URL]
+- `--backend-url`: The URL for the message broker backend (required) [env: BACKEND_URL]
+- `--actions`: Comma-separated list of action names to run (optional) [env: ACTIONS]
+- `--reload`: Enable auto-reload when Python files change (for development) [env: RELOAD]
+- `--src-dir`: The source directory to watch for changes when --reload is enabled (default: "src") [env: SRC_DIR]
+
+**Environment Variables:**
+- `APP_PATH`: The application module path
+- All options support environment variables as indicated above
+
+**Example with environment variables:**
+```bash
+export APP_PATH="app.module:app"
+export INTERVAL="5"
+export BROKER_URL="amqp://guest:guest@localhost:5672/?exchange=jararaca&prefetch_count=1"
+export BACKEND_URL="redis://localhost:6379"
+export ACTIONS="send_emails,process_payments"
+export RELOAD="true"
+jararaca beat
+```
 
 ```bash
 jararaca scheduler_v2 APP_PATH [OPTIONS]
@@ -130,8 +178,14 @@ Generates TypeScript interfaces from your Python models to ensure type safety be
 
 **Options:**
 
-- `--watch`: Watch for file changes and regenerate TypeScript interfaces automatically
-- `--src-dir`: Source directory to watch for changes (default: "src")
+- `--watch`: Watch for file changes and regenerate TypeScript interfaces automatically [env: WATCH]
+- `--src-dir`: Source directory to watch for changes (default: "src") [env: SRC_DIR]
+- `--stdout`: Print generated interfaces to stdout instead of writing to a file [env: STDOUT]
+- `--post-process`: Command to run after generating the interfaces, {file} will be replaced with the output file path [env: POST_PROCESS]
+
+**Environment Variables:**
+- `APP_PATH`: The application module path
+- All options support environment variables as indicated above
 
 **Example with watch mode:**
 
@@ -140,6 +194,15 @@ jararaca gen-tsi app.module:app interfaces.ts --watch
 ```
 
 This will generate the TypeScript interfaces initially and then watch for any changes to Python files in the src directory, automatically regenerating the interfaces when changes are detected. You can stop watching with Ctrl+C.
+
+**Example with environment variables:**
+```bash
+export APP_PATH="app.module:app"
+export FILE_PATH="interfaces.ts"
+export WATCH="true"
+export SRC_DIR="src"
+jararaca gen-tsi
+```
 
 **Note:** To use the watch feature, you need to install the watchdog package:
 
@@ -160,6 +223,57 @@ jararaca gen-entity ENTITY_NAME FILE_PATH
 ```
 
 Generates a new entity file template with proper naming conventions in different formats (snake_case, PascalCase, kebab-case).
+
+**Environment Variables:**
+- `ENTITY_NAME`: The name of the entity to generate
+- `FILE_PATH`: The path where the entity file should be created
+
+**Example:**
+
+```bash
+# Using command line arguments
+jararaca gen-entity User user.py
+
+# Using environment variables
+export ENTITY_NAME="User"
+export FILE_PATH="user.py"
+jararaca gen-entity
+```
+
+### `declare` - Declare Message Infrastructure
+
+```bash
+jararaca declare APP_PATH [OPTIONS]
+```
+
+Declares RabbitMQ infrastructure (exchanges and queues) for message handlers and schedulers without starting the actual consumption processes.
+
+**Options:**
+- `--broker-url`: Broker URL (e.g., amqp://guest:guest@localhost/) [env: BROKER_URL]
+- `-i, --interactive-mode`: Enable interactive mode for queue declaration [env: INTERACTIVE_MODE]
+- `-f, --force`: Force recreation by deleting existing exchanges and queues [env: FORCE]
+
+**Environment Variables:**
+- `APP_PATH`: The application module path
+- `BROKER_URL`: The broker URL
+- `INTERACTIVE_MODE`: Enable interactive mode
+- `FORCE`: Force recreation of infrastructure
+
+**Examples:**
+
+```bash
+# Declare infrastructure
+jararaca declare myapp:app --broker-url amqp://guest:guest@localhost/
+
+# Force recreation of queues and exchanges
+jararaca declare myapp:app --broker-url amqp://guest:guest@localhost/ --force
+
+# Using environment variables
+export APP_PATH="myapp:app"
+export BROKER_URL="amqp://guest:guest@localhost/"
+export FORCE="true"
+jararaca declare
+```
 
 ## Quick Start
 

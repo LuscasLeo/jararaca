@@ -455,14 +455,29 @@ jararaca worker APP_PATH [OPTIONS]
 
 Options:
 
-- `--broker-url`: The URL for the message broker (required)
-- `--backend-url`: The URL for the message broker backend (required)
-- `--handlers`: Comma-separated list of handler names to listen to (optional)
+- `--broker-url`: The URL for the message broker (required) [env: BROKER_URL]
+- `--backend-url`: The URL for the message broker backend (required) [env: BACKEND_URL]
+- `--handlers`: Comma-separated list of handler names to listen to (optional) [env: HANDLERS]
+- `--reload`: Enable auto-reload when Python files change (for development) [env: RELOAD]
+- `--src-dir`: The source directory to watch for changes when --reload is enabled (default: "src") [env: SRC_DIR]
 
-Example:
+Examples:
 
 ```bash
+# Standard worker execution
 jararaca worker myapp.main:app --broker-url "amqp://guest:guest@localhost:5672/?exchange=jararaca" --backend-url "redis://localhost:6379"
+
+# With auto-reload for development
+jararaca worker myapp.main:app --broker-url "amqp://guest:guest@localhost:5672/?exchange=jararaca" --backend-url "redis://localhost:6379" --reload
+
+# Using environment variables
+export APP_PATH="myapp.main:app"
+export BROKER_URL="amqp://guest:guest@localhost:5672/?exchange=jararaca"
+export BACKEND_URL="redis://localhost:6379"
+export RELOAD="true"
+export SRC_DIR="src"
+export RELOAD="true"
+jararaca worker
 ```
 
 ## Conclusion
