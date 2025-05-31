@@ -20,7 +20,10 @@ from jararaca.messagebus.decorators import MessageBusController, MessageHandler
 from jararaca.microservice import Microservice
 from jararaca.presentation.http_microservice import HttpMicroservice
 from jararaca.presentation.server import create_http_server
-from jararaca.reflect.controller_inspect import inspect_controller
+from jararaca.reflect.controller_inspect import (
+    ControllerMemberReflect,
+    inspect_controller,
+)
 from jararaca.scheduler.beat_worker import BeatWorker
 from jararaca.scheduler.decorators import ScheduledAction
 from jararaca.tools.typescript.interface_parser import (
@@ -83,7 +86,6 @@ async def declare_worker_infrastructure(
     """
     Declare the infrastructure (exchanges and queues) for worker.
     """
-
     parsed_url = urlparse(broker_url)
     if parsed_url.scheme not in ["amqp", "amqps"]:
         raise ValueError(f"Unsupported broker URL scheme: {parsed_url.scheme}")
@@ -98,41 +100,161 @@ async def declare_worker_infrastructure(
 
     exchange = query_params["exchange"][0]
 
+    # Create a connection that will be used to create channels for each operation
     connection = await aio_pika.connect(broker_url)
-    channel = await connection.channel()
 
-    # Only force delete infrastructure if requested at the beginning
-    if force or (
-        interactive_mode
-        and click.confirm(f"Delete existing infrastructure for exchange: {exchange}?")
+    try:
+        # Step 1: Setup infrastructure (exchanges and dead letter queues)
+        # Creating a dedicated channel for infrastructure setup
+        await setup_infrastructure(connection, exchange, force, interactive_mode)
+
+        # Step 2: Declare all message handlers and scheduled actions queues
+        # Creating a dedicated channel for controller queues
+        await declare_controller_queues(
+            connection, app, exchange, force, interactive_mode
+        )
+    finally:
+        # Always close the connection in the finally block
+        await connection.close()
+
+
+async def setup_infrastructure(
+    connection: aio_pika.abc.AbstractConnection,
+    exchange: str,
+    force: bool = False,
+    interactive_mode: bool = False,
+) -> None:
+    """
+    Setup the basic infrastructure (exchanges and dead letter queues).
+    """
+    # Check if infrastructure exists
+    infrastructure_exists = await check_infrastructure_exists(connection, exchange)
+
+    # If it exists and force or user confirms, delete it
+    if not infrastructure_exists and should_recreate_infrastructure(
+        force,
+        interactive_mode,
+        f"Existing infrastructure found for exchange '{exchange}'. Delete and recreate?",
     ):
+        await delete_infrastructure(connection, exchange)
+
+    # Try to declare required infrastructure
+    await declare_infrastructure(connection, exchange, force, interactive_mode)
+
+
+async def check_infrastructure_exists(
+    connection: aio_pika.abc.AbstractConnection, exchange: str
+) -> bool:
+    """
+    Check if the infrastructure exists by trying passive declarations.
+    """
+    # Create a dedicated channel for checking infrastructure existence using async context manager
+    async with connection.channel() as channel:
+        try:
+            await RabbitmqUtils.declare_main_exchange(
+                channel=channel,
+                exchange_name=exchange,
+                passive=True,
+            )
+            await RabbitmqUtils.declare_dl_exchange(channel=channel, passive=True)
+            await RabbitmqUtils.declare_dl_queue(channel=channel, passive=True)
+            return True
+        except Exception:
+            # Infrastructure doesn't exist, which is fine for fresh setup
+            return False
+
+
+def should_recreate_infrastructure(
+    force: bool, interactive_mode: bool, confirmation_message: str
+) -> bool:
+    """
+    Determine if infrastructure should be recreated based on force flag and user input.
+    """
+    return force or (interactive_mode and click.confirm(confirmation_message))
+
+
+async def delete_infrastructure(
+    connection: aio_pika.abc.AbstractConnection, exchange: str
+) -> None:
+    """
+    Delete existing infrastructure (exchanges and queues).
+    """
+    # Create a dedicated channel for deleting infrastructure using async context manager
+    async with connection.channel() as channel:
         click.echo(f"→ Deleting existing infrastructure for exchange: {exchange}")
         await RabbitmqUtils.delete_exchange(channel, exchange)
         await RabbitmqUtils.delete_exchange(channel, RabbitmqUtils.DEAD_LETTER_EXCHANGE)
         await RabbitmqUtils.delete_queue(channel, RabbitmqUtils.DEAD_LETTER_QUEUE)
 
-    try:
-        await RabbitmqUtils.declare_main_exchange(
-            channel=channel,
-            exchange_name=exchange,
-            passive=False,
-        )
 
-        dlx = await RabbitmqUtils.declare_dl_exchange(channel=channel, passive=False)
-        dlq = await RabbitmqUtils.declare_dl_queue(channel=channel, passive=False)
-        await dlq.bind(dlx, routing_key=RabbitmqUtils.DEAD_LETTER_EXCHANGE)
-    except Exception as e:
-        click.echo(f"Error during exchange declaration: {e}")
-        if force or (
-            interactive_mode
-            and click.confirm("Error occurred. Recreate infrastructure?")
-        ):
-            await channel.close()
-            await connection.close()
-            raise
-        click.echo("Skipping main exchange declaration due to error")
+async def declare_infrastructure(
+    connection: aio_pika.abc.AbstractConnection,
+    exchange: str,
+    force: bool,
+    interactive_mode: bool,
+) -> None:
+    """
+    Declare the required infrastructure (exchanges and dead letter queues).
+    """
+    # Using async context manager for channel creation
+    async with connection.channel() as channel:
+        try:
+            # Declare main exchange
+            await RabbitmqUtils.declare_main_exchange(
+                channel=channel,
+                exchange_name=exchange,
+                passive=False,
+            )
 
-    # Find all message handlers and scheduled actions
+            # Declare dead letter exchange and queue
+            dlx = await RabbitmqUtils.declare_dl_exchange(
+                channel=channel, passive=False
+            )
+            dlq = await RabbitmqUtils.declare_dl_queue(channel=channel, passive=False)
+            await dlq.bind(dlx, routing_key=RabbitmqUtils.DEAD_LETTER_EXCHANGE)
+
+        except Exception as e:
+            click.echo(f"Error during exchange declaration: {e}")
+
+            # If interactive mode and user confirms, or if forced, try again after deletion
+            if should_recreate_infrastructure(
+                force, interactive_mode, "Delete existing infrastructure and recreate?"
+            ):
+                # Delete infrastructure with a new channel
+                await delete_infrastructure(connection, exchange)
+
+                # Try again with a new channel
+                async with connection.channel() as new_channel:
+                    # Try again after deletion
+                    await RabbitmqUtils.declare_main_exchange(
+                        channel=new_channel,
+                        exchange_name=exchange,
+                        passive=False,
+                    )
+                    dlx = await RabbitmqUtils.declare_dl_exchange(
+                        channel=new_channel, passive=False
+                    )
+                    dlq = await RabbitmqUtils.declare_dl_queue(
+                        channel=new_channel, passive=False
+                    )
+                    await dlq.bind(dlx, routing_key=RabbitmqUtils.DEAD_LETTER_EXCHANGE)
+            elif force:
+                # If force is true but recreation failed, propagate the error
+                raise
+            else:
+                click.echo("Skipping main exchange declaration due to error")
+
+
+async def declare_controller_queues(
+    connection: aio_pika.abc.AbstractConnection,
+    app: Microservice,
+    exchange: str,
+    force: bool,
+    interactive_mode: bool,
+) -> None:
+    """
+    Declare all message handler and scheduled action queues for controllers.
+    """
     for instance_type in app.controllers:
         controller_spec = MessageBusController.get_messagebus(instance_type)
         if controller_spec is None:
@@ -140,54 +262,135 @@ async def declare_worker_infrastructure(
 
         _, members = inspect_controller(instance_type)
 
-        # Declare queues for message handlers
+        # Process each member (method) in the controller
         for _, member in members.items():
-            message_handler = MessageHandler.get_message_incoming(
-                member.member_function
+            # Check if it's a message handler
+            await declare_message_handler_queue(
+                connection, member, exchange, force, interactive_mode
             )
-            if message_handler is not None:
-                queue_name = f"{message_handler.message_type.MESSAGE_TOPIC}.{member.member_function.__module__}.{member.member_function.__qualname__}"
-                routing_key = f"{message_handler.message_type.MESSAGE_TOPIC}.#"
 
-                try:
-                    # Try to declare queue
-                    queue = await RabbitmqUtils.declare_worker_queue(
-                        channel=channel, queue_name=queue_name, passive=False
-                    )
+            # Check if it's a scheduled action
+            await declare_scheduled_action_queue(
+                connection, member, exchange, force, interactive_mode
+            )
+
+
+async def declare_message_handler_queue(
+    connection: aio_pika.abc.AbstractConnection,
+    member: ControllerMemberReflect,
+    exchange: str,
+    force: bool,
+    interactive_mode: bool,
+) -> None:
+    """
+    Declare a queue for a message handler if the member is one.
+    """
+    message_handler = MessageHandler.get_message_incoming(member.member_function)
+    if message_handler is not None:
+        queue_name = f"{message_handler.message_type.MESSAGE_TOPIC}.{member.member_function.__module__}.{member.member_function.__qualname__}"
+        routing_key = f"{message_handler.message_type.MESSAGE_TOPIC}.#"
+
+        await declare_and_bind_queue(
+            connection,
+            queue_name,
+            routing_key,
+            exchange,
+            force,
+            interactive_mode,
+            is_scheduled_action=False,
+        )
+
+
+async def declare_scheduled_action_queue(
+    connection: aio_pika.abc.AbstractConnection,
+    member: ControllerMemberReflect,
+    exchange: str,
+    force: bool,
+    interactive_mode: bool,
+) -> None:
+    """
+    Declare a queue for a scheduled action if the member is one.
+    """
+    scheduled_action = ScheduledAction.get_scheduled_action(member.member_function)
+    if scheduled_action is not None:
+        queue_name = (
+            f"{member.member_function.__module__}.{member.member_function.__qualname__}"
+        )
+        routing_key = queue_name
+
+        await declare_and_bind_queue(
+            connection,
+            queue_name,
+            routing_key,
+            exchange,
+            force,
+            interactive_mode,
+            is_scheduled_action=True,
+        )
+
+
+async def declare_and_bind_queue(
+    connection: aio_pika.abc.AbstractConnection,
+    queue_name: str,
+    routing_key: str,
+    exchange: str,
+    force: bool,
+    interactive_mode: bool,
+    is_scheduled_action: bool,
+) -> None:
+    """
+    Declare and bind a queue to the exchange with the given routing key.
+    """
+    queue_type = "scheduled action" if is_scheduled_action else "message handler"
+
+    # Using async context manager for channel creation
+    async with connection.channel() as channel:
+        try:
+            # Try to declare queue using the appropriate method
+            if is_scheduled_action:
+                queue = await RabbitmqUtils.declare_scheduled_action_queue(
+                    channel=channel, queue_name=queue_name, passive=False
+                )
+            else:
+                queue = await RabbitmqUtils.declare_worker_queue(
+                    channel=channel, queue_name=queue_name, passive=False
+                )
+
+            # Bind the queue to the exchange
+            await queue.bind(exchange=exchange, routing_key=routing_key)
+            click.echo(
+                f"✓ Declared {queue_type} queue: {queue_name} (routing key: {routing_key})"
+            )
+        except Exception as e:
+            click.echo(f"⚠ Error declaring {queue_type} queue {queue_name}: {e}")
+
+            # If interactive mode and user confirms, or if forced, recreate the queue
+            if force or (
+                interactive_mode
+                and click.confirm(f"Delete and recreate queue {queue_name}?")
+            ):
+                # Create a new channel for deletion and recreation
+                async with connection.channel() as new_channel:
+                    # Delete the queue
+                    await RabbitmqUtils.delete_queue(new_channel, queue_name)
+
+                    # Try to declare queue again using the appropriate method
+                    if is_scheduled_action:
+                        queue = await RabbitmqUtils.declare_scheduled_action_queue(
+                            channel=new_channel, queue_name=queue_name, passive=False
+                        )
+                    else:
+                        queue = await RabbitmqUtils.declare_worker_queue(
+                            channel=new_channel, queue_name=queue_name, passive=False
+                        )
+
+                    # Bind the queue to the exchange
                     await queue.bind(exchange=exchange, routing_key=routing_key)
                     click.echo(
-                        f"✓ Declared message handler queue: {queue_name} (routing key: {routing_key})"
+                        f"✓ Recreated {queue_type} queue: {queue_name} (routing key: {routing_key})"
                     )
-                except Exception as e:
-                    click.echo(
-                        f"⚠ Skipping message handler queue {queue_name} due to error: {e}"
-                    )
-                    continue
-
-            scheduled_action = ScheduledAction.get_scheduled_action(
-                member.member_function
-            )
-            if scheduled_action is not None:
-                queue_name = f"{member.member_function.__module__}.{member.member_function.__qualname__}"
-                routing_key = queue_name
-
-                try:
-                    # Try to declare queue
-                    queue = await RabbitmqUtils.declare_scheduled_action_queue(
-                        channel=channel, queue_name=queue_name, passive=False
-                    )
-                    await queue.bind(exchange=exchange, routing_key=routing_key)
-                    click.echo(
-                        f"✓ Declared scheduled action queue: {queue_name} (routing key: {routing_key})"
-                    )
-                except Exception as e:
-                    click.echo(
-                        f"⚠ Skipping scheduled action queue {queue_name} due to error: {e}"
-                    )
-                    continue
-
-    await channel.close()
-    await connection.close()
+            else:
+                click.echo(f"⚠ Skipping {queue_type} queue {queue_name}")
 
 
 @click.group()
@@ -562,29 +765,14 @@ def gen_entity(entity_name: str, file_path: StreamWriter) -> None:
     help="Broker URL (e.g., amqp://guest:guest@localhost/) [env: BROKER_URL]",
 )
 @click.option(
-    "--exchange",
-    type=str,
-    default="jararaca_ex",
-    envvar="EXCHANGE",
-    help="Exchange name [env: EXCHANGE]",
-)
-@click.option(
-    "--passive-declare",
+    "-i",
+    "--interactive-mode",
     is_flag=True,
     default=False,
-    help="Use passive declarations (check if infrastructure exists without creating it)",
+    help="Enable interactive mode for queue declaration (confirm before deleting existing queues)",
 )
 @click.option(
-    "--handlers",
-    type=str,
-    help="Comma-separated list of handler names to declare queues for. If not specified, all handlers will be declared.",
-)
-@click.option(
-    "--schedulers",
-    type=str,
-    help="Comma-separated list of scheduler names to declare queues for. If not specified, all schedulers will be declared.",
-)
-@click.option(
+    "-f",
     "--force",
     is_flag=True,
     default=False,
@@ -592,12 +780,9 @@ def gen_entity(entity_name: str, file_path: StreamWriter) -> None:
 )
 def declare(
     app_path: str,
-    broker_url: str | None,
-    exchange: str,
-    passive_declare: bool,
-    handlers: str | None,
-    schedulers: str | None,
+    broker_url: str,
     force: bool,
+    interactive_mode: bool,
 ) -> None:
     """
     Declare RabbitMQ infrastructure (exchanges and queues) for message handlers and schedulers.
@@ -636,28 +821,13 @@ def declare(
             )
             return
 
-        # Parse handler names if provided
-        handler_names: set[str] | None = None
-        if handlers:
-            handler_names = {
-                name.strip() for name in handlers.split(",") if name.strip()
-            }
-
-        # Parse scheduler names if provided
-        scheduler_names: set[str] | None = None
-        if schedulers:
-            scheduler_names = {
-                name.strip() for name in schedulers.split(",") if name.strip()
-            }
-
         try:
             # Create the broker URL with exchange parameter
-            broker_url_with_exchange = f"{broker_url}?exchange={exchange}"
 
-            click.echo(
-                f"→ Declaring worker infrastructure (URL: {broker_url_with_exchange})"
+            click.echo(f"→ Declaring worker infrastructure (URL: {broker_url})")
+            await declare_worker_infrastructure(
+                broker_url, app, force, interactive_mode
             )
-            await declare_worker_infrastructure(broker_url_with_exchange, app, force)
 
             click.echo("✓ Workers infrastructure declared successfully!")
         except Exception as e:
