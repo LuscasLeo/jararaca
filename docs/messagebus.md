@@ -29,6 +29,7 @@ graph TB
         ack[ack]
         nack[nack]
         retry[retry]
+        retry_later[retry_later]
         reject[reject]
     end
 
@@ -42,6 +43,7 @@ graph TB
     BusMessageController --> nack
     BusMessageController --> reject
     BusMessageController --> retry
+    BusMessageController --> retry_later
 ```
 
 ## Message Structure
