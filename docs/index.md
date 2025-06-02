@@ -5,6 +5,7 @@ Jararaca is a powerful Python microservice framework that provides a comprehensi
 ## Features
 
 - 🚀 **FastAPI Integration**: Built-in support for FastAPI with automatic OpenAPI documentation
+- 🌐 **HTTP RPC Client**: Complete REST client implementation with decorators, authentication, caching, and retry logic
 - 🔌 **WebSocket Support**: Real-time communication capabilities with Redis-backed WebSocket management
 - 📦 **Dependency Injection**: Flexible dependency injection system with interceptors
 - 📊 **Database Integration**: SQLAlchemy integration with async support

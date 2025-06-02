@@ -45,26 +45,47 @@ if TYPE_CHECKING:
     )
     from jararaca.rpc.http.backends.httpx import HTTPXHttpRPCAsyncBackend
     from jararaca.rpc.http.backends.otel import TracedRequestMiddleware
-    from jararaca.rpc.http.decorators import Body
+    from jararaca.rpc.http.decorators import (  # New request parameter decorators; Configuration decorators; Authentication classes; Middleware classes; Configuration classes; Exception classes
+        ApiKeyAuth,
+        AuthenticationMiddleware,
+        BasicAuth,
+        BearerTokenAuth,
+        Body,
+        CacheMiddleware,
+        ContentType,
+    )
     from jararaca.rpc.http.decorators import Delete as HttpDelete
+    from jararaca.rpc.http.decorators import (  # New request parameter decorators; Configuration decorators; Authentication classes; Middleware classes; Configuration classes; Exception classes
+        File,
+        FormData,
+    )
     from jararaca.rpc.http.decorators import Get as HttpGet
-    from jararaca.rpc.http.decorators import (
+    from jararaca.rpc.http.decorators import (  # New request parameter decorators; Configuration decorators; Authentication classes; Middleware classes; Configuration classes; Exception classes
         GlobalHttpErrorHandler,
         Header,
         HttpMapping,
         HttpRpcClientBuilder,
     )
     from jararaca.rpc.http.decorators import Patch as HttpPatch
-    from jararaca.rpc.http.decorators import PathParam
+    from jararaca.rpc.http.decorators import (  # New request parameter decorators; Configuration decorators; Authentication classes; Middleware classes; Configuration classes; Exception classes
+        PathParam,
+    )
     from jararaca.rpc.http.decorators import Post as HttpPost
     from jararaca.rpc.http.decorators import Put as HttpPut
-    from jararaca.rpc.http.decorators import (
+    from jararaca.rpc.http.decorators import (  # New request parameter decorators; Configuration decorators; Authentication classes; Middleware classes; Configuration classes; Exception classes
         Query,
         RequestAttribute,
+        RequestHook,
+        ResponseHook,
+        ResponseMiddleware,
         RestClient,
+        Retry,
+        RetryConfig,
         RouteHttpErrorHandler,
         RPCRequestNetworkError,
         RPCUnhandleError,
+        Timeout,
+        TimeoutException,
     )
 
     from .core.providers import ProviderSpec, Token
@@ -242,6 +263,27 @@ if TYPE_CHECKING:
         "provide_ws_manager",
         "HttpRpcClientBuilder",
         "HTTPXHttpRPCAsyncBackend",
+        # New request parameter decorators
+        "FormData",
+        "File",
+        # Configuration decorators
+        "Timeout",
+        "Retry",
+        "ContentType",
+        # Authentication classes
+        "BearerTokenAuth",
+        "BasicAuth",
+        "ApiKeyAuth",
+        # Middleware classes
+        "CacheMiddleware",
+        "AuthenticationMiddleware",
+        "ResponseMiddleware",
+        "RequestHook",
+        "ResponseHook",
+        # Configuration classes
+        "RetryConfig",
+        # Exception classes
+        "TimeoutException",
         "use_app_context",
         "use_app_transaction_context",
         "use_app_tx_ctx_data",
@@ -440,6 +482,22 @@ _dynamic_imports: "dict[str, tuple[str, str, str | None]]" = {
     "provide_ws_manager": (__SPEC_PARENT__, "presentation.websocket.context", None),
     "HttpRpcClientBuilder": (__SPEC_PARENT__, "rpc.http.decorators", None),
     "HTTPXHttpRPCAsyncBackend": (__SPEC_PARENT__, "rpc.http.backends.httpx", None),
+    # New HTTP RPC classes
+    "FormData": (__SPEC_PARENT__, "rpc.http.decorators", None),
+    "File": (__SPEC_PARENT__, "rpc.http.decorators", None),
+    "Timeout": (__SPEC_PARENT__, "rpc.http.decorators", None),
+    "Retry": (__SPEC_PARENT__, "rpc.http.decorators", None),
+    "ContentType": (__SPEC_PARENT__, "rpc.http.decorators", None),
+    "BearerTokenAuth": (__SPEC_PARENT__, "rpc.http.decorators", None),
+    "BasicAuth": (__SPEC_PARENT__, "rpc.http.decorators", None),
+    "ApiKeyAuth": (__SPEC_PARENT__, "rpc.http.decorators", None),
+    "CacheMiddleware": (__SPEC_PARENT__, "rpc.http.decorators", None),
+    "AuthenticationMiddleware": (__SPEC_PARENT__, "rpc.http.decorators", None),
+    "ResponseMiddleware": (__SPEC_PARENT__, "rpc.http.decorators", None),
+    "RequestHook": (__SPEC_PARENT__, "rpc.http.decorators", None),
+    "ResponseHook": (__SPEC_PARENT__, "rpc.http.decorators", None),
+    "RetryConfig": (__SPEC_PARENT__, "rpc.http.decorators", None),
+    "TimeoutException": (__SPEC_PARENT__, "rpc.http.decorators", None),
     "use_app_context": (__SPEC_PARENT__, "microservice", None),
     "use_app_transaction_context": (__SPEC_PARENT__, "microservice", None),
     "use_app_tx_ctx_data": (__SPEC_PARENT__, "microservice", None),

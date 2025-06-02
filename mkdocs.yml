@@ -49,6 +49,7 @@ theme:
 nav:
   - Home: index.md
   - Architecture: architecture.md
+  - HTTP RPC: http-rpc.md
   - Message Bus: messagebus.md
   - WebSocket: websocket.md
   - Scheduler: scheduler.md
