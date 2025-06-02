@@ -5,7 +5,6 @@ import signal
 import time
 from abc import ABC, abstractmethod
 from datetime import UTC, datetime
-from types import FrameType
 from typing import Any
 from urllib.parse import parse_qs
 
@@ -249,13 +248,16 @@ class BeatWorker:
 
     def run(self) -> None:
 
-        def on_signal_received(signal: int, frame_type: FrameType | None) -> None:
-            logger.info("Received shutdown signal")
-            self.shutdown_event.set()
-
-        signal.signal(signal.SIGINT, on_signal_received)
+        def on_shutdown(loop: asyncio.AbstractEventLoop) -> None:
+            logger.info("Shutting down - signal received")
+            # Schedule the shutdown to run in the event loop
+            asyncio.create_task(self._graceful_shutdown())
 
         with asyncio.Runner(loop_factory=uvloop.new_event_loop) as runner:
+            loop = runner.get_loop()
+            loop.add_signal_handler(signal.SIGINT, on_shutdown, loop)
+            # Add graceful shutdown handler for SIGTERM as well
+            loop.add_signal_handler(signal.SIGTERM, on_shutdown, loop)
             runner.run(self.start_scheduler())
 
     async def start_scheduler(self) -> None:
@@ -340,3 +342,9 @@ class BeatWorker:
 
         await self.backend.dispose()
         await self.broker.dispose()
+
+    async def _graceful_shutdown(self) -> None:
+        """Handles graceful shutdown process"""
+        logger.info("Initiating graceful shutdown sequence")
+        self.shutdown_event.set()
+        logger.info("Graceful shutdown completed")
