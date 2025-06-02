@@ -406,7 +406,7 @@ export type ResponseType =
 export interface HttpBackendRequest {
   method: string;
   path: string;
-  pathParams: { [key: string]: string };
+  pathParams: { [key: string]: any };
   headers: { [key: string]: string };
   query: { [key: string]: unknown };
   body: unknown;
