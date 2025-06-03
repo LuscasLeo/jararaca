@@ -325,6 +325,48 @@ def provide_container(container: Container) -> Generator[None, None, None]:
             current_container_ctx.reset(token)
 
 
+class ShutdownState(Protocol):
+
+    def request_shutdown(self) -> None: ...
+
+    def is_shutdown_requested(self) -> bool: ...
+
+
+shutdown_state_ctx = ContextVar[ShutdownState]("shutdown_state")
+
+
+def is_shutting_down() -> bool:
+    """
+    Check if the application is in the process of shutting down.
+    """
+    return shutdown_state_ctx.get().is_shutdown_requested()
+
+
+def request_shutdown() -> None:
+    """
+    Request the application to shut down.
+    This will set the shutdown event, allowing the application to gracefully shut down.
+    """
+    shutdown_state_ctx.get().request_shutdown()
+
+
+@contextmanager
+def provide_shutdown_state(
+    state: ShutdownState,
+) -> Generator[None, None, None]:
+    """
+    Context manager to provide the shutdown state.
+    This is used to manage the shutdown event for the application.
+    """
+
+    token = shutdown_state_ctx.set(state)
+    try:
+        yield
+    finally:
+        with suppress(ValueError):
+            shutdown_state_ctx.reset(token)
+
+
 __all__ = [
     "AppTransactionContext",
     "AppInterceptor",

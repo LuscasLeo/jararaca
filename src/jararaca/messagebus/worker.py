@@ -49,6 +49,8 @@ from jararaca.microservice import (
     MessageBusTransactionData,
     Microservice,
     SchedulerTransactionData,
+    ShutdownState,
+    provide_shutdown_state,
 )
 from jararaca.scheduler.decorators import ScheduledActionData
 from jararaca.utils.rabbitmq_utils import RabbitmqUtils
@@ -129,6 +131,17 @@ class MessageBusConsumer(ABC):
         """Close all resources related to the consumer"""
 
 
+class _WorkerShutdownState(ShutdownState):
+    def __init__(self, shutdown_event: asyncio.Event):
+        self.shutdown_event = shutdown_event
+
+    def request_shutdown(self) -> None:
+        self.shutdown_event.set()
+
+    def is_shutdown_requested(self) -> bool:
+        return self.shutdown_event.is_set()
+
+
 class AioPikaMicroserviceConsumer(MessageBusConsumer):
     def __init__(
         self,
@@ -146,6 +159,7 @@ class AioPikaMicroserviceConsumer(MessageBusConsumer):
         self.incoming_map: dict[str, MessageHandlerData] = {}
         self.uow_context_provider = uow_context_provider
         self.shutdown_event = asyncio.Event()
+        self.shutdown_state = _WorkerShutdownState(self.shutdown_event)
         self.lock = asyncio.Lock()
         self.tasks: set[asyncio.Task[Any]] = set()
         self.connection: aio_pika.abc.AbstractConnection | None = None
@@ -832,18 +846,19 @@ class ScheduledMessageHandlerCallback:
         args: tuple[Any, ...],
         kwargs: dict[str, Any],
     ) -> None:
-        async with self.consumer.uow_context_provider(
-            AppTransactionContext(
-                controller_member_reflect=scheduled_action.controller_member,
-                transaction_data=SchedulerTransactionData(
-                    scheduled_to=datetime.now(UTC),
-                    cron_expression=scheduled_action.spec.cron,
-                    triggered_at=datetime.now(UTC),
-                ),
-            )
-        ):
+        with provide_shutdown_state(self.consumer.shutdown_state):
+            async with self.consumer.uow_context_provider(
+                AppTransactionContext(
+                    controller_member_reflect=scheduled_action.controller_member,
+                    transaction_data=SchedulerTransactionData(
+                        scheduled_to=datetime.now(UTC),
+                        cron_expression=scheduled_action.spec.cron,
+                        triggered_at=datetime.now(UTC),
+                    ),
+                )
+            ):
 
-            await scheduled_action.callable(*args, **kwargs)
+                await scheduled_action.callable(*args, **kwargs)
 
 
 class MessageHandlerCallback:
@@ -1133,83 +1148,86 @@ class MessageHandlerCallback:
         incoming_message_spec = MessageHandler.get_message_incoming(handler)
         assert incoming_message_spec is not None
 
-        async with self.consumer.uow_context_provider(
-            AppTransactionContext(
-                controller_member_reflect=handler_data.controller_member,
-                transaction_data=MessageBusTransactionData(
-                    message=builded_message,
-                    topic=routing_key,
-                ),
-            )
-        ):
-            ctx: AsyncContextManager[Any]
-            if incoming_message_spec.timeout is not None:
-                ctx = asyncio.timeout(incoming_message_spec.timeout)
-            else:
-                ctx = none_context()
-            async with ctx:
-                try:
-                    with provide_bus_message_controller(
-                        AioPikaMessageBusController(aio_pika_message)
-                    ):
-                        await handler(builded_message)
-                    if not incoming_message_spec.auto_ack:
-                        with suppress(aio_pika.MessageProcessError):
-                            # Use channel context for acknowledgement
-                            async with self.consumer.get_channel_ctx(self.queue_name):
-                                await aio_pika_message.ack()
-                except BaseException as base_exc:
-                    # Get message id for logging
-                    message_id = aio_pika_message.message_id or str(uuid.uuid4())
+        with provide_shutdown_state(self.consumer.shutdown_state):
+            async with self.consumer.uow_context_provider(
+                AppTransactionContext(
+                    controller_member_reflect=handler_data.controller_member,
+                    transaction_data=MessageBusTransactionData(
+                        message=builded_message,
+                        topic=routing_key,
+                    ),
+                )
+            ):
+                ctx: AsyncContextManager[Any]
+                if incoming_message_spec.timeout is not None:
+                    ctx = asyncio.timeout(incoming_message_spec.timeout)
+                else:
+                    ctx = none_context()
+                async with ctx:
+                    try:
+                        with provide_bus_message_controller(
+                            AioPikaMessageBusController(aio_pika_message)
+                        ):
+                            await handler(builded_message)
+                        if not incoming_message_spec.auto_ack:
+                            with suppress(aio_pika.MessageProcessError):
+                                # Use channel context for acknowledgement
+                                async with self.consumer.get_channel_ctx(
+                                    self.queue_name
+                                ):
+                                    await aio_pika_message.ack()
+                    except BaseException as base_exc:
+                        # Get message id for logging
+                        message_id = aio_pika_message.message_id or str(uuid.uuid4())
 
-                    # Extract retry count from headers if available
-                    headers = aio_pika_message.headers or {}
-                    retry_count = int(str(headers.get("x-retry-count", 0)))
+                        # Extract retry count from headers if available
+                        headers = aio_pika_message.headers or {}
+                        retry_count = int(str(headers.get("x-retry-count", 0)))
 
-                    # Process exception handler if configured
-                    if incoming_message_spec.exception_handler is not None:
-                        try:
-                            incoming_message_spec.exception_handler(base_exc)
-                        except Exception as nested_exc:
+                        # Process exception handler if configured
+                        if incoming_message_spec.exception_handler is not None:
+                            try:
+                                incoming_message_spec.exception_handler(base_exc)
+                            except Exception as nested_exc:
+                                logger.exception(
+                                    f"Error processing exception handler for message {message_id}: {base_exc} | {nested_exc}"
+                                )
+                        else:
                             logger.exception(
-                                f"Error processing exception handler for message {message_id}: {base_exc} | {nested_exc}"
+                                f"Error processing message {message_id} on topic {routing_key}: {str(base_exc)}"
+                            )
+
+                        # Handle rejection with retry logic
+                        if incoming_message_spec.requeue_on_exception:
+                            # Use our retry with backoff mechanism
+                            await self.handle_reject_message(
+                                aio_pika_message,
+                                requeue=False,  # Don't requeue directly, use our backoff mechanism
+                                retry_count=retry_count,
+                                exception=base_exc,
+                            )
+                        else:
+                            # Message shouldn't be retried, reject it
+                            await self.handle_reject_message(
+                                aio_pika_message, requeue=False, exception=base_exc
                             )
                     else:
-                        logger.exception(
-                            f"Error processing message {message_id} on topic {routing_key}: {str(base_exc)}"
-                        )
+                        # Message processed successfully, log and clean up any retry state
+                        message_id = aio_pika_message.message_id or str(uuid.uuid4())
+                        if message_id in self.retry_state:
+                            del self.retry_state[message_id]
 
-                    # Handle rejection with retry logic
-                    if incoming_message_spec.requeue_on_exception:
-                        # Use our retry with backoff mechanism
-                        await self.handle_reject_message(
-                            aio_pika_message,
-                            requeue=False,  # Don't requeue directly, use our backoff mechanism
-                            retry_count=retry_count,
-                            exception=base_exc,
-                        )
-                    else:
-                        # Message shouldn't be retried, reject it
-                        await self.handle_reject_message(
-                            aio_pika_message, requeue=False, exception=base_exc
-                        )
-                else:
-                    # Message processed successfully, log and clean up any retry state
-                    message_id = aio_pika_message.message_id or str(uuid.uuid4())
-                    if message_id in self.retry_state:
-                        del self.retry_state[message_id]
-
-                    # Log success with retry information if applicable
-                    headers = aio_pika_message.headers or {}
-                    if "x-retry-count" in headers:
-                        retry_count = int(str(headers.get("x-retry-count", 0)))
-                        logger.info(
-                            f"Message {message_id}#{self.queue_name} processed successfully after {retry_count} retries"
-                        )
-                    else:
-                        logger.info(
-                            f"Message {message_id}#{self.queue_name} processed successfully"
-                        )
+                        # Log success with retry information if applicable
+                        headers = aio_pika_message.headers or {}
+                        if "x-retry-count" in headers:
+                            retry_count = int(str(headers.get("x-retry-count", 0)))
+                            logger.info(
+                                f"Message {message_id}#{self.queue_name} processed successfully after {retry_count} retries"
+                            )
+                        else:
+                            logger.info(
+                                f"Message {message_id}#{self.queue_name} processed successfully"
+                            )
 
 
 @asynccontextmanager
