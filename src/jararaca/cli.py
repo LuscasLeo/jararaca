@@ -5,6 +5,7 @@ import multiprocessing
 import os
 import sys
 import time
+import traceback
 from codecs import StreamWriter
 from pathlib import Path
 from typing import Any, Callable
@@ -615,6 +616,7 @@ def generate_interfaces(
         return content
     except Exception as e:
         click.echo(f"Error generating TypeScript interfaces: {e}", file=sys.stderr)
+        traceback.print_exc(file=sys.stderr)
         return ""
 
 
