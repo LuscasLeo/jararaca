@@ -8,7 +8,7 @@ from datetime import date, datetime, time
 from decimal import Decimal
 from enum import Enum
 from io import StringIO
-from types import NoneType, UnionType
+from types import FunctionType, NoneType, UnionType
 from typing import (
     IO,
     Annotated,
@@ -35,6 +35,7 @@ from jararaca.presentation.websocket.decorators import RegisterWebSocketMessage
 from jararaca.presentation.websocket.websocket_interceptor import (
     WebSocketMessageWrapper,
 )
+from jararaca.tools.typescript.decorators import MutationEndpoint, QueryEndpoint
 
 CONSTANT_PATTERN = re.compile(r"^[A-Z_]+$")
 
@@ -65,6 +66,13 @@ def use_parse_context() -> ParseContext:
 def snake_to_camel(snake_str: str) -> str:
     components = snake_str.split("_")
     return components[0] + "".join(x.title() for x in components[1:])
+
+
+def pascal_to_camel(pascal_str: str) -> str:
+    """Convert a PascalCase string to camelCase."""
+    if not pascal_str:
+        return pascal_str
+    return pascal_str[0].lower() + pascal_str[1:]
 
 
 def parse_literal_value(value: Any) -> str:
@@ -354,12 +362,17 @@ def write_microservice_to_typescript_interface(
         if rest_controller is None:
             continue
 
-        controller_class_str, types = write_rest_controller_to_typescript_interface(
-            rest_controller, controller
+        controller_class_strio, types, hooks_strio = (
+            write_rest_controller_to_typescript_interface(
+                rest_controller,
+                controller,
+            )
         )
 
         mapped_types_set.update(types)
-        rest_controller_buffer.write(controller_class_str)
+        rest_controller_buffer.write(controller_class_strio.getvalue())
+        if hooks_strio is not None:
+            rest_controller_buffer.write(hooks_strio.getvalue())
 
         registered = RegisterWebSocketMessage.get(controller)
 
@@ -376,6 +389,7 @@ def write_microservice_to_typescript_interface(
 
     final_buffer.write(
         """
+import { createClassQueryHooks , createClassMutationHooks, createClassInfiniteQueryHooks } from "@jararaca/core";
 export type WebSocketMessageMap = {
 %s
 }
@@ -494,11 +508,16 @@ def is_primitive(field_type: Any) -> bool:
 
 def write_rest_controller_to_typescript_interface(
     rest_controller: RestController, controller: type
-) -> tuple[str, set[Any]]:
+) -> tuple[StringIO, set[Any], StringIO | None]:
+
+    class_name = controller.__name__
+
+    decorated_queries: list[tuple[str, FunctionType]] = []
+    decorated_mutations: list[tuple[str, FunctionType]] = []
 
     class_buffer = StringIO()
 
-    class_buffer.write(f"export class {controller.__name__} extends HttpService {{\n")
+    class_buffer.write(f"export class {class_name} extends HttpService {{\n")
 
     mapped_types: set[Any] = set()
 
@@ -513,6 +532,11 @@ def write_rest_controller_to_typescript_interface(
 
             if return_type is None:
                 return_type = NoneType
+
+            if QueryEndpoint.is_query(member):
+                decorated_queries.append((name, member))
+            if MutationEndpoint.is_mutation(member):
+                decorated_mutations.append((name, member))
 
             mapped_types.update(extract_all_envolved_types(return_type))
 
@@ -588,7 +612,31 @@ def write_rest_controller_to_typescript_interface(
 
     class_buffer.write("}\n")
 
-    return class_buffer.getvalue(), mapped_types
+    controller_hooks_builder: StringIO | None = None
+
+    if decorated_queries or decorated_mutations:
+        controller_hooks_builder = StringIO()
+        controller_hooks_builder.write(
+            f"export const {pascal_to_camel(class_name)} = {{\n"
+        )
+
+        if decorated_queries:
+            controller_hooks_builder.write(
+                f"\t...createClassQueryHooks({class_name},\n"
+            )
+            for name, member in decorated_queries:
+                controller_hooks_builder.write(f'\t\t"{snake_to_camel(name)}",\n')
+            controller_hooks_builder.write("\t),\n")
+        if decorated_mutations:
+            controller_hooks_builder.write(
+                f"\t...createClassMutationHooks({class_name},\n"
+            )
+            for name, member in decorated_mutations:
+                controller_hooks_builder.write(f'\t\t"{snake_to_camel(name)}",\n')
+            controller_hooks_builder.write("\t),\n")
+        controller_hooks_builder.write("};\n")
+
+    return class_buffer, mapped_types, controller_hooks_builder
 
 
 EXCLUDED_REQUESTS_TYPES = [Request, Response]
