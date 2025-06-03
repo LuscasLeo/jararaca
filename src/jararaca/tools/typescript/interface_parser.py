@@ -389,7 +389,7 @@ def write_microservice_to_typescript_interface(
 
     final_buffer.write(
         """
-import { createClassQueryHooks , createClassMutationHooks, createClassInfiniteQueryHooks } from "@jararaca/core";
+import { createClassQueryHooks , createClassMutationHooks, createClassInfiniteQueryHooks, paginationModelByFirstArgPaginationFilter } from "@jararaca/core";
 export type WebSocketMessageMap = {
 %s
 }
@@ -512,7 +512,7 @@ def write_rest_controller_to_typescript_interface(
 
     class_name = controller.__name__
 
-    decorated_queries: list[tuple[str, FunctionType]] = []
+    decorated_queries: list[tuple[str, FunctionType, QueryEndpoint]] = []
     decorated_mutations: list[tuple[str, FunctionType]] = []
 
     class_buffer = StringIO()
@@ -533,8 +533,8 @@ def write_rest_controller_to_typescript_interface(
             if return_type is None:
                 return_type = NoneType
 
-            if QueryEndpoint.is_query(member):
-                decorated_queries.append((name, member))
+            if query_endpoint := QueryEndpoint.extract_query_endpoint(member):
+                decorated_queries.append((name, member, query_endpoint))
             if MutationEndpoint.is_mutation(member):
                 decorated_mutations.append((name, member))
 
@@ -624,9 +624,22 @@ def write_rest_controller_to_typescript_interface(
             controller_hooks_builder.write(
                 f"\t...createClassQueryHooks({class_name},\n"
             )
-            for name, member in decorated_queries:
+            for name, member, _ in decorated_queries:
                 controller_hooks_builder.write(f'\t\t"{snake_to_camel(name)}",\n')
             controller_hooks_builder.write("\t),\n")
+
+        if decorated_queries and any(
+            query.has_infinite_query for _, _, query in decorated_queries
+        ):
+            controller_hooks_builder.write(
+                f"\t...createClassInfiniteQueryHooks({class_name}, {{\n"
+            )
+            for name, member, query in decorated_queries:
+                if query.has_infinite_query:
+                    controller_hooks_builder.write(
+                        f'\t\t"{snake_to_camel(name)}": paginationModelByFirstArgPaginationFilter(),\n'
+                    )
+            controller_hooks_builder.write("\t}),\n")
         if decorated_mutations:
             controller_hooks_builder.write(
                 f"\t...createClassMutationHooks({class_name},\n"
