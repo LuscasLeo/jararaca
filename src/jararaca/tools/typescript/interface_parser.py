@@ -389,7 +389,7 @@ def write_microservice_to_typescript_interface(
 
     final_buffer.write(
         """
-import { createClassQueryHooks , createClassMutationHooks, createClassInfiniteQueryHooks, paginationModelByFirstArgPaginationFilter } from "@jararaca/core";
+import { HttpService, HttpBackend, HttpBackendRequest, ResponseType, createClassQueryHooks , createClassMutationHooks, createClassInfiniteQueryHooks, paginationModelByFirstArgPaginationFilter } from "@jararaca/core";
 export type WebSocketMessageMap = {
 %s
 }
@@ -405,37 +405,6 @@ export type WebSocketMessageMap = {
         )
     )
 
-    final_buffer.write(
-        """
-export type ResponseType =
-    | "arraybuffer"
-    | "blob"
-    | "document"
-    | "json"
-    | "text"
-    | "stream"
-    | "formdata";
-
-
-export interface HttpBackendRequest {
-  method: string;
-  path: string;
-  pathParams: { [key: string]: any };
-  headers: { [key: string]: string };
-  query: { [key: string]: unknown };
-  body: unknown;
-  responseType?: ResponseType;
-}
-
-export interface HttpBackend {
-  request<T>(request: HttpBackendRequest): Promise<T>;
-}
-
-export abstract class HttpService {
-  constructor(protected readonly httpBackend: HttpBackend) {}
-}
-"""
-    )
     processed_types: set[Any] = set()
     backlog: set[Any] = mapped_types_set.copy()
 
