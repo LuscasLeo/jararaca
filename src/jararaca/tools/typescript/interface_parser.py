@@ -389,6 +389,12 @@ def write_microservice_to_typescript_interface(
 
     final_buffer.write(
         """
+/* eslint-disable */
+
+// @ts-nocheck
+
+// noinspection JSUnusedGlobalSymbols
+
 import { HttpService, HttpBackend, HttpBackendRequest, ResponseType, createClassQueryHooks , createClassMutationHooks, createClassInfiniteQueryHooks, paginationModelByFirstArgPaginationFilter } from "@jararaca/core";
 export type WebSocketMessageMap = {
 %s
