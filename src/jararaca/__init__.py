@@ -119,6 +119,11 @@ if TYPE_CHECKING:
         use_session,
         use_transaction,
     )
+    from .persistence.interceptors.decorators import (
+        set_use_persistence_session,
+        skip_persistence_session,
+        uses_persistence_session,
+    )
     from .persistence.utilities import (
         CriteriaBasedAttributeQueryInjector,
         CRUDOperations,
@@ -249,6 +254,9 @@ if TYPE_CHECKING:
         "use_transaction",
         "providing_session",
         "provide_session",
+        "uses_persistence_session",
+        "skip_persistence_session",
+        "set_use_persistence_session",
         "providing_transaction",
         "providing_new_session",
         "Post",
@@ -448,6 +456,21 @@ _dynamic_imports: "dict[str, tuple[str, str, str | None]]" = {
     "providing_transaction": (
         __SPEC_PARENT__,
         "persistence.interceptors.aiosqa_interceptor",
+        None,
+    ),
+    "uses_persistence_session": (
+        __SPEC_PARENT__,
+        "persistence.interceptors.decorators",
+        None,
+    ),
+    "skip_persistence_session": (
+        __SPEC_PARENT__,
+        "persistence.interceptors.decorators",
+        None,
+    ),
+    "set_use_persistence_session": (
+        __SPEC_PARENT__,
+        "persistence.interceptors.decorators",
         None,
     ),
     "Post": (__SPEC_PARENT__, "presentation.decorators", None),
