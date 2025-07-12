@@ -12,7 +12,10 @@ from sqlalchemy.ext.asyncio import (
 from sqlalchemy.ext.asyncio.engine import AsyncEngine
 
 from jararaca.microservice import AppInterceptor, AppTransactionContext
-from jararaca.reflect.metadata import SetMetadata, get_metadata_value
+from jararaca.persistence.interceptors.decorators import (
+    INJECT_PERSISTENCE_SESSION_METADATA_TEMPLATE,
+)
+from jararaca.reflect.metadata import get_metadata_value
 
 DEFAULT_CONNECTION_NAME = "default"
 
@@ -129,49 +132,6 @@ class AIOSQAConfig:
         self.inject_default = inject_default
 
 
-INJECT_CONNECTION_METADATA = "inject_connection_metadata_{connection_name}"
-
-
-def set_inject_connection(
-    inject: bool, connection_name: str = DEFAULT_CONNECTION_NAME
-) -> SetMetadata:
-    """
-    Set whether to inject the connection metadata for the given connection name.
-    This is useful when you want to control whether the connection metadata
-    should be injected into the context or not.
-    """
-
-    return SetMetadata(
-        INJECT_CONNECTION_METADATA.format(connection_name=connection_name), inject
-    )
-
-
-def uses_connection(
-    connection_name: str = DEFAULT_CONNECTION_NAME,
-) -> SetMetadata:
-    """
-    Use connection metadata for the given connection name.
-    This is useful when you want to inject the connection metadata into the context,
-    for example, when you are using a specific connection for a specific operation.
-    """
-    return SetMetadata(
-        INJECT_CONNECTION_METADATA.format(connection_name=connection_name), True
-    )
-
-
-def dnt_uses_connection(
-    connection_name: str = DEFAULT_CONNECTION_NAME,
-) -> SetMetadata:
-    """
-    Do not use connection metadata for the given connection name.
-    This is useful when you want to ensure that the connection metadata is not injected
-    into the context, for example, when you are using a different connection for a specific operation.
-    """
-    return SetMetadata(
-        INJECT_CONNECTION_METADATA.format(connection_name=connection_name), False
-    )
-
-
 class AIOSqlAlchemySessionInterceptor(AppInterceptor):
 
     def __init__(self, config: AIOSQAConfig):
@@ -190,7 +150,7 @@ class AIOSqlAlchemySessionInterceptor(AppInterceptor):
     ) -> AsyncGenerator[None, None]:
 
         uses_connection_metadata = get_metadata_value(
-            INJECT_CONNECTION_METADATA.format(
+            INJECT_PERSISTENCE_SESSION_METADATA_TEMPLATE.format(
                 connection_name=self.config.connection_name
             ),
             self.config.inject_default,
