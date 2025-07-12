@@ -12,12 +12,11 @@ from sqlalchemy.ext.asyncio import (
 from sqlalchemy.ext.asyncio.engine import AsyncEngine
 
 from jararaca.microservice import AppInterceptor, AppTransactionContext
+from jararaca.persistence.interceptors.constants import DEFAULT_CONNECTION_NAME
 from jararaca.persistence.interceptors.decorators import (
     INJECT_PERSISTENCE_SESSION_METADATA_TEMPLATE,
 )
 from jararaca.reflect.metadata import get_metadata_value
-
-DEFAULT_CONNECTION_NAME = "default"
 
 ctx_default_connection_name: ContextVar[str] = ContextVar(
     "ctx_default_connection_name", default=DEFAULT_CONNECTION_NAME
