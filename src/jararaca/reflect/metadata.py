@@ -6,7 +6,7 @@ from typing import Any, Awaitable, Callable, Mapping, TypeVar, Union, cast
 DECORATED = TypeVar("DECORATED", bound=Union[Callable[..., Awaitable[Any]], type])
 
 
-@dataclass
+@dataclass(frozen=True)
 class ControllerInstanceMetadata:
     value: Any
     inherited: bool
