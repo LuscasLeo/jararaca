@@ -1,4 +1,5 @@
 import asyncio
+import logging
 from dataclasses import dataclass
 from typing import Any
 
@@ -9,6 +10,8 @@ from jararaca.presentation.websocket.websocket_interceptor import (
     SendFunc,
     WebSocketConnectionBackend,
 )
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -66,6 +69,34 @@ class RedisWebSocketConnectionBackend(WebSocketConnectionBackend):
 
         self.consume_broadcast_timeout = consume_broadcast_timeout
         self.consume_send_timeout = consume_send_timeout
+        self.__shutdown_event: asyncio.Event | None = None
+
+        self.__send_func: SendFunc | None = None
+        self.__broadcast_func: BroadcastFunc | None = None
+
+    @property
+    def shutdown_event(self) -> asyncio.Event:
+        if self.__shutdown_event is None:
+            raise RuntimeError(
+                "Shutdown event is not set. Please configure the backend before using it."
+            )
+        return self.__shutdown_event
+
+    @property
+    def send_func(self) -> SendFunc:
+        if self.__send_func is None:
+            raise RuntimeError(
+                "Send function is not set. Please configure the backend before using it."
+            )
+        return self.__send_func
+
+    @property
+    def broadcast_func(self) -> BroadcastFunc:
+        if self.__broadcast_func is None:
+            raise RuntimeError(
+                "Broadcast function is not set. Please configure the backend before using it."
+            )
+        return self.__broadcast_func
 
     async def broadcast(self, message: bytes) -> None:
         await self.redis.publish(
@@ -82,22 +113,65 @@ class RedisWebSocketConnectionBackend(WebSocketConnectionBackend):
     def configure(
         self, broadcast: BroadcastFunc, send: SendFunc, shutdown_event: asyncio.Event
     ) -> None:
+        if self.__shutdown_event is not None:
+            raise RuntimeError("Backend is already configured.")
+        self.__shutdown_event = shutdown_event
+        self.__send_func = send
+        self.__broadcast_func = broadcast
+        self.setup_send_consumer()
+        self.setup_broadcast_consumer()
 
-        broadcast_task = asyncio.get_event_loop().create_task(
-            self.consume_broadcast(broadcast, shutdown_event)
-        )
+    def setup_send_consumer(self) -> None:
 
         send_task = asyncio.get_event_loop().create_task(
-            self.consume_send(send, shutdown_event)
+            self.consume_send(self.send_func, self.shutdown_event)
+        )
+
+        self.tasks.add(send_task)
+        send_task.add_done_callback(self.handle_send_task_done)
+
+    def setup_broadcast_consumer(self) -> None:
+
+        broadcast_task = asyncio.get_event_loop().create_task(
+            self.consume_broadcast(self.broadcast_func, self.shutdown_event)
         )
 
         self.tasks.add(broadcast_task)
-        self.tasks.add(send_task)
+
+        broadcast_task.add_done_callback(self.handle_broadcast_task_done)
+
+    def handle_broadcast_task_done(self, task: asyncio.Task[Any]) -> None:
+        if task.cancelled():
+            logger.warning("Broadcast task was cancelled.")
+        elif task.exception() is not None:
+            logger.error(f"Broadcast task raised an exception: {task.exception()}")
+        else:
+            logger.warning("Broadcast task somehow completed successfully.")
+
+        if not self.shutdown_event.is_set():
+            logger.warning(
+                "Broadcast task completed, but shutdown event is not set. This is unexpected."
+            )
+            self.setup_broadcast_consumer()
+
+    def handle_send_task_done(self, task: asyncio.Task[Any]) -> None:
+        if task.cancelled():
+            logger.warning("Send task was cancelled.")
+        elif task.exception() is not None:
+            logger.error(f"Send task raised an exception: {task.exception()}")
+        else:
+            logger.warning("Send task somehow completed successfully.")
+
+        if not self.shutdown_event.is_set():
+            logger.warning(
+                "Send task completed, but shutdown event is not set. This is unexpected."
+            )
+            self.setup_send_consumer()
 
     async def consume_broadcast(
         self, broadcast: BroadcastFunc, shutdown_event: asyncio.Event
     ) -> None:
-
+        logger.info("Starting broadcast consumer...")
         async with self.redis.pubsub() as pubsub:
             await pubsub.subscribe(self.broadcast_pubsub_channel)
 
@@ -122,7 +196,7 @@ class RedisWebSocketConnectionBackend(WebSocketConnectionBackend):
                     task.add_done_callback(self.tasks.discard)
 
     async def consume_send(self, send: SendFunc, shutdown_event: asyncio.Event) -> None:
-
+        logger.info("Starting send consumer...")
         async with self.redis.pubsub() as pubsub:
             await pubsub.subscribe(self.send_pubsub_channel)
 
