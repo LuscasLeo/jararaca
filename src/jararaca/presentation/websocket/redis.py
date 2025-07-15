@@ -144,7 +144,9 @@ class RedisWebSocketConnectionBackend(WebSocketConnectionBackend):
         if task.cancelled():
             logger.warning("Broadcast task was cancelled.")
         elif task.exception() is not None:
-            logger.error(f"Broadcast task raised an exception: {task.exception()}")
+            logger.exception(
+                f"Broadcast task raised an exception:", exc_info=task.exception()
+            )
         else:
             logger.warning("Broadcast task somehow completed successfully.")
 
@@ -158,7 +160,9 @@ class RedisWebSocketConnectionBackend(WebSocketConnectionBackend):
         if task.cancelled():
             logger.warning("Send task was cancelled.")
         elif task.exception() is not None:
-            logger.error(f"Send task raised an exception: {task.exception()}")
+            logger.exception(
+                f"Send task raised an exception:", exc_info=task.exception()
+            )
         else:
             logger.warning("Send task somehow completed successfully.")
 
