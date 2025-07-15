@@ -58,6 +58,7 @@ class RedisWebSocketConnectionBackend(WebSocketConnectionBackend):
         send_pubsub_channel: str,
         consume_broadcast_timeout: int = 1,
         consume_send_timeout: int = 1,
+        retry_delay: float = 5.0,
     ) -> None:
 
         self.redis = conn
@@ -69,6 +70,7 @@ class RedisWebSocketConnectionBackend(WebSocketConnectionBackend):
 
         self.consume_broadcast_timeout = consume_broadcast_timeout
         self.consume_send_timeout = consume_send_timeout
+        self.retry_delay = retry_delay
         self.__shutdown_event: asyncio.Event | None = None
 
         self.__send_func: SendFunc | None = None
@@ -154,7 +156,10 @@ class RedisWebSocketConnectionBackend(WebSocketConnectionBackend):
             logger.warning(
                 "Broadcast task completed, but shutdown event is not set. This is unexpected."
             )
-            self.setup_broadcast_consumer()
+            # Add delay before retrying to avoid excessive CPU usage
+            asyncio.get_event_loop().create_task(
+                self._retry_broadcast_consumer_with_delay()
+            )
 
     def handle_send_task_done(self, task: asyncio.Task[Any]) -> None:
         if task.cancelled():
@@ -170,6 +175,29 @@ class RedisWebSocketConnectionBackend(WebSocketConnectionBackend):
             logger.warning(
                 "Send task completed, but shutdown event is not set. This is unexpected."
             )
+            # Add delay before retrying to avoid excessive CPU usage
+            asyncio.get_event_loop().create_task(self._retry_send_consumer_with_delay())
+
+    async def _retry_broadcast_consumer_with_delay(self) -> None:
+        """Retry setting up broadcast consumer after a delay to avoid excessive CPU usage."""
+        logger.info(
+            f"Waiting {self.retry_delay} seconds before retrying broadcast consumer..."
+        )
+        await asyncio.sleep(self.retry_delay)
+
+        if not self.shutdown_event.is_set():
+            logger.info("Retrying broadcast consumer setup...")
+            self.setup_broadcast_consumer()
+
+    async def _retry_send_consumer_with_delay(self) -> None:
+        """Retry setting up send consumer after a delay to avoid excessive CPU usage."""
+        logger.info(
+            f"Waiting {self.retry_delay} seconds before retrying send consumer..."
+        )
+        await asyncio.sleep(self.retry_delay)
+
+        if not self.shutdown_event.is_set():
+            logger.info("Retrying send consumer setup...")
             self.setup_send_consumer()
 
     async def consume_broadcast(
