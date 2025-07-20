@@ -165,7 +165,11 @@ if TYPE_CHECKING:
     from .presentation.websocket.websocket_interceptor import WebSocketInterceptor
     from .scheduler.decorators import ScheduledAction
     from .tools.app_config.interceptor import AppConfigurationInterceptor
-    from .tools.typescript.decorators import MutationEndpoint, QueryEndpoint
+    from .tools.typescript.decorators import (
+        MutationEndpoint,
+        QueryEndpoint,
+        SplitInputOutput,
+    )
 
     __all__ = [
         "SetMetadata",
@@ -272,6 +276,7 @@ if TYPE_CHECKING:
         "AppConfigurationInterceptor",
         "QueryEndpoint",
         "MutationEndpoint",
+        "SplitInputOutput",
         "UseMiddleware",
         "UseDependency",
         "GlobalHttpErrorHandler",
@@ -501,6 +506,7 @@ _dynamic_imports: "dict[str, tuple[str, str, str | None]]" = {
     ),
     "QueryEndpoint": (__SPEC_PARENT__, "tools.typescript.decorators", None),
     "MutationEndpoint": (__SPEC_PARENT__, "tools.typescript.decorators", None),
+    "SplitInputOutput": (__SPEC_PARENT__, "tools.typescript.decorators", None),
     "UseMiddleware": (__SPEC_PARENT__, "presentation.decorators", None),
     "UseDependency": (__SPEC_PARENT__, "presentation.decorators", None),
     "GlobalHttpErrorHandler": (__SPEC_PARENT__, "rpc.http.decorators", None),
