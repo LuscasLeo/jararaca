@@ -35,7 +35,11 @@ from jararaca.presentation.websocket.decorators import RegisterWebSocketMessage
 from jararaca.presentation.websocket.websocket_interceptor import (
     WebSocketMessageWrapper,
 )
-from jararaca.tools.typescript.decorators import MutationEndpoint, QueryEndpoint
+from jararaca.tools.typescript.decorators import (
+    MutationEndpoint,
+    QueryEndpoint,
+    SplitInputOutput,
+)
 
 CONSTANT_PATTERN = re.compile(r"^[A-Z_]+$")
 
@@ -248,7 +252,14 @@ def parse_literal_value(value: Any) -> str:
     return "unknown"
 
 
-def get_field_type_for_ts(field_type: Any) -> Any:
+def get_field_type_for_ts(field_type: Any, context_suffix: str = "") -> Any:
+    """
+    Convert a Python type to its TypeScript equivalent.
+
+    Args:
+        field_type: The Python type to convert
+        context_suffix: Suffix for split models (e.g., "Input", "Output")
+    """
     if field_type is Response:
         return "unknown"
     if field_type is Any:
@@ -276,17 +287,20 @@ def get_field_type_for_ts(field_type: Any) -> Any:
     if field_type == Decimal:
         return "number"
     if get_origin(field_type) == ClassVar:
-        return get_field_type_for_ts(field_type.__args__[0])
+        return get_field_type_for_ts(field_type.__args__[0], context_suffix)
     if get_origin(field_type) == tuple:
-        return f"[{', '.join([get_field_type_for_ts(field) for field in field_type.__args__])}]"
+        return f"[{', '.join([get_field_type_for_ts(field, context_suffix) for field in field_type.__args__])}]"
     if get_origin(field_type) == list or get_origin(field_type) == frozenset:
-        return f"Array<{get_field_type_for_ts(field_type.__args__[0])}>"
+        return f"Array<{get_field_type_for_ts(field_type.__args__[0], context_suffix)}>"
     if get_origin(field_type) == set:
-        return f"Array<{get_field_type_for_ts(field_type.__args__[0])}> // Set"
+        return f"Array<{get_field_type_for_ts(field_type.__args__[0], context_suffix)}> // Set"
     if get_origin(field_type) == dict:
-        return f"{{[key: {get_field_type_for_ts(field_type.__args__[0])}]: {get_field_type_for_ts(field_type.__args__[1])}}}"
+        return f"{{[key: {get_field_type_for_ts(field_type.__args__[0], context_suffix)}]: {get_field_type_for_ts(field_type.__args__[1], context_suffix)}}}"
     if inspect.isclass(field_type):
         if not hasattr(field_type, "__pydantic_generic_metadata__"):
+            # Check if this is a split model and use appropriate suffix
+            if SplitInputOutput.is_split_model(field_type) and context_suffix:
+                return f"{field_type.__name__}{context_suffix}"
             return field_type.__name__
         pydantic_metadata = getattr(field_type, "__pydantic_generic_metadata__")
 
@@ -295,12 +309,17 @@ def get_field_type_for_ts(field_type: Any) -> Any:
             if pydantic_metadata.get("origin") is not None
             else field_type.__name__
         )
+
+        # Check if this is a split model and use appropriate suffix
+        if SplitInputOutput.is_split_model(field_type) and context_suffix:
+            name = f"{field_type.__name__}{context_suffix}"
+
         args = pydantic_metadata.get("args")
 
         if len(args) > 0:
             return "%s<%s>" % (
                 name,
-                ", ".join([get_field_type_for_ts(arg) for arg in args]),
+                ", ".join([get_field_type_for_ts(arg, context_suffix) for arg in args]),
             )
 
         return name
@@ -310,7 +329,9 @@ def get_field_type_for_ts(field_type: Any) -> Any:
     if get_origin(field_type) == Literal:
         return " | ".join([parse_literal_value(x) for x in field_type.__args__])
     if get_origin(field_type) == UnionType or get_origin(field_type) == typing.Union:
-        return " | ".join([get_field_type_for_ts(x) for x in field_type.__args__])
+        return " | ".join(
+            [get_field_type_for_ts(x, context_suffix) for x in field_type.__args__]
+        )
     if (get_origin(field_type) == Annotated) and (len(field_type.__args__) > 0):
         if (
             plain_validator := next(
@@ -318,8 +339,10 @@ def get_field_type_for_ts(field_type: Any) -> Any:
                 None,
             )
         ) is not None:
-            return get_field_type_for_ts(plain_validator.json_schema_input_type)
-        return get_field_type_for_ts(field_type.__args__[0])
+            return get_field_type_for_ts(
+                plain_validator.json_schema_input_type, context_suffix
+            )
+        return get_field_type_for_ts(field_type.__args__[0], context_suffix)
     return "unknown"
 
 
@@ -334,6 +357,59 @@ def get_generic_args(field_type: Any) -> Any:
 def parse_type_to_typescript_interface(
     basemodel_type: Type[Any],
 ) -> tuple[set[type], str]:
+    """
+    Parse a Pydantic model into TypeScript interface(s).
+
+    If the model is decorated with @SplitInputOutput, it generates both Input and Output interfaces.
+    Otherwise, it generates a single interface.
+    """
+    # Check if this model should be split into Input/Output interfaces
+    if SplitInputOutput.is_split_model(basemodel_type):
+        return parse_split_input_output_interfaces(basemodel_type)
+
+    return parse_single_typescript_interface(basemodel_type)
+
+
+def parse_split_input_output_interfaces(
+    basemodel_type: Type[Any],
+) -> tuple[set[type], str]:
+    """
+    Generate both Input and Output TypeScript interfaces for a split model.
+    """
+    mapped_types: set[type] = set()
+    combined_output = StringIO()
+
+    # Generate Input interface (with optional fields)
+    input_mapped_types, input_interface = parse_single_typescript_interface(
+        basemodel_type, interface_suffix="Input", force_optional_defaults=True
+    )
+    mapped_types.update(input_mapped_types)
+    combined_output.write(input_interface)
+
+    # Generate Output interface (all fields required as they come from the backend)
+    output_mapped_types, output_interface = parse_single_typescript_interface(
+        basemodel_type, interface_suffix="Output", force_optional_defaults=False
+    )
+    mapped_types.update(output_mapped_types)
+    combined_output.write(output_interface)
+
+    return mapped_types, combined_output.getvalue()
+
+
+def parse_single_typescript_interface(
+    basemodel_type: Type[Any],
+    interface_suffix: str = "",
+    force_optional_defaults: bool | None = None,
+) -> tuple[set[type], str]:
+    """
+    Generate a single TypeScript interface for a Pydantic model.
+
+    Args:
+        basemodel_type: The Pydantic model class
+        interface_suffix: Suffix to add to the interface name (e.g., "Input", "Output")
+        force_optional_defaults: If True, fields with defaults are optional. If False, all fields are required.
+                                If None, uses the default behavior (fields with defaults are optional).
+    """
     string_builder = StringIO()
     mapped_types: set[type] = set()
 
@@ -360,7 +436,7 @@ def parse_type_to_typescript_interface(
         enum_values = sorted([(x._name_, x.value) for x in basemodel_type])
         return (
             set(),
-            f"export enum {basemodel_type.__name__} {{\n"
+            f"export enum {basemodel_type.__name__}{interface_suffix} {{\n"
             + "\n ".join([f'\t{name} = "{value}",' for name, value in enum_values])
             + "\n}\n",
         )
@@ -384,46 +460,46 @@ def parse_type_to_typescript_interface(
         for inherited_class in valid_inherited_classes
     }
 
-    extends_expression = (
-        " extends %s"
-        % ", ".join(
-            sorted(
-                [
-                    (
-                        "%s" % get_field_type_for_ts(inherited_class)
-                        if not inherited_classes_consts_conflict[inherited_class]
-                        else "Omit<%s, %s>"
-                        % (
-                            get_field_type_for_ts(inherited_class),
-                            " | ".join(
-                                sorted(
-                                    [
-                                        '"%s"' % field_name
-                                        for field_name in inherited_classes_consts_conflict[
-                                            inherited_class
-                                        ]
-                                    ]
-                                )
-                            ),
+    # Modify inheritance for split interfaces
+    extends_expression = ""
+    if len(valid_inherited_classes) > 0:
+        extends_base_names = []
+        for inherited_class in valid_inherited_classes:
+            base_name = get_field_type_for_ts(inherited_class, interface_suffix)
+            # If the inherited class is also a split model, use the appropriate suffix
+            if SplitInputOutput.is_split_model(inherited_class) and interface_suffix:
+                base_name = f"{inherited_class.__name__}{interface_suffix}"
+
+            if inherited_classes_consts_conflict[inherited_class]:
+                base_name = "Omit<%s, %s>" % (
+                    base_name,
+                    " | ".join(
+                        sorted(
+                            [
+                                '"%s"' % field_name
+                                for field_name in inherited_classes_consts_conflict[
+                                    inherited_class
+                                ]
+                            ]
                         )
-                    )
-                    for inherited_class in valid_inherited_classes
-                ],
-                key=lambda x: str(x),
-            )
+                    ),
+                )
+            extends_base_names.append(base_name)
+
+        extends_expression = " extends %s" % ", ".join(
+            sorted(extends_base_names, key=lambda x: str(x))
         )
-        if len(valid_inherited_classes) > 0
-        else ""
-    )
+
+    interface_name = f"{basemodel_type.__name__}{interface_suffix}"
 
     if is_generic_type(basemodel_type):
         generic_args = get_generic_args(basemodel_type)
         string_builder.write(
-            f"export interface {basemodel_type.__name__}<{', '.join(sorted([arg.__name__ for arg in generic_args]))}>{extends_expression} {{\n"
+            f"export interface {interface_name}<{', '.join(sorted([arg.__name__ for arg in generic_args]))}>{extends_expression} {{\n"
         )
     else:
         string_builder.write(
-            f"export interface {basemodel_type.__name__}{extends_expression} {{\n"
+            f"export interface {interface_name}{extends_expression} {{\n"
         )
 
     if hasattr(basemodel_type, "__annotations__"):
@@ -440,11 +516,19 @@ def parse_type_to_typescript_interface(
             if should_exclude_field(field_name, field, basemodel_type):
                 continue
 
-            # Check if field has a default value (making it optional)
-            is_optional = has_default_value(field_name, field, basemodel_type)
+            # Determine if field is optional based on the force_optional_defaults parameter
+            if force_optional_defaults is True:
+                # Input interface: fields with defaults are optional
+                is_optional = has_default_value(field_name, field, basemodel_type)
+            elif force_optional_defaults is False:
+                # Output interface: all fields are required (backend provides complete data)
+                is_optional = False
+            else:
+                # Default behavior: fields with defaults are optional
+                is_optional = has_default_value(field_name, field, basemodel_type)
 
             string_builder.write(
-                f"  {snake_to_camel(field_name) if not is_constant(field_name) else field_name}{'?' if is_optional else ''}: {get_field_type_for_ts(field)};\n"
+                f"  {snake_to_camel(field_name) if not is_constant(field_name) else field_name}{'?' if is_optional else ''}: {get_field_type_for_ts(field, interface_suffix)};\n"
             )
             mapped_types.update(extract_all_envolved_types(field))
             mapped_types.add(field)
@@ -471,7 +555,7 @@ def parse_type_to_typescript_interface(
                     return_type = NoneType
 
                 string_builder.write(
-                    f"  {snake_to_camel(field_name)}: {get_field_type_for_ts(return_type)};\n"
+                    f"  {snake_to_camel(field_name)}: {get_field_type_for_ts(return_type, interface_suffix)};\n"
                 )
                 mapped_types.update(extract_all_envolved_types(return_type))
                 mapped_types.add(return_type)
@@ -660,7 +744,8 @@ def write_rest_controller_to_typescript_interface(
 
             mapped_types.update(extract_all_envolved_types(return_type))
 
-            return_value_repr = get_field_type_for_ts(return_type)
+            # For return types, use Output suffix if it's a split model
+            return_value_repr = get_field_type_for_ts(return_type, "Output")
 
             arg_params_spec, parametes_mapped_types = extract_parameters(
                 member, rest_controller, mapping
@@ -877,32 +962,68 @@ def extract_parameters(
                     )
                 elif isinstance(annotated_type_hook, Body):
                     mapped_types.update(extract_all_envolved_types(parameter_type))
+                    # For body parameters, use Input suffix if it's a split model
+                    context_suffix = (
+                        "Input"
+                        if (
+                            inspect.isclass(parameter_type)
+                            and hasattr(parameter_type, "__dict__")
+                            and SplitInputOutput.is_split_model(parameter_type)
+                        )
+                        else ""
+                    )
                     parameters_list.append(
                         HttpParemeterSpec(
                             type_="body",
                             name=parameter_name,
                             required=True,
-                            argument_type_str=get_field_type_for_ts(parameter_type),
+                            argument_type_str=get_field_type_for_ts(
+                                parameter_type, context_suffix
+                            ),
                         )
                     )
                 elif isinstance(annotated_type_hook, Query):
                     mapped_types.add(parameter_type)
+                    # For query parameters, use Input suffix if it's a split model
+                    context_suffix = (
+                        "Input"
+                        if (
+                            inspect.isclass(parameter_type)
+                            and hasattr(parameter_type, "__dict__")
+                            and SplitInputOutput.is_split_model(parameter_type)
+                        )
+                        else ""
+                    )
                     parameters_list.append(
                         HttpParemeterSpec(
                             type_="query",
                             name=parameter_name,
                             required=True,
-                            argument_type_str=get_field_type_for_ts(parameter_type),
+                            argument_type_str=get_field_type_for_ts(
+                                parameter_type, context_suffix
+                            ),
                         )
                     )
                 elif isinstance(annotated_type_hook, Path):
                     mapped_types.add(parameter_type)
+                    # For path parameters, use Input suffix if it's a split model
+                    context_suffix = (
+                        "Input"
+                        if (
+                            inspect.isclass(parameter_type)
+                            and hasattr(parameter_type, "__dict__")
+                            and SplitInputOutput.is_split_model(parameter_type)
+                        )
+                        else ""
+                    )
                     parameters_list.append(
                         HttpParemeterSpec(
                             type_="path",
                             name=parameter_name,
                             required=True,
-                            argument_type_str=get_field_type_for_ts(parameter_type),
+                            argument_type_str=get_field_type_for_ts(
+                                parameter_type, context_suffix
+                            ),
                         )
                     )
 
@@ -924,22 +1045,46 @@ def extract_parameters(
                     re.search(f":{parameter_name}(?:/|$)", controller.path) is not None
                 ):
                     mapped_types.add(annotated_type)
+                    # For path parameters, use Input suffix if it's a split model
+                    context_suffix = (
+                        "Input"
+                        if (
+                            inspect.isclass(annotated_type)
+                            and hasattr(annotated_type, "__dict__")
+                            and SplitInputOutput.is_split_model(annotated_type)
+                        )
+                        else ""
+                    )
                     parameters_list.append(
                         HttpParemeterSpec(
                             type_="path",
                             name=parameter_name,
                             required=True,
-                            argument_type_str=get_field_type_for_ts(annotated_type),
+                            argument_type_str=get_field_type_for_ts(
+                                annotated_type, context_suffix
+                            ),
                         )
                     )
                 else:
                     mapped_types.add(annotated_type)
+                    # For default parameters (treated as query), use Input suffix if it's a split model
+                    context_suffix = (
+                        "Input"
+                        if (
+                            inspect.isclass(annotated_type)
+                            and hasattr(annotated_type, "__dict__")
+                            and SplitInputOutput.is_split_model(annotated_type)
+                        )
+                        else ""
+                    )
                     parameters_list.append(
                         HttpParemeterSpec(
                             type_="query",
                             name=parameter_name,
                             required=True,
-                            argument_type_str=get_field_type_for_ts(annotated_type),
+                            argument_type_str=get_field_type_for_ts(
+                                annotated_type, context_suffix
+                            ),
                         )
                     )
 
@@ -947,12 +1092,18 @@ def extract_parameters(
                 parameter_type, BaseModel
             ):
                 mapped_types.update(extract_all_envolved_types(parameter_type))
+                # For BaseModel parameters, use Input suffix if it's a split model
+                context_suffix = (
+                    "Input" if SplitInputOutput.is_split_model(parameter_type) else ""
+                )
                 parameters_list.append(
                     HttpParemeterSpec(
                         type_="body",
                         name=parameter_name,
                         required=True,
-                        argument_type_str=get_field_type_for_ts(parameter_type),
+                        argument_type_str=get_field_type_for_ts(
+                            parameter_type, context_suffix
+                        ),
                     )
                 )
             elif (
@@ -961,22 +1112,46 @@ def extract_parameters(
                 or re.search(f"{{{parameter_name}(:.*?)?}}", mapping.path) is not None
             ):
                 mapped_types.add(parameter_type)
+                # For path parameters, use Input suffix if it's a split model
+                context_suffix = (
+                    "Input"
+                    if (
+                        inspect.isclass(parameter_type)
+                        and hasattr(parameter_type, "__dict__")
+                        and SplitInputOutput.is_split_model(parameter_type)
+                    )
+                    else ""
+                )
                 parameters_list.append(
                     HttpParemeterSpec(
                         type_="path",
                         name=parameter_name,
                         required=True,
-                        argument_type_str=get_field_type_for_ts(parameter_type),
+                        argument_type_str=get_field_type_for_ts(
+                            parameter_type, context_suffix
+                        ),
                     )
                 )
             else:
                 mapped_types.add(parameter_type)
+                # For default parameters (treated as query), use Input suffix if it's a split model
+                context_suffix = (
+                    "Input"
+                    if (
+                        inspect.isclass(parameter_type)
+                        and hasattr(parameter_type, "__dict__")
+                        and SplitInputOutput.is_split_model(parameter_type)
+                    )
+                    else ""
+                )
                 parameters_list.append(
                     HttpParemeterSpec(
                         type_="query",
                         name=parameter_name,
                         required=True,
-                        argument_type_str=get_field_type_for_ts(parameter_type),
+                        argument_type_str=get_field_type_for_ts(
+                            parameter_type, context_suffix
+                        ),
                     )
                 )
 
