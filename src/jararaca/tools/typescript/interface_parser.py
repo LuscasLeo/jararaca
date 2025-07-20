@@ -27,7 +27,7 @@ from fastapi import Request, Response, UploadFile
 from fastapi.params import Body, Cookie, Depends, Header, Path, Query
 from fastapi.security.http import HTTPBase
 from pydantic import BaseModel, PlainValidator
-from pydantic_core import PydanticUndefinedType
+from pydantic_core import PydanticUndefined
 
 from jararaca.microservice import Microservice
 from jararaca.presentation.decorators import HttpMapping, RestController
@@ -42,6 +42,152 @@ CONSTANT_PATTERN = re.compile(r"^[A-Z_]+$")
 
 def is_constant(name: str) -> bool:
     return CONSTANT_PATTERN.match(name) is not None
+
+
+def should_exclude_field(
+    field_name: str, field_type: Any, basemodel_type: Type[Any]
+) -> bool:
+    """
+    Check if a field should be excluded from TypeScript interface generation.
+
+    Args:
+        field_name: The name of the field
+        field_type: The type annotation of the field
+        basemodel_type: The BaseModel class containing the field
+
+    Returns:
+        True if the field should be excluded, False otherwise
+    """
+    # Check if field is private (starts with underscore)
+    if field_name.startswith("_"):
+        return True
+
+    # Check if field has Pydantic Field annotation and is excluded via model_fields
+    if (
+        hasattr(basemodel_type, "model_fields")
+        and field_name in basemodel_type.model_fields
+    ):
+        field_info = basemodel_type.model_fields[field_name]
+
+        # Check if field is excluded via Field(exclude=True)
+        if hasattr(field_info, "exclude") and field_info.exclude:
+            return True
+
+        # Check if field is marked as private via Field(..., alias=None) pattern
+        if (
+            hasattr(field_info, "alias")
+            and field_info.alias is None
+            and field_name.startswith("_")
+        ):
+            return True
+
+    # Check for Annotated types with Field metadata
+    if get_origin(field_type) == Annotated:
+        for metadata in field_type.__metadata__:
+            # Check if this is a Pydantic Field by looking for expected attributes
+            if hasattr(metadata, "exclude") or hasattr(metadata, "alias"):
+                # Check if Field has exclude=True
+                if hasattr(metadata, "exclude") and metadata.exclude:
+                    return True
+                # Check for private fields with alias=None
+                if (
+                    hasattr(metadata, "alias")
+                    and metadata.alias is None
+                    and field_name.startswith("_")
+                ):
+                    return True
+
+    # Check for Field instances assigned as default values
+    # This handles cases like: field_name: str = Field(exclude=True)
+    if (
+        hasattr(basemodel_type, "__annotations__")
+        and field_name in basemodel_type.__annotations__
+    ):
+        # Check if there's a default value that's a Field instance
+        if hasattr(basemodel_type, field_name):
+            default_value = getattr(basemodel_type, field_name, None)
+            # Check if default value has Field-like attributes (duck typing approach)
+            if default_value is not None and hasattr(default_value, "exclude"):
+                if getattr(default_value, "exclude", False):
+                    return True
+            # Check for private fields with alias=None in default Field
+            if (
+                default_value is not None
+                and hasattr(default_value, "alias")
+                and getattr(default_value, "alias", None) is None
+                and field_name.startswith("_")
+            ):
+                return True
+
+    return False
+
+
+def has_default_value(
+    field_name: str, field_type: Any, basemodel_type: Type[Any]
+) -> bool:
+    """
+    Check if a field has a default value (making it optional in TypeScript).
+
+    Args:
+        field_name: The name of the field
+        field_type: The type annotation of the field
+        basemodel_type: The BaseModel class containing the field
+
+    Returns:
+        True if the field has a default value, False otherwise
+    """
+    # Skip literal types as they don't have defaults in the traditional sense
+    if get_origin(field_type) is Literal:
+        return False
+
+    # Check if field has default in model_fields (standard Pydantic way)
+    if (
+        hasattr(basemodel_type, "model_fields")
+        and field_name in basemodel_type.model_fields
+    ):
+        field_info = basemodel_type.model_fields[field_name]
+        if field_info.default is not PydanticUndefined:
+            return True
+
+    # Check for Field instances assigned as default values
+    # This handles cases like: field_name: str = Field(default="value")
+    if (
+        hasattr(basemodel_type, "__annotations__")
+        and field_name in basemodel_type.__annotations__
+    ):
+        if hasattr(basemodel_type, field_name):
+            default_value = getattr(basemodel_type, field_name, None)
+            # Check if it's a Field instance with a default
+            if default_value is not None and hasattr(default_value, "default"):
+                # Check if the Field has a default value set
+                field_default = getattr(default_value, "default", PydanticUndefined)
+                if field_default is not PydanticUndefined:
+                    return True
+
+    # Check for non-Field default values assigned directly to class attributes
+    # This handles cases like: field_name: str = "default_value"
+    if hasattr(basemodel_type, field_name):
+        default_value = getattr(basemodel_type, field_name, None)
+        # If it's not a Field instance but has a value, it's a default
+        if (
+            default_value is not None
+            and not hasattr(default_value, "exclude")  # Not a Field instance
+            and not hasattr(default_value, "alias")
+        ):  # Not a Field instance
+            return True
+
+    # Check for Annotated types with Field metadata that have defaults
+    if get_origin(field_type) == Annotated:
+        for metadata in field_type.__metadata__:
+            # Check if this is a Pydantic Field with a default
+            if hasattr(metadata, "default") and hasattr(
+                metadata, "exclude"
+            ):  # Ensure it's a Field
+                field_default = getattr(metadata, "default", PydanticUndefined)
+                if field_default is not PydanticUndefined:
+                    return True
+
+    return False
 
 
 class ParseContext:
@@ -290,16 +436,15 @@ def parse_type_to_typescript_interface(
             if field_name in cls_consts:
                 continue
 
-            has_default_value = (
-                get_origin(field) is not Literal
-                and field_name in basemodel_type.model_fields
-                and not isinstance(
-                    basemodel_type.model_fields[field_name].default,
-                    PydanticUndefinedType,
-                )
-            )
+            # Check if field should be excluded (private or excluded via Field)
+            if should_exclude_field(field_name, field, basemodel_type):
+                continue
+
+            # Check if field has a default value (making it optional)
+            is_optional = has_default_value(field_name, field, basemodel_type)
+
             string_builder.write(
-                f"  {snake_to_camel(field_name) if not is_constant(field_name) else field_name}{'?' if has_default_value else ''}: {get_field_type_for_ts(field)};\n"
+                f"  {snake_to_camel(field_name) if not is_constant(field_name) else field_name}{'?' if is_optional else ''}: {get_field_type_for_ts(field)};\n"
             )
             mapped_types.update(extract_all_envolved_types(field))
             mapped_types.add(field)
