@@ -115,6 +115,8 @@ async def providing_new_session(
     ) as new_session, new_session.begin() as new_tx:
         with providing_session(new_session, new_tx, connection_name):
             yield new_session
+            if new_tx.is_active:
+                await new_tx.commit()
 
 
 def use_session(connection_name: str | None = None) -> AsyncSession:
