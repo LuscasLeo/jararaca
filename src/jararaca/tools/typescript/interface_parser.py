@@ -1067,26 +1067,37 @@ def extract_parameters(
                     )
                 else:
                     mapped_types.add(annotated_type)
-                    # For default parameters (treated as query), use Input suffix if it's a split model
-                    context_suffix = (
-                        "Input"
-                        if (
-                            inspect.isclass(annotated_type)
-                            and hasattr(annotated_type, "__dict__")
-                            and SplitInputOutput.is_split_model(annotated_type)
+                    # Special handling for UploadFile - should go to body, not query
+                    if annotated_type == UploadFile:
+                        parameters_list.append(
+                            HttpParemeterSpec(
+                                type_="body",
+                                name=parameter_name,
+                                required=True,
+                                argument_type_str=get_field_type_for_ts(annotated_type),
+                            )
                         )
-                        else ""
-                    )
-                    parameters_list.append(
-                        HttpParemeterSpec(
-                            type_="query",
-                            name=parameter_name,
-                            required=True,
-                            argument_type_str=get_field_type_for_ts(
-                                annotated_type, context_suffix
-                            ),
+                    else:
+                        # For default parameters (treated as query), use Input suffix if it's a split model
+                        context_suffix = (
+                            "Input"
+                            if (
+                                inspect.isclass(annotated_type)
+                                and hasattr(annotated_type, "__dict__")
+                                and SplitInputOutput.is_split_model(annotated_type)
+                            )
+                            else ""
                         )
-                    )
+                        parameters_list.append(
+                            HttpParemeterSpec(
+                                type_="query",
+                                name=parameter_name,
+                                required=True,
+                                argument_type_str=get_field_type_for_ts(
+                                    annotated_type, context_suffix
+                                ),
+                            )
+                        )
 
             elif inspect.isclass(parameter_type) and issubclass(
                 parameter_type, BaseModel
@@ -1104,6 +1115,17 @@ def extract_parameters(
                         argument_type_str=get_field_type_for_ts(
                             parameter_type, context_suffix
                         ),
+                    )
+                )
+            elif parameter_type == UploadFile:
+                # UploadFile should always go to body, not query parameters
+                mapped_types.add(parameter_type)
+                parameters_list.append(
+                    HttpParemeterSpec(
+                        type_="body",
+                        name=parameter_name,
+                        required=True,
+                        argument_type_str=get_field_type_for_ts(parameter_type),
                     )
                 )
             elif (
@@ -1134,26 +1156,37 @@ def extract_parameters(
                 )
             else:
                 mapped_types.add(parameter_type)
-                # For default parameters (treated as query), use Input suffix if it's a split model
-                context_suffix = (
-                    "Input"
-                    if (
-                        inspect.isclass(parameter_type)
-                        and hasattr(parameter_type, "__dict__")
-                        and SplitInputOutput.is_split_model(parameter_type)
+                # Special handling for UploadFile - should go to body, not query
+                if parameter_type == UploadFile:
+                    parameters_list.append(
+                        HttpParemeterSpec(
+                            type_="body",
+                            name=parameter_name,
+                            required=True,
+                            argument_type_str=get_field_type_for_ts(parameter_type),
+                        )
                     )
-                    else ""
-                )
-                parameters_list.append(
-                    HttpParemeterSpec(
-                        type_="query",
-                        name=parameter_name,
-                        required=True,
-                        argument_type_str=get_field_type_for_ts(
-                            parameter_type, context_suffix
-                        ),
+                else:
+                    # For default parameters (treated as query), use Input suffix if it's a split model
+                    context_suffix = (
+                        "Input"
+                        if (
+                            inspect.isclass(parameter_type)
+                            and hasattr(parameter_type, "__dict__")
+                            and SplitInputOutput.is_split_model(parameter_type)
+                        )
+                        else ""
                     )
-                )
+                    parameters_list.append(
+                        HttpParemeterSpec(
+                            type_="query",
+                            name=parameter_name,
+                            required=True,
+                            argument_type_str=get_field_type_for_ts(
+                                parameter_type, context_suffix
+                            ),
+                        )
+                    )
 
             if inspect.isclass(parameter_type) and not is_primitive(parameter_type):
                 signature = inspect.signature(parameter_type)
