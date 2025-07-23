@@ -48,6 +48,35 @@ def is_constant(name: str) -> bool:
     return CONSTANT_PATTERN.match(name) is not None
 
 
+def unwrap_annotated_type(field_type: Any) -> tuple[Any, list[Any]]:
+    """
+    Recursively unwrap Annotated types to find the real underlying type.
+
+    Args:
+        field_type: The type to unwrap, which may be deeply nested Annotated types
+
+    Returns:
+        A tuple of (unwrapped_type, all_metadata) where:
+        - unwrapped_type is the final non-Annotated type
+        - all_metadata is a list of all metadata from all Annotated layers
+    """
+    all_metadata = []
+    current_type = field_type
+
+    while get_origin(current_type) == Annotated:
+        # Collect metadata from current layer
+        if hasattr(current_type, "__metadata__"):
+            all_metadata.extend(current_type.__metadata__)
+
+        # Move to the next inner type
+        if hasattr(current_type, "__args__") and len(current_type.__args__) > 0:
+            current_type = current_type.__args__[0]
+        else:
+            break
+
+    return current_type, all_metadata
+
+
 def is_upload_file_type(field_type: Any) -> bool:
     """
     Check if a type is UploadFile or a list/array of UploadFile.
@@ -110,7 +139,8 @@ def should_exclude_field(
 
     # Check for Annotated types with Field metadata
     if get_origin(field_type) == Annotated:
-        for metadata in field_type.__metadata__:
+        unwrapped_type, all_metadata = unwrap_annotated_type(field_type)
+        for metadata in all_metadata:
             # Check if this is a Pydantic Field by looking for expected attributes
             if hasattr(metadata, "exclude") or hasattr(metadata, "alias"):
                 # Check if Field has exclude=True
@@ -205,7 +235,8 @@ def has_default_value(
 
     # Check for Annotated types with Field metadata that have defaults
     if get_origin(field_type) == Annotated:
-        for metadata in field_type.__metadata__:
+        unwrapped_type, all_metadata = unwrap_annotated_type(field_type)
+        for metadata in all_metadata:
             # Check if this is a Pydantic Field with a default
             if hasattr(metadata, "default") and hasattr(
                 metadata, "exclude"
@@ -356,16 +387,18 @@ def get_field_type_for_ts(field_type: Any, context_suffix: str = "") -> Any:
             [get_field_type_for_ts(x, context_suffix) for x in field_type.__args__]
         )
     if (get_origin(field_type) == Annotated) and (len(field_type.__args__) > 0):
+        unwrapped_type, all_metadata = unwrap_annotated_type(field_type)
+
         if (
             plain_validator := next(
-                (x for x in field_type.__metadata__ if isinstance(x, PlainValidator)),
+                (x for x in all_metadata if isinstance(x, PlainValidator)),
                 None,
             )
         ) is not None:
             return get_field_type_for_ts(
                 plain_validator.json_schema_input_type, context_suffix
             )
-        return get_field_type_for_ts(field_type.__args__[0], context_suffix)
+        return get_field_type_for_ts(unwrapped_type, context_suffix)
     return "unknown"
 
 
@@ -974,15 +1007,16 @@ def extract_parameters(
     if is_primitive(member):
 
         if get_origin(member) is Annotated:
+            unwrapped_type, all_metadata = unwrap_annotated_type(member)
             if (
                 plain_validator := next(
-                    (x for x in member.__metadata__ if isinstance(x, PlainValidator)),
+                    (x for x in all_metadata if isinstance(x, PlainValidator)),
                     None,
                 )
             ) is not None:
                 mapped_types.add(plain_validator.json_schema_input_type)
                 return parameters_list, mapped_types
-            return extract_parameters(member.__args__[0], controller, mapping)
+            return extract_parameters(unwrapped_type, controller, mapping)
         return parameters_list, mapped_types
 
     if hasattr(member, "__bases__"):
@@ -1002,8 +1036,21 @@ def extract_parameters(
                 continue
 
             if get_origin(parameter_type) == Annotated:
-                annotated_type_hook = parameter_type.__metadata__[0]
-                annotated_type = parameter_type.__args__[0]
+                unwrapped_type, all_metadata = unwrap_annotated_type(parameter_type)
+                # Look for FastAPI parameter annotations in all metadata layers
+                annotated_type_hook = None
+                for metadata in all_metadata:
+                    if isinstance(
+                        metadata, (Header, Cookie, Form, Body, Query, Path, Depends)
+                    ):
+                        annotated_type_hook = metadata
+                        break
+
+                if annotated_type_hook is None and all_metadata:
+                    # Fallback to first metadata if no FastAPI annotation found
+                    annotated_type_hook = all_metadata[0]
+
+                annotated_type = unwrapped_type
                 if isinstance(annotated_type_hook, Header):
                     mapped_types.add(str)
                     parameters_list.append(
@@ -1270,21 +1317,22 @@ def extract_parameters(
                 for _, parameter_type in parameter_members.items():
                     if is_primitive(parameter_type.annotation):
                         if get_origin(parameter_type.annotation) is not None:
-                            if (
-                                get_origin(parameter_type.annotation) == Annotated
-                                and (
-                                    plain_validator := next(
-                                        (
-                                            x
-                                            for x in parameter_type.annotation.__metadata__
-                                            if isinstance(x, PlainValidator)
-                                        ),
-                                        None,
-                                    )
+                            if get_origin(parameter_type.annotation) == Annotated:
+                                unwrapped_type, all_metadata = unwrap_annotated_type(
+                                    parameter_type.annotation
                                 )
-                                is not None
-                            ):
-                                mapped_types.add(plain_validator.json_schema_input_type)
+                                plain_validator = next(
+                                    (
+                                        x
+                                        for x in all_metadata
+                                        if isinstance(x, PlainValidator)
+                                    ),
+                                    None,
+                                )
+                                if plain_validator is not None:
+                                    mapped_types.add(
+                                        plain_validator.json_schema_input_type
+                                    )
                             else:
                                 args = parameter_type.annotation.__args__
                                 mapped_types.update(args)
@@ -1315,22 +1363,15 @@ def extract_all_envolved_types(field_type: Any) -> set[Any]:
 
     if is_primitive(field_type):
         if get_origin(field_type) is not None:
-            if (
-                get_origin(field_type) == Annotated
-                and (
-                    plain_validator := next(
-                        (
-                            x
-                            for x in field_type.__metadata__
-                            if isinstance(x, PlainValidator)
-                        ),
-                        None,
-                    )
+            if get_origin(field_type) == Annotated:
+                unwrapped_type, all_metadata = unwrap_annotated_type(field_type)
+                plain_validator = next(
+                    (x for x in all_metadata if isinstance(x, PlainValidator)),
+                    None,
                 )
-                is not None
-            ):
-                mapped_types.add(plain_validator.json_schema_input_type)
-                return mapped_types
+                if plain_validator is not None:
+                    mapped_types.add(plain_validator.json_schema_input_type)
+                    return mapped_types
             else:
                 mapped_types.update(
                     *[extract_all_envolved_types(arg) for arg in field_type.__args__]
