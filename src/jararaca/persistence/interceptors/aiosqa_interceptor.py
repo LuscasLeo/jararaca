@@ -114,9 +114,14 @@ async def providing_new_session(
         current_session.bind,
     ) as new_session, new_session.begin() as new_tx:
         with providing_session(new_session, new_tx, connection_name):
-            yield new_session
-            if new_tx.is_active:
-                await new_tx.commit()
+            try:
+                yield new_session
+                if new_tx.is_active:
+                    await new_tx.commit()
+            except Exception:
+                if new_tx.is_active:
+                    await new_tx.rollback()
+                raise
 
 
 def use_session(connection_name: str | None = None) -> AsyncSession:
