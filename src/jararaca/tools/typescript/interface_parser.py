@@ -24,7 +24,7 @@ from typing import (
 from uuid import UUID
 
 from fastapi import Request, Response, UploadFile
-from fastapi.params import Body, Cookie, Depends, Header, Path, Query
+from fastapi.params import Body, Cookie, Depends, Form, Header, Path, Query
 from fastapi.security.http import HTTPBase
 from pydantic import BaseModel, PlainValidator
 from pydantic_core import PydanticUndefined
@@ -46,6 +46,29 @@ CONSTANT_PATTERN = re.compile(r"^[A-Z_]+$")
 
 def is_constant(name: str) -> bool:
     return CONSTANT_PATTERN.match(name) is not None
+
+
+def is_upload_file_type(field_type: Any) -> bool:
+    """
+    Check if a type is UploadFile or a list/array of UploadFile.
+
+    Args:
+        field_type: The type to check
+
+    Returns:
+        True if it's UploadFile or list[UploadFile], False otherwise
+    """
+    if field_type == UploadFile:
+        return True
+
+    # Check for list[UploadFile], List[UploadFile], etc.
+    origin = get_origin(field_type)
+    if origin in (list, frozenset, set):
+        args = getattr(field_type, "__args__", ())
+        if args and args[0] == UploadFile:
+            return True
+
+    return False
 
 
 def should_exclude_field(
@@ -625,6 +648,21 @@ def write_microservice_to_typescript_interface(
 // noinspection JSUnusedGlobalSymbols
 
 import { HttpService, HttpBackend, HttpBackendRequest, ResponseType, createClassQueryHooks , createClassMutationHooks, createClassInfiniteQueryHooks, paginationModelByFirstArgPaginationFilter } from "@jararaca/core";
+
+function makeFormData(data: Record<string, any>): FormData {
+  const formData = new FormData();
+  for (const key in data) {
+    if (Array.isArray(data[key])) {
+      data[key].forEach((item: any) => {
+        formData.append(key, item);
+      });
+    } else {
+      formData.append(key, data[key]);
+    }
+  }
+  return formData;
+}
+
 export type WebSocketMessageMap = {
 %s
 }
@@ -768,10 +806,21 @@ def write_rest_controller_to_typescript_interface(
             class_buffer.write(f'\t\t\tmethod: "{mapping.method}",\n')
 
             endpoint_path = parse_path_with_params(mapping.path, arg_params_spec)
-            final_path = "/".join(
-                s.strip("/") for s in [rest_controller.path, endpoint_path]
-            )
-            class_buffer.write(f"\t\t\tpath: `/{final_path}`,\n")
+
+            # Properly handle path joining to avoid double slashes
+            controller_path = rest_controller.path or ""
+            path_parts = []
+
+            if controller_path and controller_path.strip("/"):
+                path_parts.append(controller_path.strip("/"))
+            if endpoint_path and endpoint_path.strip("/"):
+                path_parts.append(endpoint_path.strip("/"))
+
+            final_path = "/".join(path_parts) if path_parts else ""
+            # Ensure the path starts with a single slash
+            formatted_path = f"/{final_path}" if final_path else "/"
+
+            class_buffer.write(f"\t\t\tpath: `{formatted_path}`,\n")
 
             # Sort path params
             path_params = sorted(
@@ -803,10 +852,25 @@ def write_rest_controller_to_typescript_interface(
                 class_buffer.write(f'\t\t\t\t"{param.name}": {param.name},\n')
             class_buffer.write("\t\t\t},\n")
 
-            if (
-                body := next((x for x in arg_params_spec if x.type_ == "body"), None)
-            ) is not None:
-                class_buffer.write(f"\t\t\tbody: {body.name}\n")
+            # Check if we need to use FormData (for file uploads or form parameters)
+            form_params = [param for param in arg_params_spec if param.type_ == "form"]
+            body_param = next((x for x in arg_params_spec if x.type_ == "body"), None)
+
+            if form_params:
+                # Use FormData for file uploads and form parameters
+                class_buffer.write("\t\t\tbody: makeFormData({\n")
+
+                # Add form parameters (including file uploads)
+                for param in form_params:
+                    class_buffer.write(f'\t\t\t\t"{param.name}": {param.name},\n')
+
+                # Add body parameter if it exists alongside form params
+                if body_param:
+                    class_buffer.write(f"\t\t\t\t...{body_param.name},\n")
+
+                class_buffer.write("\t\t\t})\n")
+            elif body_param is not None:
+                class_buffer.write(f"\t\t\tbody: {body_param.name}\n")
             else:
                 class_buffer.write("\t\t\tbody: undefined\n")
 
@@ -862,7 +926,7 @@ EXCLUDED_REQUESTS_TYPES = [Request, Response]
 
 @dataclass
 class HttpParemeterSpec:
-    type_: Literal["query", "path", "body", "header", "cookie"]
+    type_: Literal["query", "path", "body", "header", "cookie", "form"]
     name: str
     required: bool
     argument_type_str: str
@@ -958,6 +1022,16 @@ def extract_parameters(
                             name=parameter_name,
                             required=True,
                             argument_type_str=get_field_type_for_ts(str),
+                        )
+                    )
+                elif isinstance(annotated_type_hook, Form):
+                    mapped_types.add(annotated_type)
+                    parameters_list.append(
+                        HttpParemeterSpec(
+                            type_="form",
+                            name=parameter_name,
+                            required=True,
+                            argument_type_str=get_field_type_for_ts(annotated_type),
                         )
                     )
                 elif isinstance(annotated_type_hook, Body):
@@ -1067,11 +1141,11 @@ def extract_parameters(
                     )
                 else:
                     mapped_types.add(annotated_type)
-                    # Special handling for UploadFile - should go to body, not query
-                    if annotated_type == UploadFile:
+                    # Special handling for UploadFile and list[UploadFile] - should be treated as form data
+                    if is_upload_file_type(annotated_type):
                         parameters_list.append(
                             HttpParemeterSpec(
-                                type_="body",
+                                type_="form",
                                 name=parameter_name,
                                 required=True,
                                 argument_type_str=get_field_type_for_ts(annotated_type),
@@ -1117,12 +1191,12 @@ def extract_parameters(
                         ),
                     )
                 )
-            elif parameter_type == UploadFile:
-                # UploadFile should always go to body, not query parameters
+            elif parameter_type == UploadFile or is_upload_file_type(parameter_type):
+                # UploadFile and list[UploadFile] should be treated as form data
                 mapped_types.add(parameter_type)
                 parameters_list.append(
                     HttpParemeterSpec(
-                        type_="body",
+                        type_="form",
                         name=parameter_name,
                         required=True,
                         argument_type_str=get_field_type_for_ts(parameter_type),
@@ -1156,11 +1230,11 @@ def extract_parameters(
                 )
             else:
                 mapped_types.add(parameter_type)
-                # Special handling for UploadFile - should go to body, not query
-                if parameter_type == UploadFile:
+                # Special handling for UploadFile and list[UploadFile] - should be treated as form data
+                if is_upload_file_type(parameter_type):
                     parameters_list.append(
                         HttpParemeterSpec(
-                            type_="body",
+                            type_="form",
                             name=parameter_name,
                             required=True,
                             argument_type_str=get_field_type_for_ts(parameter_type),
