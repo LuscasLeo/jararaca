@@ -685,15 +685,29 @@ import { HttpService, HttpBackend, HttpBackendRequest, ResponseType, createClass
 function makeFormData(data: Record<string, any>): FormData {
   const formData = new FormData();
   for (const key in data) {
-    if (Array.isArray(data[key])) {
-      data[key].forEach((item: any) => {
-        formData.append(key, item);
-      });
-    } else {
-      formData.append(key, data[key]);
+    const value = data[key];
+    for (const v of genFormDataValue(value)) {
+      formData.append(key, v);
     }
   }
   return formData;
+}
+
+function* genFormDataValue(value: any): any {
+  if (Array.isArray(value)) {
+    // Stringify arrays as JSON
+    for (const item of value) {
+      // formData.append(`${key}`, item);
+      yield* genFormDataValue(item);
+    }
+  } else if (typeof value === "object" && value.constructor === Object) {
+    // Stringify plain objects as JSON
+    // formData.append(key, JSON.stringify(value));
+    yield JSON.stringify(value);
+  } else {
+    // For primitives (string, number, boolean), append as-is
+    yield value;
+  }
 }
 
 export type WebSocketMessageMap = {
