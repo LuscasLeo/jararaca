@@ -58,6 +58,7 @@ from jararaca.microservice import (
     SchedulerTransactionData,
     ShutdownState,
     provide_shutdown_state,
+    providing_app_type,
 )
 from jararaca.scheduler.decorators import ScheduledActionData
 from jararaca.utils.rabbitmq_utils import RabbitmqUtils
@@ -1725,61 +1726,64 @@ class MessageBusWorker:
     async def start_async(self) -> None:
         all_message_handlers_set: MESSAGE_HANDLER_DATA_SET = set()
         all_scheduled_actions_set: SCHEDULED_ACTION_DATA_SET = set()
-        async with self.lifecycle():
-            for instance_class in self.app.controllers:
-                controller = MessageBusController.get_messagebus(instance_class)
+        with providing_app_type("worker"):
+            async with self.lifecycle():
+                for instance_class in self.app.controllers:
+                    controller = MessageBusController.get_messagebus(instance_class)
 
-                if controller is None:
-                    continue
+                    if controller is None:
+                        continue
 
-                instance: Any = self.container.get_by_type(instance_class)
+                    instance: Any = self.container.get_by_type(instance_class)
 
-                factory = controller.get_messagebus_factory()
-                handlers, schedulers = factory(instance)
+                    factory = controller.get_messagebus_factory()
+                    handlers, schedulers = factory(instance)
 
-                message_handler_data_map: dict[str, MessageHandlerData] = {}
-                all_scheduled_actions_set.update(schedulers)
-                for handler_data in handlers:
-                    message_type = handler_data.spec.message_type
-                    topic = message_type.MESSAGE_TOPIC
+                    message_handler_data_map: dict[str, MessageHandlerData] = {}
+                    all_scheduled_actions_set.update(schedulers)
+                    for handler_data in handlers:
+                        message_type = handler_data.spec.message_type
+                        topic = message_type.MESSAGE_TOPIC
 
-                    # Filter handlers by name if specified
-                    if (
-                        self.handler_names is not None
-                        and handler_data.spec.name is not None
-                    ):
-                        if handler_data.spec.name not in self.handler_names:
+                        # Filter handlers by name if specified
+                        if (
+                            self.handler_names is not None
+                            and handler_data.spec.name is not None
+                        ):
+                            if handler_data.spec.name not in self.handler_names:
+                                continue
+                        elif (
+                            self.handler_names is not None
+                            and handler_data.spec.name is None
+                        ):
+                            # Skip handlers without names when filtering is requested
                             continue
-                    elif (
-                        self.handler_names is not None
-                        and handler_data.spec.name is None
-                    ):
-                        # Skip handlers without names when filtering is requested
-                        continue
 
-                    if (
-                        topic in message_handler_data_map
-                        and message_type.MESSAGE_TYPE == "task"
-                    ):
-                        logger.warning(
-                            "Task handler for topic '%s' already registered. Skipping"
-                            % topic
-                        )
-                        continue
-                    message_handler_data_map[topic] = handler_data
-                    all_message_handlers_set.add(handler_data)
+                        if (
+                            topic in message_handler_data_map
+                            and message_type.MESSAGE_TYPE == "task"
+                        ):
+                            logger.warning(
+                                "Task handler for topic '%s' already registered. Skipping"
+                                % topic
+                            )
+                            continue
+                        message_handler_data_map[topic] = handler_data
+                        all_message_handlers_set.add(handler_data)
 
-            broker_backend = get_message_broker_backend_from_url(url=self.backend_url)
+                broker_backend = get_message_broker_backend_from_url(
+                    url=self.backend_url
+                )
 
-            consumer = self._consumer = create_message_bus(
-                broker_url=self.broker_url,
-                broker_backend=broker_backend,
-                scheduled_actions=all_scheduled_actions_set,
-                message_handler_set=all_message_handlers_set,
-                uow_context_provider=self.uow_context_provider,
-            )
+                consumer = self._consumer = create_message_bus(
+                    broker_url=self.broker_url,
+                    broker_backend=broker_backend,
+                    scheduled_actions=all_scheduled_actions_set,
+                    message_handler_set=all_message_handlers_set,
+                    uow_context_provider=self.uow_context_provider,
+                )
 
-            await consumer.consume()
+                await consumer.consume()
 
     def start_sync(self) -> None:
 

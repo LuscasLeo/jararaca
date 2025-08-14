@@ -11,7 +11,12 @@ if TYPE_CHECKING:
         retry_later,
         use_bus_message_controller,
     )
-    from jararaca.microservice import AppContext, AppInterceptor, AppTransactionContext
+    from jararaca.microservice import (
+        AppContext,
+        AppInterceptor,
+        AppTransactionContext,
+        use_app_type,
+    )
     from jararaca.observability.interceptor import ObservabilityInterceptor
     from jararaca.observability.providers.otel import OtelObservabilityProvider
     from jararaca.persistence.sort_filter import (
@@ -308,6 +313,7 @@ if TYPE_CHECKING:
         # Exception classes
         "TimeoutException",
         "AppTransactionContext",
+        "use_app_type",
         "AppContext",
         "ControllerMemberReflect",
         "ControllerReflect",
@@ -544,6 +550,7 @@ _dynamic_imports: "dict[str, tuple[str, str, str | None]]" = {
     "AppContext": (__SPEC_PARENT__, "microservice", None),
     "AppInterceptor": (__SPEC_PARENT__, "microservice", None),
     "AppTransactionContext": (__SPEC_PARENT__, "microservice", None),
+    "use_app_type": (__SPEC_PARENT__, "microservice", None),
     "ControllerMemberReflect": (__SPEC_PARENT__, "reflect.controller_inspect", None),
     "ControllerReflect": (__SPEC_PARENT__, "reflect.controller_inspect", None),
 }

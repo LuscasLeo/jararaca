@@ -59,6 +59,8 @@ class WebSocketTransactionData:
     context_type: Literal["websocket"] = "websocket"
 
 
+APP_TYPE = Literal["http", "worker", "beat"]
+
 TransactionData = (
     MessageBusTransactionData
     | HttpTransactionData
@@ -365,6 +367,32 @@ def provide_shutdown_state(
     finally:
         with suppress(ValueError):
             shutdown_state_ctx.reset(token)
+
+
+app_type_ctx = ContextVar[APP_TYPE]("app_type")
+
+
+def use_app_type() -> APP_TYPE:
+    """
+    Returns the current application type.
+    This function is used to access the application type in the context of an application transaction.
+    If no context is set, it raises a LookupError.
+    """
+    return app_type_ctx.get()
+
+
+@contextmanager
+def providing_app_type(app_type: APP_TYPE) -> Generator[None, None, None]:
+    """
+    Context manager to provide the application type.
+    This is used to set the application type for the current transaction.
+    """
+    token = app_type_ctx.set(app_type)
+    try:
+        yield
+    finally:
+        with suppress(ValueError):
+            app_type_ctx.reset(token)
 
 
 __all__ = [
