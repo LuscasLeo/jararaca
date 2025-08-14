@@ -31,7 +31,7 @@ from jararaca.broker_backend.mapper import get_message_broker_backend_from_url
 from jararaca.core.uow import UnitOfWorkContextProvider
 from jararaca.di import Container
 from jararaca.lifecycle import AppLifecycle
-from jararaca.microservice import Microservice
+from jararaca.microservice import Microservice, providing_app_type
 from jararaca.scheduler.decorators import (
     ScheduledAction,
     ScheduledActionData,
@@ -572,22 +572,23 @@ class BeatWorker:
         Declares the scheduled actions and starts the scheduler.
         This is the main entry point for the scheduler.
         """
-        async with self.lifecycle():
+        with providing_app_type("beat"):
+            async with self.lifecycle():
 
-            scheduled_actions = _extract_scheduled_actions(
-                self.app, self.container, self.scheduler_names
-            )
+                scheduled_actions = _extract_scheduled_actions(
+                    self.app, self.container, self.scheduler_names
+                )
 
-            # Initialize and wait for connection to be established
-            logger.info("Initializing broker connection...")
-            await self.broker.initialize(scheduled_actions)
+                # Initialize and wait for connection to be established
+                logger.info("Initializing broker connection...")
+                await self.broker.initialize(scheduled_actions)
 
-            # Wait for connection to be healthy before starting scheduler
-            logger.info("Waiting for connection to be established...")
-            await self._wait_for_broker_connection()
+                # Wait for connection to be healthy before starting scheduler
+                logger.info("Waiting for connection to be established...")
+                await self._wait_for_broker_connection()
 
-            logger.info("Connection established, starting scheduler...")
-            await self.run_scheduled_actions(scheduled_actions)
+                logger.info("Connection established, starting scheduler...")
+                await self.run_scheduled_actions(scheduled_actions)
 
     async def run_scheduled_actions(
         self, scheduled_actions: list[ScheduledActionData]

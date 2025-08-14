@@ -17,6 +17,7 @@ from jararaca.microservice import (
     ShutdownState,
     WebSocketTransactionData,
     provide_shutdown_state,
+    providing_app_type,
 )
 from jararaca.presentation.decorators import RestController
 from jararaca.presentation.http_microservice import HttpMicroservice
@@ -37,49 +38,30 @@ class HttpAppLifecycle:
 
     @asynccontextmanager
     async def __call__(self, api: FastAPI) -> AsyncGenerator[None, None]:
-        async with self.lifecycle():
+        with providing_app_type("http"):
+            async with self.lifecycle():
 
-            # websocket_interceptors = [
-            #     interceptor
-            #     for interceptor in self.lifecycle.initialized_interceptors
-            #     if isinstance(interceptor, WebSocketInterceptor)
-            # ]
+                for controller_t in self.lifecycle.app.controllers:
+                    controller = RestController.get_controller(controller_t)
 
-            # for interceptor in websocket_interceptors:
-            #     router = interceptor.get_ws_router(
-            #         self.lifecycle.app, self.lifecycle.container, self.uow_provider
-            #     )
+                    if controller is None:
+                        continue
 
-            #     api.include_router(router)
+                    instance: Any = self.lifecycle.container.get_by_type(controller_t)
 
-            for controller_t in self.lifecycle.app.controllers:
-                controller = RestController.get_controller(controller_t)
+                    router = controller.get_router_factory()(self.lifecycle, instance)
 
-                if controller is None:
-                    continue
+                    api.include_router(router)
 
-                instance: Any = self.lifecycle.container.get_by_type(controller_t)
+                    for middleware in self.http_app.middlewares:
+                        middleware_instance = self.lifecycle.container.get_by_type(
+                            middleware
+                        )
+                        api.router.dependencies.append(
+                            Depends(middleware_instance.intercept)
+                        )
 
-                # dependencies: list[DependsCls] = []
-                # for middleware in controller.middlewares:
-                #     middleware_instance = self.lifecycle.container.get_by_type(
-                #         middleware
-                #     )
-                #     dependencies.append(Depends(middleware_instance.intercept))
-
-                router = controller.get_router_factory()(self.lifecycle, instance)
-
-                api.include_router(router)
-
-                for middleware in self.http_app.middlewares:
-                    middleware_instance = self.lifecycle.container.get_by_type(
-                        middleware
-                    )
-                    api.router.dependencies.append(
-                        Depends(middleware_instance.intercept)
-                    )
-
-            yield
+                yield
 
 
 class HttpShutdownState(ShutdownState):
