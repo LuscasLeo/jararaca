@@ -26,7 +26,7 @@ from uuid import UUID
 from fastapi import Request, Response, UploadFile
 from fastapi.params import Body, Cookie, Depends, Form, Header, Path, Query
 from fastapi.security.http import HTTPBase
-from pydantic import BaseModel, PlainValidator
+from pydantic import BaseModel, PlainValidator, RootModel
 from pydantic_core import PydanticUndefined
 
 from jararaca.microservice import Microservice
@@ -314,6 +314,26 @@ def get_field_type_for_ts(field_type: Any, context_suffix: str = "") -> Any:
         field_type: The Python type to convert
         context_suffix: Suffix for split models (e.g., "Input", "Output")
     """
+    # Handle RootModel types - use the wrapped type directly
+    if inspect.isclass(field_type) and issubclass(field_type, RootModel):
+        # For concrete RootModel subclasses, get the wrapped type from annotations
+        if (
+            hasattr(field_type, "__annotations__")
+            and "root" in field_type.__annotations__
+        ):
+            wrapped_type = field_type.__annotations__["root"]
+            return get_field_type_for_ts(wrapped_type, context_suffix)
+
+        # For parameterized RootModel[T] types, get the type from pydantic metadata
+        if hasattr(field_type, "__pydantic_generic_metadata__"):
+            metadata = field_type.__pydantic_generic_metadata__
+            if metadata.get("origin") is RootModel and metadata.get("args"):
+                # Get the first (and only) type argument
+                wrapped_type = metadata["args"][0]
+                return get_field_type_for_ts(wrapped_type, context_suffix)
+
+        return "unknown"
+
     if field_type is Response:
         return "unknown"
     if field_type is Any:
