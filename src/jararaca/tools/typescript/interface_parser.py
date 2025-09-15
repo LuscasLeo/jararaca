@@ -700,7 +700,7 @@ def write_microservice_to_typescript_interface(
 
 // noinspection JSUnusedGlobalSymbols
 
-import { HttpService, HttpBackend, HttpBackendRequest, ResponseType, createClassQueryHooks , createClassMutationHooks, createClassInfiniteQueryHooks, paginationModelByFirstArgPaginationFilter } from "@jararaca/core";
+import { HttpService, HttpBackend, HttpBackendRequest, ResponseType, createClassQueryHooks , createClassMutationHooks, createClassInfiniteQueryHooks, paginationModelByFirstArgPaginationFilter, recursiveCamelToSnakeCase } from "@jararaca/core";
 
 function makeFormData(data: Record<string, any>): FormData {
   const formData = new FormData();
@@ -723,7 +723,9 @@ function* genFormDataValue(value: any): any {
   } else if (typeof value === "object" && value.constructor === Object) {
     // Stringify plain objects as JSON
     // formData.append(key, JSON.stringify(value));
-    yield JSON.stringify(value);
+    yield JSON.stringify(
+      recursiveCamelToSnakeCase(value)
+    );
   } else {
     // For primitives (string, number, boolean), append as-is
     yield value;
