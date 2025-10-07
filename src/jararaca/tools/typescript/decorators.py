@@ -93,3 +93,49 @@ class SplitInputOutput:
         Check if the Pydantic model is marked for split interface generation.
         """
         return getattr(cls, SplitInputOutput.METADATA_KEY, False)
+
+
+class ExposeType:
+    """
+    Decorator to explicitly expose types for TypeScript interface generation.
+
+    Use this decorator to include types in the generated TypeScript output without
+    needing them as request/response bodies or indirect dependencies.
+
+    Example:
+        @ExposeType()
+        class UserRole(BaseModel):
+            id: str
+            name: str
+
+        # This ensures UserRole interface is generated even if it's not
+        # directly referenced in any REST endpoint
+    """
+
+    METADATA_KEY = "__jararaca_expose_type__"
+    _exposed_types: set[type] = set()
+
+    def __init__(self) -> None:
+        pass
+
+    def __call__(self, cls: type[BASEMODEL_T]) -> type[BASEMODEL_T]:
+        """
+        Decorate the type to mark it for explicit TypeScript generation.
+        """
+        setattr(cls, self.METADATA_KEY, True)
+        ExposeType._exposed_types.add(cls)
+        return cls
+
+    @staticmethod
+    def is_exposed_type(cls: type) -> bool:
+        """
+        Check if the type is marked for explicit exposure.
+        """
+        return getattr(cls, ExposeType.METADATA_KEY, False)
+
+    @staticmethod
+    def get_all_exposed_types() -> set[type]:
+        """
+        Get all types that have been marked for explicit exposure.
+        """
+        return ExposeType._exposed_types.copy()
