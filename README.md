@@ -37,6 +37,7 @@ Jararaca is an async-first microservice framework designed to simplify the devel
 - Command-line tool for generating TypeScript types
 - Support for REST endpoints, WebSocket events, and message bus payloads
 - Type-safe frontend-backend communication
+- **`@ExposeType` decorator** - Explicitly expose types for TypeScript generation without needing them in endpoints
 
 ### Hexagonal Architecture
 - Clear separation of concerns
