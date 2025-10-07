@@ -171,6 +171,7 @@ if TYPE_CHECKING:
     from .scheduler.decorators import ScheduledAction
     from .tools.app_config.interceptor import AppConfigurationInterceptor
     from .tools.typescript.decorators import (
+        ExposeType,
         MutationEndpoint,
         QueryEndpoint,
         SplitInputOutput,
@@ -279,6 +280,7 @@ if TYPE_CHECKING:
         "MessageBusPublisherInterceptor",
         "RedisWebSocketConnectionBackend",
         "AppConfigurationInterceptor",
+        "ExposeType",
         "QueryEndpoint",
         "MutationEndpoint",
         "SplitInputOutput",
@@ -510,6 +512,7 @@ _dynamic_imports: "dict[str, tuple[str, str, str | None]]" = {
         "tools.app_config.interceptor",
         None,
     ),
+    "ExposeType": (__SPEC_PARENT__, "tools.typescript.decorators", None),
     "QueryEndpoint": (__SPEC_PARENT__, "tools.typescript.decorators", None),
     "MutationEndpoint": (__SPEC_PARENT__, "tools.typescript.decorators", None),
     "SplitInputOutput": (__SPEC_PARENT__, "tools.typescript.decorators", None),

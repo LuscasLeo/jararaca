@@ -36,6 +36,7 @@ from jararaca.presentation.websocket.websocket_interceptor import (
     WebSocketMessageWrapper,
 )
 from jararaca.tools.typescript.decorators import (
+    ExposeType,
     MutationEndpoint,
     QueryEndpoint,
     SplitInputOutput,
@@ -660,6 +661,9 @@ def write_microservice_to_typescript_interface(
 
     websocket_registries: set[RegisterWebSocketMessage] = set()
     mapped_types_set.add(WebSocketMessageWrapper)
+
+    # Add all explicitly exposed types
+    mapped_types_set.update(ExposeType.get_all_exposed_types())
 
     for controller in microservice.controllers:
         rest_controller = RestController.get_controller(controller)

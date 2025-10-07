@@ -54,6 +54,8 @@ nav:
   - WebSocket: websocket.md
   - Scheduler: scheduler.md
   - Interceptors: interceptors.md
+  - TypeScript Generation:
+      - Expose Type: expose-type.md
 
 markdown_extensions:
   - pymdownx.highlight:
