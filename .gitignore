@@ -4,3 +4,11 @@ __pycache__
 .env
 db.sqlite
 dist
+
+# Coverage reports
+htmlcov/
+.coverage
+.coverage.*
+coverage.xml
+*.cover
+.pytest_cache/

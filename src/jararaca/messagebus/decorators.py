@@ -11,6 +11,8 @@ from jararaca.scheduler.decorators import ScheduledAction, ScheduledActionData
 
 DECORATED_FUNC = TypeVar("DECORATED_FUNC", bound=Callable[..., Any])
 DECORATED_T = TypeVar("DECORATED_T", bound=Any)
+INSTANCE_T = TypeVar("INSTANCE_T", bound=Any)
+RETURN_T = TypeVar("RETURN_T", bound=Any)
 
 
 class MessageHandler(Generic[INHERITS_MESSAGE_CO]):
@@ -35,8 +37,9 @@ class MessageHandler(Generic[INHERITS_MESSAGE_CO]):
         self.name = name
 
     def __call__(
-        self, func: Callable[[Any, MessageOf[INHERITS_MESSAGE_CO]], Awaitable[None]]
-    ) -> Callable[[Any, MessageOf[INHERITS_MESSAGE_CO]], Awaitable[None]]:
+        self,
+        func: Callable[[INSTANCE_T, MessageOf[INHERITS_MESSAGE_CO]], Awaitable[None]],
+    ) -> Callable[[INSTANCE_T, MessageOf[INHERITS_MESSAGE_CO]], Awaitable[None]]:
 
         MessageHandler[Any].register(func, self)
 
@@ -52,7 +55,7 @@ class MessageHandler(Generic[INHERITS_MESSAGE_CO]):
 
     @staticmethod
     def get_message_incoming(
-        func: Callable[[MessageOf[Any]], Awaitable[Any]],
+        func: Callable[[Any, MessageOf[Any]], Awaitable[None]],
     ) -> "MessageHandler[Message] | None":
         if not hasattr(func, MessageHandler.MESSAGE_INCOMING_ATTR):
             return None
