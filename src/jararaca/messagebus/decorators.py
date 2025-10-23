@@ -69,7 +69,7 @@ class MessageHandler(Generic[INHERITS_MESSAGE_CO]):
 class MessageHandlerData:
     message_type: type[Any]
     spec: MessageHandler[Message]
-    instance_callable: Callable[[MessageOf[Any]], Awaitable[None]]
+    instance_callable: Callable[..., Awaitable[None]]
     controller_member: ControllerMemberReflect
 
 
