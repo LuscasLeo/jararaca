@@ -188,11 +188,8 @@ class AioPikaMicroserviceConsumer(MessageBusConsumer):
         # Connection resilience attributes
         self.connection_healthy = False
         self.connection_lock = asyncio.Lock()
-        self.reconnection_event = asyncio.Event()
-        self.reconnection_in_progress = False
         self.consumer_tags: dict[str, str] = {}  # Track consumer tags for cleanup
         self.health_check_task: asyncio.Task[Any] | None = None
-        self.reconnection_task: asyncio.Task[Any] | None = None
 
     async def _verify_infrastructure(self) -> bool:
         """
@@ -229,10 +226,6 @@ class AioPikaMicroserviceConsumer(MessageBusConsumer):
         routing_key = f"{handler.message_type.MESSAGE_TOPIC}.#"
 
         async def setup_consumer() -> None:
-            # Wait for connection to be healthy if reconnection is in progress
-            if self.reconnection_in_progress:
-                await self.reconnection_event.wait()
-
             # Create a channel using the context manager
             async with self.create_channel(queue_name) as channel:
                 queue = await RabbitmqUtils.get_queue(
@@ -289,10 +282,6 @@ class AioPikaMicroserviceConsumer(MessageBusConsumer):
         routing_key = queue_name
 
         async def setup_consumer() -> None:
-            # Wait for connection to be healthy if reconnection is in progress
-            if self.reconnection_in_progress:
-                await self.reconnection_event.wait()
-
             # Create a channel using the context manager
             async with self.create_channel(queue_name) as channel:
                 queue = await RabbitmqUtils.get_queue(
@@ -341,106 +330,107 @@ class AioPikaMicroserviceConsumer(MessageBusConsumer):
         Main consume method that sets up all message handlers and scheduled actions with retry mechanisms.
         """
         # Establish initial connection
-        async with self.connect() as connection:
-            self.connection_healthy = True
+        try:
+            async with self.connect() as connection:
+                self.connection_healthy = True
 
-            # Start connection health monitoring
-            self.health_check_task = asyncio.create_task(
-                self._monitor_connection_health()
-            )
-
-            # Verify infrastructure with retry
-            infra_check_success = await retry_with_backoff(
-                self._verify_infrastructure,
-                retry_config=self.config.connection_retry_config,
-                retry_exceptions=(Exception,),
-            )
-
-            if not infra_check_success:
-                logger.critical(
-                    "Failed to verify RabbitMQ infrastructure. Shutting down."
+                # Start connection health monitoring
+                self.health_check_task = asyncio.create_task(
+                    self._monitor_connection_health()
                 )
-                self.shutdown_event.set()
-                return
 
-            async def wait_for(
-                type: str, name: str, coroutine: Awaitable[bool]
-            ) -> tuple[str, str, bool]:
-                return type, name, await coroutine
+                # Verify infrastructure with retry
+                infra_check_success = await retry_with_backoff(
+                    self._verify_infrastructure,
+                    retry_config=self.config.connection_retry_config,
+                    retry_exceptions=(Exception,),
+                )
 
-            tasks: set[asyncio.Task[tuple[str, str, bool]]] = set()
+                if not infra_check_success:
+                    logger.critical(
+                        "Failed to verify RabbitMQ infrastructure. Shutting down."
+                    )
+                    self.shutdown_event.set()
+                    return
 
-            # Setup message handlers
-            for handler in self.message_handler_set:
-                queue_name = f"{handler.message_type.MESSAGE_TOPIC}.{handler.instance_callable.__module__}.{handler.instance_callable.__qualname__}"
-                self.incoming_map[queue_name] = handler
+                async def wait_for(
+                    type: str, name: str, coroutine: Awaitable[bool]
+                ) -> tuple[str, str, bool]:
+                    return type, name, await coroutine
 
-                tasks.add(
-                    task := asyncio.create_task(
-                        wait_for(
-                            "message_handler",
-                            queue_name,
-                            self._setup_message_handler_consumer(handler),
+                tasks: set[asyncio.Task[tuple[str, str, bool]]] = set()
+
+                # Setup message handlers
+                for handler in self.message_handler_set:
+                    queue_name = f"{handler.message_type.MESSAGE_TOPIC}.{handler.instance_callable.__module__}.{handler.instance_callable.__qualname__}"
+                    self.incoming_map[queue_name] = handler
+
+                    tasks.add(
+                        task := asyncio.create_task(
+                            wait_for(
+                                "message_handler",
+                                queue_name,
+                                self._setup_message_handler_consumer(handler),
+                            )
                         )
                     )
-                )
 
-            # Setup scheduled actions
-            for scheduled_action in self.scheduled_actions:
-                queue_name = f"{scheduled_action.callable.__module__}.{scheduled_action.callable.__qualname__}"
-                tasks.add(
-                    task := asyncio.create_task(
-                        wait_for(
-                            "scheduled_action",
-                            queue_name,
-                            self._setup_scheduled_action_consumer(scheduled_action),
+                # Setup scheduled actions
+                for scheduled_action in self.scheduled_actions:
+                    queue_name = f"{scheduled_action.callable.__module__}.{scheduled_action.callable.__qualname__}"
+                    tasks.add(
+                        task := asyncio.create_task(
+                            wait_for(
+                                "scheduled_action",
+                                queue_name,
+                                self._setup_scheduled_action_consumer(scheduled_action),
+                            )
                         )
                     )
-                )
 
-            async def handle_task_results() -> None:
-                for task in asyncio.as_completed(tasks):
-                    type, name, success = await task
-                    if success:
-                        logger.info(f"Successfully set up {type} consumer for {name}")
-                    else:
-                        logger.warning(
-                            f"Failed to set up {type} consumer for {name}, will not process messages from this queue"
-                        )
+                async def handle_task_results() -> None:
+                    for task in asyncio.as_completed(tasks):
+                        type, name, success = await task
+                        if success:
+                            logger.info(
+                                f"Successfully set up {type} consumer for {name}"
+                            )
+                        else:
+                            logger.warning(
+                                f"Failed to set up {type} consumer for {name}, will not process messages from this queue"
+                            )
 
-            handle_task_results_task = asyncio.create_task(handle_task_results())
+                handle_task_results_task = asyncio.create_task(handle_task_results())
 
-            # Wait for shutdown signal
-            await self.shutdown_event.wait()
-            logger.info("Shutdown event received, stopping consumers")
+                # Wait for shutdown signal
+                await self.shutdown_event.wait()
+                logger.info("Shutdown event received, stopping consumers")
 
-            # Cancel health monitoring
-            if self.health_check_task:
-                self.health_check_task.cancel()
-                with suppress(asyncio.CancelledError):
-                    await self.health_check_task
-
-            # Cancel reconnection task if running
-            if self.reconnection_task:
-                self.reconnection_task.cancel()
-                with suppress(asyncio.CancelledError):
-                    await self.reconnection_task
-
-            handle_task_results_task.cancel()
-            with suppress(asyncio.CancelledError):
-                await handle_task_results_task
-            for task in tasks:
-                if not task.done():
-                    task.cancel()
+                # Cancel health monitoring
+                if self.health_check_task:
+                    self.health_check_task.cancel()
                     with suppress(asyncio.CancelledError):
-                        await task
-            logger.info("Worker shutting down")
+                        await self.health_check_task
 
-            # Wait for all tasks to complete
-            await self.wait_all_tasks_done()
+                handle_task_results_task.cancel()
+                with suppress(asyncio.CancelledError):
+                    await handle_task_results_task
+                for task in tasks:
+                    if not task.done():
+                        task.cancel()
+                        with suppress(asyncio.CancelledError):
+                            await task
+                logger.info("Worker shutting down")
 
-            # Close all channels and the connection
-            await self.close_channels_and_connection()
+                # Wait for all tasks to complete
+                await self.wait_all_tasks_done()
+
+                # Close all channels and the connection
+                await self.close_channels_and_connection()
+        except Exception as e:
+            logger.critical(f"Failed to establish initial connection to RabbitMQ: {e}")
+            # Re-raise the exception so it can be caught by the caller
+            raise
 
     async def wait_all_tasks_done(self) -> None:
         if not self.tasks:
@@ -478,12 +468,6 @@ class AioPikaMicroserviceConsumer(MessageBusConsumer):
             with suppress(asyncio.CancelledError):
                 await self.health_check_task
 
-        # Cancel reconnection task if running
-        if self.reconnection_task:
-            self.reconnection_task.cancel()
-            with suppress(asyncio.CancelledError):
-                await self.reconnection_task
-
         await self.wait_all_tasks_done()
         await self.close_channels_and_connection()
 
@@ -492,16 +476,6 @@ class AioPikaMicroserviceConsumer(MessageBusConsumer):
         Get the channel for a specific queue, or None if not found.
         This helps with error handling when a channel might have been closed.
         """
-        # If reconnection is in progress, wait for it to complete
-        if self.reconnection_in_progress:
-            try:
-                await asyncio.wait_for(self.reconnection_event.wait(), timeout=30.0)
-            except asyncio.TimeoutError:
-                logger.warning(
-                    f"Timeout waiting for reconnection when getting channel for {queue_name}"
-                )
-                return None
-
         if queue_name not in self.channels:
             logger.warning(f"No channel found for queue {queue_name}")
             return None
@@ -530,17 +504,17 @@ class AioPikaMicroserviceConsumer(MessageBusConsumer):
                         logger.error(
                             f"Failed to recreate channel for {queue_name}: {e}"
                         )
-                        # Trigger reconnection if channel creation fails
+                        # Trigger shutdown if channel creation fails
                         self._trigger_reconnection()
                         return None
                 else:
-                    # Connection is not healthy, trigger reconnection
+                    # Connection is not healthy, trigger shutdown
                     self._trigger_reconnection()
                     return None
             return channel
         except Exception as e:
             logger.error(f"Error accessing channel for queue {queue_name}: {e}")
-            # Trigger reconnection on any channel access error
+            # Trigger shutdown on any channel access error
             self._trigger_reconnection()
             return None
 
@@ -691,33 +665,14 @@ class AioPikaMicroserviceConsumer(MessageBusConsumer):
                         yield new_channel
                         return
                 else:
-                    # Connection is not healthy, wait for reconnection
-                    if self.reconnection_in_progress:
-                        try:
-                            await asyncio.wait_for(
-                                self.reconnection_event.wait(), timeout=30.0
-                            )
-                            # Retry after reconnection
-                            continue
-                        except asyncio.TimeoutError:
-                            logger.warning(
-                                f"Timeout waiting for reconnection for queue {queue_name}"
-                            )
-
-                    # Still no connection, trigger reconnection
-                    if not self.reconnection_in_progress:
-                        self._trigger_reconnection()
-
-                    if attempt < max_retries - 1:
-                        logger.info(
-                            f"Retrying channel access for {queue_name} in {retry_delay}s"
-                        )
-                        await asyncio.sleep(retry_delay)
-                        retry_delay *= 2
-                    else:
-                        raise RuntimeError(
-                            f"Cannot get channel for queue {queue_name}: no connection available after {max_retries} attempts"
-                        )
+                    # Connection is not healthy, trigger shutdown
+                    logger.error(
+                        f"Connection not healthy while getting channel for {queue_name}, triggering shutdown"
+                    )
+                    self._trigger_reconnection()
+                    raise RuntimeError(
+                        f"Cannot get channel for queue {queue_name}: connection is not healthy"
+                    )
 
             except Exception as e:
                 if attempt < max_retries - 1:
@@ -734,7 +689,7 @@ class AioPikaMicroserviceConsumer(MessageBusConsumer):
 
     async def _monitor_connection_health(self) -> None:
         """
-        Monitor connection health and trigger reconnection if needed.
+        Monitor connection health and trigger shutdown if connection is lost.
         This runs as a background task.
         """
         while not self.shutdown_event.is_set():
@@ -746,11 +701,11 @@ class AioPikaMicroserviceConsumer(MessageBusConsumer):
 
                 # Check connection health
                 if not await self._is_connection_healthy():
-                    logger.warning(
-                        "Connection health check failed, triggering reconnection"
+                    logger.error(
+                        "Connection health check failed, initiating worker shutdown"
                     )
-                    if not self.reconnection_in_progress:
-                        self._trigger_reconnection()
+                    self.shutdown()
+                    break
 
             except asyncio.CancelledError:
                 logger.info("Connection health monitoring cancelled")
@@ -778,74 +733,12 @@ class AioPikaMicroserviceConsumer(MessageBusConsumer):
 
     def _trigger_reconnection(self) -> None:
         """
-        Trigger reconnection process.
+        Trigger worker shutdown due to connection loss.
         """
-        if not self.reconnection_in_progress and not self.shutdown_event.is_set():
-            self.reconnection_in_progress = True
+        if not self.shutdown_event.is_set():
+            logger.error("Connection lost, initiating worker shutdown")
             self.connection_healthy = False
-            self.reconnection_event.clear()
-
-            # Start reconnection task
-            self.reconnection_task = asyncio.create_task(self._handle_reconnection())
-            self.reconnection_task.add_done_callback(self._on_reconnection_done)
-
-    def _on_reconnection_done(self, task: asyncio.Task[Any]) -> None:
-        """
-        Handle completion of reconnection task.
-        """
-        self.reconnection_in_progress = False
-        if task.exception():
-            logger.error(f"Reconnection task failed: {task.exception()}")
-        else:
-            logger.info("Reconnection completed successfully")
-
-    async def _handle_reconnection(self) -> None:
-        """
-        Handle the reconnection process with exponential backoff.
-        """
-        logger.info("Starting reconnection process")
-
-        # Close existing connection and channels
-        await self._cleanup_connection()
-
-        reconnection_config = self.config.reconnection_backoff_config
-        attempt = 0
-
-        while not self.shutdown_event.is_set():
-            try:
-                attempt += 1
-                logger.info(f"Reconnection attempt {attempt}")
-
-                # Establish new connection
-                self.connection = await self._establish_connection()
-                self.connection_healthy = True
-
-                # Re-establish all consumers
-                await self._reestablish_consumers()
-
-                logger.info("Reconnection successful")
-                self.reconnection_event.set()
-                return
-
-            except Exception as e:
-                logger.error(f"Reconnection attempt {attempt} failed: {e}")
-
-                if self.shutdown_event.is_set():
-                    break
-
-                # Calculate backoff delay
-                delay = reconnection_config.initial_delay * (
-                    reconnection_config.backoff_factor ** (attempt - 1)
-                )
-                if reconnection_config.jitter:
-                    jitter_amount = delay * 0.25
-                    delay = delay + random.uniform(-jitter_amount, jitter_amount)
-                    delay = max(delay, 0.1)
-
-                delay = min(delay, reconnection_config.max_delay)
-
-                logger.info(f"Retrying reconnection in {delay:.2f} seconds")
-                await asyncio.sleep(delay)
+            self.shutdown()
 
     async def _cleanup_connection(self) -> None:
         """
@@ -888,32 +781,6 @@ class AioPikaMicroserviceConsumer(MessageBusConsumer):
 
         self.connection = None
         self.connection_healthy = False
-
-    async def _reestablish_consumers(self) -> None:
-        """
-        Re-establish all consumers after reconnection.
-        """
-        logger.info("Re-establishing consumers after reconnection")
-
-        # Re-establish message handlers
-        for handler in self.message_handler_set:
-            queue_name = f"{handler.message_type.MESSAGE_TOPIC}.{handler.instance_callable.__module__}.{handler.instance_callable.__qualname__}"
-            try:
-                await self._setup_message_handler_consumer(handler)
-                logger.info(f"Re-established consumer for {queue_name}")
-            except Exception as e:
-                logger.error(f"Failed to re-establish consumer for {queue_name}: {e}")
-
-        # Re-establish scheduled actions
-        for scheduled_action in self.scheduled_actions:
-            queue_name = f"{scheduled_action.callable.__module__}.{scheduled_action.callable.__qualname__}"
-            try:
-                await self._setup_scheduled_action_consumer(scheduled_action)
-                logger.info(f"Re-established scheduler consumer for {queue_name}")
-            except Exception as e:
-                logger.error(
-                    f"Failed to re-establish scheduler consumer for {queue_name}: {e}"
-                )
 
 
 def create_message_bus(
@@ -1798,7 +1665,14 @@ class MessageBusWorker:
             loop.add_signal_handler(signal.SIGINT, on_shutdown, loop)
             # Add graceful shutdown handler for SIGTERM as well
             loop.add_signal_handler(signal.SIGTERM, on_shutdown, loop)
-            runner.run(self.start_async())
+            try:
+                runner.run(self.start_async())
+            except Exception as e:
+                logger.critical(f"Worker failed to start due to connection error: {e}")
+                # Exit with error code 1 to indicate startup failure
+                import sys
+
+                sys.exit(1)
 
     async def _graceful_shutdown(self) -> None:
         """Handles graceful shutdown process"""
