@@ -85,13 +85,24 @@ class WebSocketConnectionManagerImpl(WebSocketConnectionManager):
         await self.backend.broadcast(message)
 
     async def _broadcast_from_backend(self, message: bytes) -> None:
-        for websocket in self.all_websockets:
+        # Create a copy of the websockets set to avoid modification during iteration
+        async with self.lock:
+            websockets_to_send = list(self.all_websockets)
+
+        disconnected_websockets: list[WebSocket] = []
+
+        for websocket in websockets_to_send:
             try:
                 if websocket.client_state == WebSocketState.CONNECTED:
                     await websocket.send_bytes(message)
             except WebSocketDisconnect:
-                async with self.lock:  # TODO: check if this can cause concurrency slowdown issues
-                    self.all_websockets.remove(websocket)
+                disconnected_websockets.append(websocket)
+
+        # Clean up disconnected websockets in a single lock acquisition
+        if disconnected_websockets:
+            async with self.lock:
+                for websocket in disconnected_websockets:
+                    self.all_websockets.discard(websocket)
 
     async def send(self, rooms: list[str], message: WebSocketMessageBase) -> None:
 
@@ -103,16 +114,28 @@ class WebSocketConnectionManagerImpl(WebSocketConnectionManager):
         )
 
     async def _send_from_backend(self, rooms: list[str], message: bytes) -> None:
+        # Create a copy of room memberships to avoid modification during iteration
         async with self.lock:
-            for room in rooms:
-                for websocket in self.rooms.get(room, set()):
-                    try:
-                        if websocket.client_state == WebSocketState.CONNECTED:
-                            await websocket.send_bytes(message)
-                    except WebSocketDisconnect:
-                        async with self.lock:
-                            if websocket in self.rooms[room]:
-                                self.rooms[room].remove(websocket)
+            room_websockets: dict[str, list[WebSocket]] = {
+                room: list(self.rooms.get(room, set())) for room in rooms
+            }
+
+        disconnected_by_room: dict[str, list[WebSocket]] = {room: [] for room in rooms}
+
+        for room, websockets in room_websockets.items():
+            for websocket in websockets:
+                try:
+                    if websocket.client_state == WebSocketState.CONNECTED:
+                        await websocket.send_bytes(message)
+                except WebSocketDisconnect:
+                    disconnected_by_room[room].append(websocket)
+
+        # Clean up disconnected websockets in a single lock acquisition
+        async with self.lock:
+            for room, disconnected_websockets in disconnected_by_room.items():
+                if room in self.rooms:
+                    for websocket in disconnected_websockets:
+                        self.rooms[room].discard(websocket)
 
     async def join(self, rooms: list[str], websocket: WebSocket) -> None:
         for room in rooms:
