@@ -59,6 +59,7 @@ class RedisWebSocketConnectionBackend(WebSocketConnectionBackend):
         consume_broadcast_timeout: int = 1,
         consume_send_timeout: int = 1,
         retry_delay: float = 5.0,
+        max_concurrent_tasks: int = 1000,
     ) -> None:
 
         self.redis = conn
@@ -67,6 +68,8 @@ class RedisWebSocketConnectionBackend(WebSocketConnectionBackend):
 
         self.lock = asyncio.Lock()
         self.tasks: set[asyncio.Task[Any]] = set()
+        self.max_concurrent_tasks = max_concurrent_tasks
+        self.task_semaphore = asyncio.Semaphore(max_concurrent_tasks)
 
         self.consume_broadcast_timeout = consume_broadcast_timeout
         self.consume_send_timeout = consume_send_timeout
@@ -101,16 +104,26 @@ class RedisWebSocketConnectionBackend(WebSocketConnectionBackend):
         return self.__broadcast_func
 
     async def broadcast(self, message: bytes) -> None:
-        await self.redis.publish(
-            self.broadcast_pubsub_channel,
-            BroadcastMessage.from_message(message).encode(),
-        )
+        try:
+            await self.redis.publish(
+                self.broadcast_pubsub_channel,
+                BroadcastMessage.from_message(message).encode(),
+            )
+        except Exception as e:
+            logger.error(
+                f"Failed to publish broadcast message to Redis: {e}", exc_info=True
+            )
+            raise
 
     async def send(self, rooms: list[str], message: bytes) -> None:
-        await self.redis.publish(
-            self.send_pubsub_channel,
-            SendToRoomsMessage.from_message(rooms, message).encode(),
-        )
+        try:
+            await self.redis.publish(
+                self.send_pubsub_channel,
+                SendToRoomsMessage.from_message(rooms, message).encode(),
+            )
+        except Exception as e:
+            logger.error(f"Failed to publish send message to Redis: {e}", exc_info=True)
+            raise
 
     def configure(
         self, broadcast: BroadcastFunc, send: SendFunc, shutdown_event: asyncio.Event
@@ -129,7 +142,12 @@ class RedisWebSocketConnectionBackend(WebSocketConnectionBackend):
             self.consume_send(self.send_func, self.shutdown_event)
         )
 
-        self.tasks.add(send_task)
+        # Use lock when modifying tasks set to prevent race conditions
+        async def add_task() -> None:
+            async with self.lock:
+                self.tasks.add(send_task)
+
+        asyncio.get_event_loop().create_task(add_task())
         send_task.add_done_callback(self.handle_send_task_done)
 
     def setup_broadcast_consumer(self) -> None:
@@ -138,11 +156,23 @@ class RedisWebSocketConnectionBackend(WebSocketConnectionBackend):
             self.consume_broadcast(self.broadcast_func, self.shutdown_event)
         )
 
-        self.tasks.add(broadcast_task)
+        # Use lock when modifying tasks set to prevent race conditions
+        async def add_task() -> None:
+            async with self.lock:
+                self.tasks.add(broadcast_task)
+
+        asyncio.get_event_loop().create_task(add_task())
 
         broadcast_task.add_done_callback(self.handle_broadcast_task_done)
 
     def handle_broadcast_task_done(self, task: asyncio.Task[Any]) -> None:
+        # Remove task from set safely with lock
+        async def remove_task() -> None:
+            async with self.lock:
+                self.tasks.discard(task)
+
+        asyncio.get_event_loop().create_task(remove_task())
+
         if task.cancelled():
             logger.warning("Broadcast task was cancelled.")
         elif task.exception() is not None:
@@ -162,6 +192,13 @@ class RedisWebSocketConnectionBackend(WebSocketConnectionBackend):
             )
 
     def handle_send_task_done(self, task: asyncio.Task[Any]) -> None:
+        # Remove task from set safely with lock
+        async def remove_task() -> None:
+            async with self.lock:
+                self.tasks.discard(task)
+
+        asyncio.get_event_loop().create_task(remove_task())
+
         if task.cancelled():
             logger.warning("Send task was cancelled.")
         elif task.exception() is not None:
@@ -204,54 +241,132 @@ class RedisWebSocketConnectionBackend(WebSocketConnectionBackend):
         self, broadcast: BroadcastFunc, shutdown_event: asyncio.Event
     ) -> None:
         logger.info("Starting broadcast consumer...")
-        async with self.redis.pubsub() as pubsub:
-            await pubsub.subscribe(self.broadcast_pubsub_channel)
+        try:
+            # Validate Redis connection before starting
+            try:
+                await self.redis.ping()
+                logger.info("Redis connection validated for broadcast consumer")
+            except Exception as e:
+                logger.error(f"Redis connection validation failed: {e}", exc_info=True)
+                raise
 
-            while not shutdown_event.is_set():
-                message: dict[str, Any] | None = await pubsub.get_message(
-                    ignore_subscribe_messages=True,
-                    timeout=self.consume_broadcast_timeout,
+            async with self.redis.pubsub() as pubsub:
+                await pubsub.subscribe(self.broadcast_pubsub_channel)
+                logger.info(
+                    f"Subscribed to broadcast channel: {self.broadcast_pubsub_channel}"
                 )
 
-                if message is None:
-                    continue
-
-                broadcast_message = BroadcastMessage.decode(message["data"])
-
-                async with self.lock:
-                    task = asyncio.get_event_loop().create_task(
-                        broadcast(message=broadcast_message.message)
+                while not shutdown_event.is_set():
+                    message: dict[str, Any] | None = await pubsub.get_message(
+                        ignore_subscribe_messages=True,
+                        timeout=self.consume_broadcast_timeout,
                     )
 
-                    self.tasks.add(task)
+                    if message is None:
+                        continue
 
-                    task.add_done_callback(self.tasks.discard)
+                    broadcast_message = BroadcastMessage.decode(message["data"])
+
+                    # Use semaphore for backpressure control
+                    acquired = False
+                    try:
+                        await self.task_semaphore.acquire()
+                        acquired = True
+
+                        async def broadcast_with_cleanup(msg: bytes) -> None:
+                            try:
+                                await broadcast(message=msg)
+                            finally:
+                                self.task_semaphore.release()
+
+                        async with self.lock:
+                            task = asyncio.get_event_loop().create_task(
+                                broadcast_with_cleanup(broadcast_message.message)
+                            )
+
+                            self.tasks.add(task)
+
+                            task.add_done_callback(self.tasks.discard)
+                    except Exception as e:
+                        # Release semaphore if we acquired it but failed to create task
+                        if acquired:
+                            self.task_semaphore.release()
+                        logger.error(
+                            f"Error processing broadcast message: {e}", exc_info=True
+                        )
+                        # Continue processing other messages
+                        continue
+        except Exception as e:
+            logger.error(
+                f"Fatal error in broadcast consumer, will retry: {e}", exc_info=True
+            )
+            raise
 
     async def consume_send(self, send: SendFunc, shutdown_event: asyncio.Event) -> None:
         logger.info("Starting send consumer...")
-        async with self.redis.pubsub() as pubsub:
-            await pubsub.subscribe(self.send_pubsub_channel)
+        try:
+            # Validate Redis connection before starting
+            try:
+                await self.redis.ping()
+                logger.info("Redis connection validated for send consumer")
+            except Exception as e:
+                logger.error(f"Redis connection validation failed: {e}", exc_info=True)
+                raise
 
-            while not shutdown_event.is_set():
+            async with self.redis.pubsub() as pubsub:
+                await pubsub.subscribe(self.send_pubsub_channel)
+                logger.info(f"Subscribed to send channel: {self.send_pubsub_channel}")
 
-                message: dict[str, Any] | None = await pubsub.get_message(
-                    ignore_subscribe_messages=True, timeout=self.consume_send_timeout
-                )
-
-                if message is None:
-                    continue
-
-                send_message = SendToRoomsMessage.decode(message["data"])
-
-                async with self.lock:
-
-                    task = asyncio.get_event_loop().create_task(
-                        send(send_message.rooms, send_message.message)
+                while not shutdown_event.is_set():
+                    message: dict[str, Any] | None = await pubsub.get_message(
+                        ignore_subscribe_messages=True,
+                        timeout=self.consume_send_timeout,
                     )
 
-                    self.tasks.add(task)
+                    if message is None:
+                        continue
 
-                    task.add_done_callback(self.tasks.discard)
+                    send_message = SendToRoomsMessage.decode(message["data"])
+
+                    # Use semaphore for backpressure control
+                    acquired = False
+                    try:
+                        await self.task_semaphore.acquire()
+                        acquired = True
+
+                        async def send_with_cleanup(
+                            rooms: list[str], msg: bytes
+                        ) -> None:
+                            try:
+                                await send(rooms, msg)
+                            finally:
+                                self.task_semaphore.release()
+
+                        async with self.lock:
+
+                            task = asyncio.get_event_loop().create_task(
+                                send_with_cleanup(
+                                    send_message.rooms, send_message.message
+                                )
+                            )
+
+                            self.tasks.add(task)
+
+                            task.add_done_callback(self.tasks.discard)
+                    except Exception as e:
+                        # Release semaphore if we acquired it but failed to create task
+                        if acquired:
+                            self.task_semaphore.release()
+                        logger.error(
+                            f"Error processing send message: {e}", exc_info=True
+                        )
+                        # Continue processing other messages
+                        continue
+        except Exception as e:
+            logger.error(
+                f"Fatal error in send consumer, will retry: {e}", exc_info=True
+            )
+            raise
 
     async def shutdown(self) -> None:
         async with self.lock:
