@@ -87,7 +87,7 @@ class TracedFunc:
             if ctx_provider := get_tracing_ctx_provider():
                 with ctx_provider(
                     self.trace_name,
-                    self.trace_mapper(**kwargs),
+                    self.trace_mapper(*args, **kwargs),
                 ):
                     return await decorated(*args, **kwargs)
 
