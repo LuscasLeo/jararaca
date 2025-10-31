@@ -1,3 +1,4 @@
+import logging
 import os
 import signal
 import threading
@@ -5,7 +6,7 @@ from contextlib import asynccontextmanager
 from signal import SIGINT, SIGTERM
 from typing import Any, AsyncGenerator
 
-from fastapi import Depends, FastAPI, Request, WebSocket
+from fastapi import Depends, FastAPI, HTTPException, Request, Response, WebSocket
 from starlette.types import ASGIApp
 
 from jararaca.core.uow import UnitOfWorkContextProvider
@@ -22,6 +23,8 @@ from jararaca.microservice import (
 from jararaca.presentation.decorators import RestController
 from jararaca.presentation.http_microservice import HttpMicroservice
 from jararaca.reflect.controller_inspect import ControllerMemberReflect
+
+logger = logging.getLogger(__name__)
 
 
 class HttpAppLifecycle:
@@ -109,7 +112,7 @@ class HttpUowContextProviderDependency:
         self.shutdown_state.setup_signal_handlers()
 
     async def __call__(
-        self, websocket: WebSocket = None, request: Request = None  # type: ignore
+        self, websocket: WebSocket = None, request: Request = None, response: Response = None  # type: ignore
     ) -> AsyncGenerator[None, None]:
         if request:
             endpoint = request.scope["endpoint"]
@@ -133,13 +136,34 @@ class HttpUowContextProviderDependency:
                 AppTransactionContext(
                     controller_member_reflect=member,
                     transaction_data=(
-                        HttpTransactionData(request=request)
+                        HttpTransactionData(request=request, response=response)
                         if request
                         else WebSocketTransactionData(websocket=websocket)
                     ),
                 )
             ):
-                yield
+                try:
+                    yield
+                except HTTPException:
+                    raise
+                except Exception as e:
+                    logger.exception("Unhandled exception in request handling.")
+                    raise HTTPException(
+                        status_code=500,
+                        detail={
+                            "message": "Internal server error occurred.",
+                            "x-traceparentid": (
+                                response.headers.get("traceparent")
+                                if response
+                                else None
+                            ),
+                        },
+                        headers=(
+                            {k: str(v) for k, v in response.headers.items()}
+                            if response
+                            else {}
+                        ),
+                    ) from e
 
 
 def create_http_server(

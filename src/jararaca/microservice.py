@@ -19,7 +19,7 @@ from typing import (
     runtime_checkable,
 )
 
-from fastapi import Request, WebSocket
+from fastapi import Request, Response, WebSocket
 
 from jararaca.core.providers import ProviderSpec, T, Token
 from jararaca.messagebus import MessageOf
@@ -34,6 +34,7 @@ if TYPE_CHECKING:
 
 @dataclass
 class SchedulerTransactionData:
+    task_name: str
     triggered_at: datetime
     scheduled_to: datetime
     cron_expression: str
@@ -43,6 +44,7 @@ class SchedulerTransactionData:
 @dataclass
 class HttpTransactionData:
     request: Request
+    response: Response
     context_type: Literal["http"] = "http"
 
 
