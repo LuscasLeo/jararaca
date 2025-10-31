@@ -9,6 +9,7 @@ from aio_pika.abc import AbstractConnection
 from pydantic import BaseModel
 
 from jararaca.broker_backend import MessageBrokerBackend
+from jararaca.messagebus import implicit_headers
 from jararaca.messagebus.interceptors.publisher_interceptor import (
     MessageBusConnectionFactory,
 )
@@ -42,8 +43,12 @@ class AIOPikaMessagePublisher(MessagePublisher):
             logging.warning(f"Exchange {self.exchange_name} not found")
             return
         routing_key = f"{topic}."
+
+        implicit_headers_data = implicit_headers.use_implicit_headers()
         await exchange.publish(
-            aio_pika.Message(body=message.model_dump_json().encode()),
+            aio_pika.Message(
+                body=message.model_dump_json().encode(), headers=implicit_headers_data
+            ),
             routing_key=routing_key,
         )
 

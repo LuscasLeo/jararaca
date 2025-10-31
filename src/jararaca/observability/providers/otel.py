@@ -23,6 +23,11 @@ from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import BatchSpanProcessor
 from opentelemetry.trace.propagation.tracecontext import TraceContextTextMapPropagator
 
+from jararaca.messagebus.implicit_headers import (
+    ImplicitHeaders,
+    provide_implicit_headers,
+    use_implicit_headers,
+)
 from jararaca.microservice import (
     AppTransactionContext,
     Container,
@@ -68,7 +73,7 @@ class OtelTracingContextProviderFactory(TracingContextProviderFactory):
     ) -> AsyncGenerator[None, None]:
 
         title: str = "Unmapped App Context Execution"
-        headers = {}
+        headers: dict[str, Any] = {}
         tx_data = app_tx_ctx.transaction_data
         if tx_data.context_type == "http":
 
@@ -77,6 +82,7 @@ class OtelTracingContextProviderFactory(TracingContextProviderFactory):
 
         elif tx_data.context_type == "message_bus":
             title = f"Message Bus {tx_data.topic}"
+            headers = use_implicit_headers() or {}
 
         elif tx_data.context_type == "websocket":
             headers = dict(tx_data.websocket.headers)
@@ -119,7 +125,11 @@ class OtelTracingContextProviderFactory(TracingContextProviderFactory):
                 app_tx_ctx.transaction_data.response.headers["traceparent"] = hex(
                     cx.trace_id
                 )[2:].rjust(32, "0")
-            yield
+            tracing_headers: ImplicitHeaders = {}
+            TraceContextTextMapPropagator().inject(tracing_headers)
+            W3CBaggagePropagator().inject(tracing_headers)
+            with provide_implicit_headers(tracing_headers):
+                yield
 
 
 class LoggerHandlerCallback(Protocol):
