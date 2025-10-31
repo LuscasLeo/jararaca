@@ -33,7 +33,6 @@ class UnitOfWorkContextProvider:
         self.container = container
         self.container_interceptor = ContainerInterceptor(container)
 
-    # TODO: Guarantee that the context is closed whenever an exception is raised
     # TODO: Guarantee a unit of work workflow for the whole request, including all the interceptors
 
     def factory_app_interceptors(self) -> Sequence[AppInterceptor]:
@@ -65,7 +64,36 @@ class UnitOfWorkContextProvider:
             for ctx in ctxs:
                 await ctx.__aenter__()
 
-            yield None
+            exc_type = None
+            exc_value = None
+            exc_traceback = None
 
-            for ctx in reversed(ctxs):
-                await ctx.__aexit__(None, None, None)
+            try:
+                yield None
+            except BaseException as e:
+                exc_type = type(e)
+                exc_value = e
+                exc_traceback = e.__traceback__
+                raise
+            finally:
+                # Exit interceptors in reverse order, propagating exception info
+                for ctx in reversed(ctxs):
+                    try:
+                        suppressed = await ctx.__aexit__(
+                            exc_type, exc_value, exc_traceback
+                        )
+                        # If an interceptor returns True, it suppresses the exception
+                        if suppressed and exc_type is not None:
+                            exc_type = None
+                            exc_value = None
+                            exc_traceback = None
+                    except BaseException as exit_exc:
+                        # If an interceptor raises an exception during cleanup,
+                        # replace the original exception with the new one
+                        exc_type = type(exit_exc)
+                        exc_value = exit_exc
+                        exc_traceback = exit_exc.__traceback__
+
+                # Re-raise the exception if it wasn't suppressed
+                if exc_type is not None and exc_value is not None:
+                    raise exc_value.with_traceback(exc_traceback)
