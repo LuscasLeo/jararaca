@@ -17,6 +17,7 @@ if TYPE_CHECKING:
         AppTransactionContext,
         use_app_type,
     )
+    from jararaca.observability.decorators import TracedClass, TracedFunc, traced_class
     from jararaca.observability.interceptor import ObservabilityInterceptor
     from jararaca.observability.providers.otel import OtelObservabilityProvider
     from jararaca.persistence.sort_filter import (
@@ -222,6 +223,9 @@ if TYPE_CHECKING:
         "HttpPut",
         "HttpDelete",
         "ObservabilityInterceptor",
+        "TracedFunc",
+        "TracedClass",
+        "traced_class",
         "QueryInjector",
         "HttpMicroservice",
         "use_current_container",
@@ -392,6 +396,9 @@ _dynamic_imports: "dict[str, tuple[str, str, str | None]]" = {
     "HttpPut": (__SPEC_PARENT__, "rpc.http.decorators", "Put"),
     "HttpDelete": (__SPEC_PARENT__, "rpc.http.decorators", "Delete"),
     "ObservabilityInterceptor": (__SPEC_PARENT__, "observability.interceptor", None),
+    "TracedFunc": (__SPEC_PARENT__, "observability.decorators", None),
+    "TracedClass": (__SPEC_PARENT__, "observability.decorators", None),
+    "traced_class": (__SPEC_PARENT__, "observability.decorators", None),
     "QueryInjector": (__SPEC_PARENT__, "persistence.utilities", None),
     "HttpMicroservice": (__SPEC_PARENT__, "presentation.http_microservice", None),
     "use_current_container": (__SPEC_PARENT__, "microservice", None),
