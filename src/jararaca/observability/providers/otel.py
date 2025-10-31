@@ -30,6 +30,7 @@ from jararaca.microservice import (
     use_app_transaction_context,
 )
 from jararaca.observability.decorators import (
+    AttributeMap,
     TracingContextProvider,
     TracingContextProviderFactory,
 )
@@ -47,7 +48,7 @@ class OtelTracingContextProvider(TracingContextProvider):
     def __call__(
         self,
         trace_name: str,
-        context_attributes: dict[str, str],
+        context_attributes: AttributeMap | None,
     ) -> Generator[None, None, None]:
 
         with tracer.start_as_current_span(trace_name, attributes=context_attributes):
