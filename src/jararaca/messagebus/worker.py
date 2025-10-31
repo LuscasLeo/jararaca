@@ -1130,6 +1130,8 @@ class ScheduledMessageHandlerCallback:
                 AppTransactionContext(
                     controller_member_reflect=scheduled_action.controller_member,
                     transaction_data=SchedulerTransactionData(
+                        task_name=scheduled_action.spec.name
+                        or scheduled_action.callable.__qualname__,
                         scheduled_to=datetime.now(UTC),
                         cron_expression=scheduled_action.spec.cron,
                         triggered_at=datetime.now(UTC),

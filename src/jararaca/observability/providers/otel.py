@@ -78,6 +78,18 @@ class OtelTracingContextProviderFactory(TracingContextProviderFactory):
         elif tx_data.context_type == "message_bus":
             title = f"Message Bus {tx_data.topic}"
 
+        elif tx_data.context_type == "websocket":
+            headers = dict(tx_data.websocket.headers)
+            title = f"WebSocket {tx_data.websocket.url}"
+
+        elif tx_data.context_type == "scheduler":
+            title = f"Scheduler Task {tx_data.task_name}"
+            headers = {
+                "scheduled_to": tx_data.scheduled_to.isoformat(),
+                "cron_expression": tx_data.cron_expression,
+                "triggered_at": tx_data.triggered_at.isoformat(),
+            }
+
         carrier = {
             key: value
             for key, value in headers.items()
@@ -101,7 +113,12 @@ class OtelTracingContextProviderFactory(TracingContextProviderFactory):
             attributes={
                 "app.context_type": tx_data.context_type,
             },
-        ):
+        ) as root_span:
+            cx = root_span.get_span_context()
+            if app_tx_ctx.transaction_data.context_type == "http":
+                app_tx_ctx.transaction_data.response.headers["traceparent"] = hex(
+                    cx.trace_id
+                )[2:].rjust(32, "0")
             yield
 
 
