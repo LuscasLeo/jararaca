@@ -116,7 +116,9 @@ class CustomLoggingHandler(LoggingHandler):
             ctx = use_app_transaction_context()
             return {
                 **super()._translate(record),
-                "context_type": ctx.transaction_data.context_type,
+                "attributes": {
+                    "context_type": ctx.transaction_data.context_type,
+                },
             }
         except LookupError:
             return super()._translate(record)
