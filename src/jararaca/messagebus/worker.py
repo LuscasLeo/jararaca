@@ -50,6 +50,7 @@ from jararaca.messagebus.decorators import (
     MessageHandlerData,
     ScheduleDispatchData,
 )
+from jararaca.messagebus.implicit_headers import provide_implicit_headers
 from jararaca.messagebus.message import Message, MessageOf
 from jararaca.microservice import (
     AppTransactionContext,
@@ -1471,7 +1472,9 @@ class MessageHandlerCallback:
         incoming_message_spec = MessageHandler.get_message_incoming(handler)
         assert incoming_message_spec is not None
 
-        with provide_shutdown_state(self.consumer.shutdown_state):
+        with provide_implicit_headers(aio_pika_message.headers), provide_shutdown_state(
+            self.consumer.shutdown_state
+        ):
             async with self.consumer.uow_context_provider(
                 AppTransactionContext(
                     controller_member_reflect=handler_data.controller_member,
