@@ -20,9 +20,9 @@ croniter = "^3.0.3"
 redis = "^5.0.8"
 websockets = "^13.0.1"
 opentelemetry-exporter-otlp-proto-http = { version = "^1.27.0", optional = true }
-opentelemetry-api = { version = "^1.27.0", optional = true }
-opentelemetry-sdk = { version = "^1.27.0", optional = true }
-opentelemetry-distro = { version = "^0.49b2", optional = true }
+opentelemetry-api = "^1.38.0"
+opentelemetry-sdk = "^1.38.0"
+opentelemetry-distro = "^0.59b0"
 opentelemetry-exporter-otlp = { version = "^1.27.0", optional = true }
 types-croniter = "^3.0.3.20240731"
 types-redis = "^4.6.0.20240903"

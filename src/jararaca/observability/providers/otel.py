@@ -1,6 +1,6 @@
 import logging
 from contextlib import asynccontextmanager, contextmanager
-from typing import AsyncGenerator, Generator, Protocol
+from typing import Any, AsyncGenerator, Generator, Protocol
 
 from opentelemetry import metrics, trace
 from opentelemetry._logs import set_logger_provider
@@ -23,11 +23,15 @@ from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import BatchSpanProcessor
 from opentelemetry.trace.propagation.tracecontext import TraceContextTextMapPropagator
 
-from jararaca.microservice import AppTransactionContext, Container, Microservice
+from jararaca.microservice import (
+    AppTransactionContext,
+    Container,
+    Microservice,
+    use_app_transaction_context,
+)
 from jararaca.observability.decorators import (
     TracingContextProvider,
     TracingContextProviderFactory,
-    get_tracing_ctx_provider,
 )
 from jararaca.observability.interceptor import ObservabilityProvider
 
@@ -90,13 +94,32 @@ class OtelTracingContextProviderFactory(TracingContextProviderFactory):
 
         ctx2 = W3CBaggagePropagator().extract(b2, context=ctx)
 
-        with tracer.start_as_current_span(name=title, context=ctx2):
+        with tracer.start_as_current_span(
+            name=title,
+            context=ctx2,
+            attributes={
+                "app.context_type": tx_data.context_type,
+            },
+        ):
             yield
 
 
 class LoggerHandlerCallback(Protocol):
 
     def __call__(self, logger_handler: logging.Handler) -> None: ...
+
+
+class CustomLoggingHandler(LoggingHandler):
+
+    def _translate(self, record: logging.LogRecord) -> dict[str, Any]:
+        try:
+            ctx = use_app_transaction_context()
+            return {
+                **super()._translate(record),
+                "context_type": ctx.transaction_data.context_type,
+            }
+        except LookupError:
+            return super()._translate(record)
 
 
 class OtelObservabilityProvider(ObservabilityProvider):
@@ -143,11 +166,11 @@ class OtelObservabilityProvider(ObservabilityProvider):
             BatchLogRecordProcessor(self.logs_exporter)
         )
 
-        logging_handler = LoggingHandler(
+        logging_handler = CustomLoggingHandler(
             level=logging.DEBUG, logger_provider=logger_provider
         )
 
-        logging_handler.addFilter(lambda _: get_tracing_ctx_provider() is not None)
+        # logging_handler.addFilter(lambda _: get_tracing_ctx_provider() is not None)
 
         self.logging_handler_callback(logging_handler)
 
