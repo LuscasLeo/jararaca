@@ -75,23 +75,43 @@ class OtelTracingContextProviderFactory(TracingContextProviderFactory):
         title: str = "Unmapped App Context Execution"
         headers: dict[str, Any] = {}
         tx_data = app_tx_ctx.transaction_data
-        extra_attributes: dict[str, Any] = {}
+        extra_attributes: dict[str, str] = {}
         if tx_data.context_type == "http":
 
             headers = dict(tx_data.request.headers)
             title = f"HTTP {tx_data.request.method} {tx_data.request.url}"
             extra_attributes = {
                 "http.method": tx_data.request.method,
-                "http.url": tx_data.request.url,
-                "http.status_code": tx_data.response.status_code,
+                "http.url": str(tx_data.request.url),
+                "http.path": tx_data.request.url.path,  # Path with the key applied to the template
+                "http.route.path": tx_data.request.scope["route"].path,
+                "http.route.endpoint.name": tx_data.request[
+                    "route"
+                ].endpoint.__qualname__,
+                "http.query": tx_data.request.url.query,
+                **{
+                    f"http.request.path_param.{k}": v
+                    for k, v in tx_data.request.path_params.items()
+                },
+                **{
+                    f"http.request.query_param.{k}": v
+                    for k, v in tx_data.request.query_params.items()
+                },
+                **{
+                    f"http.request.header.{k}": v
+                    for k, v in tx_data.request.headers.items()
+                },
             }
 
         elif tx_data.context_type == "message_bus":
             title = f"Message Bus {tx_data.topic}"
             headers = use_implicit_headers() or {}
+            payload = tx_data.message.payload()
             extra_attributes = {
                 "bus.topic": tx_data.topic,
-                "bus.message": tx_data.message.payload().model_dump_json(),
+                "bus.message.body": payload.model_dump_json(),
+                "bus.message.name": payload.__class__.__qualname__,
+                "bus.message.module": payload.__class__.__module__,
             }
 
         elif tx_data.context_type == "websocket":

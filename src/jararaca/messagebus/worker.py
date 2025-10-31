@@ -1528,6 +1528,7 @@ class MessageHandlerCallback:
                             logger.exception(
                                 f"Error processing message {message_id} on topic {routing_key}: {str(base_exc)}"
                             )
+                            raise
 
                         # Handle rejection with retry logic
                         if incoming_message_spec.requeue_on_exception:
@@ -1543,6 +1544,7 @@ class MessageHandlerCallback:
                             await self.handle_reject_message(
                                 aio_pika_message, requeue=False, exception=base_exc
                             )
+
                     else:
                         # Message processed successfully, log and clean up any retry state
                         message_id = aio_pika_message.message_id or str(uuid.uuid4())
