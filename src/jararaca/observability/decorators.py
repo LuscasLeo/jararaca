@@ -9,19 +9,35 @@ from typing import (
     Callable,
     ContextManager,
     Generator,
+    Mapping,
     Protocol,
+    Sequence,
     TypeVar,
+    Union,
 )
 
 from jararaca.microservice import AppTransactionContext
 
 F = TypeVar("F", bound=Callable[..., Awaitable[Any]])
 
+AttributeValue = Union[
+    str,
+    bool,
+    int,
+    float,
+    Sequence[str],
+    Sequence[bool],
+    Sequence[int],
+    Sequence[float],
+]
+
+AttributeMap = Mapping[str, AttributeValue]
+
 
 class TracingContextProvider(Protocol):
 
     def __call__(
-        self, trace_name: str, context_attributes: dict[str, str]
+        self, trace_name: str, context_attributes: AttributeMap | None
     ) -> ContextManager[Any]: ...
 
 
