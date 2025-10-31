@@ -98,7 +98,7 @@ class OtelTracingContextProviderFactory(TracingContextProviderFactory):
             headers = dict(tx_data.websocket.headers)
             title = f"WebSocket {tx_data.websocket.url}"
             extra_attributes = {
-                "ws.url": tx_data.websocket.url,
+                "ws.url": str(tx_data.websocket.url),
             }
 
         elif tx_data.context_type == "scheduler":
