@@ -75,25 +75,39 @@ class OtelTracingContextProviderFactory(TracingContextProviderFactory):
         title: str = "Unmapped App Context Execution"
         headers: dict[str, Any] = {}
         tx_data = app_tx_ctx.transaction_data
+        extra_attributes: dict[str, Any] = {}
         if tx_data.context_type == "http":
 
             headers = dict(tx_data.request.headers)
             title = f"HTTP {tx_data.request.method} {tx_data.request.url}"
+            extra_attributes = {
+                "http.method": tx_data.request.method,
+                "http.url": tx_data.request.url,
+                "http.status_code": tx_data.response.status_code,
+            }
 
         elif tx_data.context_type == "message_bus":
             title = f"Message Bus {tx_data.topic}"
             headers = use_implicit_headers() or {}
+            extra_attributes = {
+                "bus.topic": tx_data.topic,
+                "bus.message": tx_data.message.payload().model_dump_json(),
+            }
 
         elif tx_data.context_type == "websocket":
             headers = dict(tx_data.websocket.headers)
             title = f"WebSocket {tx_data.websocket.url}"
+            extra_attributes = {
+                "ws.url": tx_data.websocket.url,
+            }
 
         elif tx_data.context_type == "scheduler":
             title = f"Scheduler Task {tx_data.task_name}"
-            headers = {
-                "scheduled_to": tx_data.scheduled_to.isoformat(),
-                "cron_expression": tx_data.cron_expression,
-                "triggered_at": tx_data.triggered_at.isoformat(),
+            extra_attributes = {
+                "sched.task_name": tx_data.task_name,
+                "sched.scheduled_to": tx_data.scheduled_to.isoformat(),
+                "sched.cron_expression": tx_data.cron_expression,
+                "sched.triggered_at": tx_data.triggered_at.isoformat(),
             }
 
         carrier = {
@@ -118,6 +132,7 @@ class OtelTracingContextProviderFactory(TracingContextProviderFactory):
             context=ctx2,
             attributes={
                 "app.context_type": tx_data.context_type,
+                **extra_attributes,
             },
         ) as root_span:
             cx = root_span.get_span_context()
