@@ -18,7 +18,13 @@ if TYPE_CHECKING:
         use_app_type,
     )
     from jararaca.observability.decorators import TracedClass, TracedFunc, traced_class
-    from jararaca.observability.hooks import spawn_trace
+    from jararaca.observability.hooks import (
+        add_event,
+        get_tracing_provider,
+        record_exception,
+        set_span_status,
+        spawn_trace,
+    )
     from jararaca.observability.interceptor import ObservabilityInterceptor
     from jararaca.observability.providers.otel import OtelObservabilityProvider
     from jararaca.persistence.sort_filter import (
@@ -228,6 +234,10 @@ if TYPE_CHECKING:
         "TracedClass",
         "traced_class",
         "spawn_trace",
+        "add_event",
+        "set_span_status",
+        "record_exception",
+        "get_tracing_provider",
         "QueryInjector",
         "HttpMicroservice",
         "use_current_container",
@@ -402,6 +412,10 @@ _dynamic_imports: "dict[str, tuple[str, str, str | None]]" = {
     "TracedClass": (__SPEC_PARENT__, "observability.decorators", None),
     "traced_class": (__SPEC_PARENT__, "observability.decorators", None),
     "spawn_trace": (__SPEC_PARENT__, "observability.hooks", None),
+    "add_event": (__SPEC_PARENT__, "observability.hooks", None),
+    "set_span_status": (__SPEC_PARENT__, "observability.hooks", None),
+    "record_exception": (__SPEC_PARENT__, "observability.hooks", None),
+    "get_tracing_provider": (__SPEC_PARENT__, "observability.hooks", None),
     "QueryInjector": (__SPEC_PARENT__, "persistence.utilities", None),
     "HttpMicroservice": (__SPEC_PARENT__, "presentation.http_microservice", None),
     "use_current_container": (__SPEC_PARENT__, "microservice", None),
