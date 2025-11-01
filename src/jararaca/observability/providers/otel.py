@@ -1,6 +1,6 @@
 import logging
 from contextlib import asynccontextmanager, contextmanager
-from typing import Any, AsyncGenerator, Generator, Protocol
+from typing import Any, AsyncGenerator, Generator, Literal, Protocol
 
 from opentelemetry import metrics, trace
 from opentelemetry._logs import set_logger_provider
@@ -50,7 +50,7 @@ class OtelTracingContextProvider(TracingContextProvider):
         self.app_context = app_context
 
     @contextmanager
-    def __call__(
+    def start_trace_context(
         self,
         trace_name: str,
         context_attributes: AttributeMap | None,
@@ -58,6 +58,29 @@ class OtelTracingContextProvider(TracingContextProvider):
 
         with tracer.start_as_current_span(trace_name, attributes=context_attributes):
             yield
+
+    def add_event(
+        self, event_name: str, event_attributes: AttributeMap | None = None
+    ) -> None:
+        trace.get_current_span().add_event(name=event_name, attributes=event_attributes)
+
+    def set_span_status(self, status_code: Literal["OK", "ERROR", "UNSET"]) -> None:
+        span = trace.get_current_span()
+        if status_code == "OK":
+            span.set_status(trace.Status(trace.StatusCode.OK))
+        elif status_code == "ERROR":
+            span.set_status(trace.Status(trace.StatusCode.ERROR))
+        else:
+            span.set_status(trace.Status(trace.StatusCode.UNSET))
+
+    def record_exception(
+        self,
+        exception: Exception,
+        attributes: AttributeMap | None = None,
+        escaped: bool = False,
+    ) -> None:
+        span = trace.get_current_span()
+        span.record_exception(exception, attributes=attributes, escaped=escaped)
 
 
 class OtelTracingContextProviderFactory(TracingContextProviderFactory):

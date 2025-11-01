@@ -9,6 +9,7 @@ from typing import (
     Callable,
     ContextManager,
     Generator,
+    Literal,
     Mapping,
     Protocol,
     Sequence,
@@ -36,9 +37,24 @@ AttributeMap = Mapping[str, AttributeValue]
 
 class TracingContextProvider(Protocol):
 
-    def __call__(
+    def start_trace_context(
         self, trace_name: str, context_attributes: AttributeMap | None
     ) -> ContextManager[Any]: ...
+
+    def add_event(
+        self,
+        event_name: str,
+        event_attributes: AttributeMap | None = None,
+    ) -> None: ...
+
+    def set_span_status(self, status_code: Literal["OK", "ERROR", "UNSET"]) -> None: ...
+
+    def record_exception(
+        self,
+        exception: Exception,
+        attributes: AttributeMap | None = None,
+        escaped: bool = False,
+    ) -> None: ...
 
 
 class TracingContextProviderFactory(Protocol):
@@ -101,7 +117,7 @@ class TracedFunc:
         ) -> Any:
 
             if ctx_provider := get_tracing_ctx_provider():
-                with ctx_provider(
+                with ctx_provider.start_trace_context(
                     self.trace_name,
                     self.trace_mapper(*args, **kwargs),
                 ):
