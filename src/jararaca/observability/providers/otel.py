@@ -101,6 +101,12 @@ class OtelTracingContextProviderFactory(TracingContextProviderFactory):
                     f"http.request.header.{k}": v
                     for k, v in tx_data.request.headers.items()
                 },
+                "http.request.body": (await tx_data.request.body())[:5000].decode(
+                    errors="ignore"
+                ),
+                "http.request.client.host": (
+                    tx_data.request.client.host if tx_data.request.client else ""
+                ),
             }
 
         elif tx_data.context_type == "message_bus":
