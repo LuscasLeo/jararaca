@@ -5,13 +5,14 @@ import random
 from typing import Annotated, Any, AsyncGenerator
 
 from fastapi import Request
+from fastapi.params import Header, Query
 from opentelemetry import metrics
 
 from examples.client import HelloRPC
 from examples.schemas import HelloResponse
 from jararaca import Get, RestController, Token
 from jararaca.observability.decorators import TracedFunc
-from jararaca.presentation.decorators import Post
+from jararaca.presentation.decorators import Post, UseMiddleware
 from jararaca.presentation.http_microservice import HttpMiddleware
 
 logger = logging.getLogger(__name__)
@@ -63,8 +64,39 @@ class AuthMiddleware(HttpMiddleware):
 
     async def intercept(
         self,
+        api_key: Annotated[str, Header(alias="X-API-Key")],
+        user_id: Annotated[str, Query()],
     ) -> AsyncGenerator[None, Any]:
-        logger.info("AuthMiddleware")
+        logger.info("AuthMiddleware - API Key: %s, User ID: %s", api_key, user_id)
+        yield
+
+
+class AdminMiddleware(HttpMiddleware):
+
+    async def intercept(
+        self,
+        admin_token: Annotated[str, Header(alias="X-Admin-Token")],
+    ) -> AsyncGenerator[None, Any]:
+        logger.info("AdminMiddleware - Admin Token: %s", admin_token)
+        yield
+
+
+class UserAccessMiddleware(HttpMiddleware):
+    """
+    Middleware that checks user access using user_id from the path parameter.
+    This demonstrates how middleware can access path parameters.
+    """
+
+    async def intercept(
+        self,
+        user_id: str,  # This will be detected as a path parameter if {user_id} is in the path
+        access_level: Annotated[str, Header(alias="X-Access-Level")],
+    ) -> AsyncGenerator[None, Any]:
+        logger.info(
+            "UserAccessMiddleware - User ID: %s, Access Level: %s",
+            user_id,
+            access_level,
+        )
         yield
 
 
@@ -72,6 +104,7 @@ class AuthMiddleware(HttpMiddleware):
     "/my",
     middlewares=[AuthMiddleware],
 )
+@UseMiddleware(AdminMiddleware)  # Class-level UseMiddleware decorator
 class MyController:
 
     def __init__(
@@ -96,5 +129,31 @@ class MyController:
 
     @TracedFunc("create-response")
     @Post("/create-response")
+    @UseMiddleware(
+        UserAccessMiddleware
+    )  # Method-level UseMiddleware (will also get class-level AdminMiddleware)
     async def create_response(self, hello_response: HelloResponse) -> HelloResponse:
         return hello_response
+
+
+@RestController(
+    "/users/{user_id}",  # This path contains a user_id parameter
+    middlewares=[
+        UserAccessMiddleware
+    ],  # Middleware can access the user_id path parameter
+)
+class UserController:
+    """
+    Controller that demonstrates middleware accessing path parameters.
+    The UserAccessMiddleware will have access to the user_id path parameter.
+    """
+
+    @Get("/profile")
+    async def get_user_profile(self, user_id: str) -> dict[str, str]:
+        return {"user_id": user_id, "profile": "user profile data"}
+
+    @Post("/settings")
+    async def update_user_settings(
+        self, user_id: str, settings: dict[str, Any]
+    ) -> dict[str, Any]:
+        return {"user_id": user_id, "settings": settings}
