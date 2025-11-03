@@ -30,7 +30,7 @@ from pydantic import BaseModel, PlainValidator, RootModel
 from pydantic_core import PydanticUndefined
 
 from jararaca.microservice import Microservice
-from jararaca.presentation.decorators import HttpMapping, RestController
+from jararaca.presentation.decorators import HttpMapping, RestController, UseMiddleware
 from jararaca.presentation.websocket.decorators import RegisterWebSocketMessage
 from jararaca.presentation.websocket.websocket_interceptor import (
     WebSocketMessageWrapper,
@@ -841,6 +841,8 @@ def write_rest_controller_to_typescript_interface(
         inspect.getmembers(controller, predicate=inspect.isfunction), key=lambda x: x[0]
     )
 
+    class_usemiddlewares = UseMiddleware.get_middlewares(controller)
+
     for name, member in member_items:
         if (mapping := HttpMapping.get_http_mapping(member)) is not None:
             return_type = member.__annotations__.get("return")
@@ -862,6 +864,39 @@ def write_rest_controller_to_typescript_interface(
                 member, rest_controller, mapping
             )
 
+            # Extract parameters from controller-level middlewares
+            for middleware_type in rest_controller.middlewares:
+                middleware_params, middleware_mapped_types = (
+                    extract_middleware_parameters(
+                        middleware_type, rest_controller, mapping
+                    )
+                )
+                arg_params_spec.extend(middleware_params)
+                parametes_mapped_types.update(middleware_mapped_types)
+
+            # Extract parameters from class-level UseMiddleware decorators
+            for middleware_instance in class_usemiddlewares:
+                middleware_params, middleware_mapped_types = (
+                    extract_middleware_parameters(
+                        middleware_instance.middleware, rest_controller, mapping
+                    )
+                )
+                arg_params_spec.extend(middleware_params)
+                parametes_mapped_types.update(middleware_mapped_types)
+
+            # Extract parameters from method-level middlewares (UseMiddleware)
+            # Get the method from the class to access its middleware decorators
+            class_method = getattr(controller, name, None)
+            if class_method:
+                for middleware_instance in UseMiddleware.get_middlewares(class_method):
+                    middleware_params, middleware_mapped_types = (
+                        extract_middleware_parameters(
+                            middleware_instance.middleware, rest_controller, mapping
+                        )
+                    )
+                    arg_params_spec.extend(middleware_params)
+                    parametes_mapped_types.update(middleware_mapped_types)
+
             for param in parametes_mapped_types:
                 mapped_types.update(extract_all_envolved_types(param))
 
@@ -882,6 +917,8 @@ def write_rest_controller_to_typescript_interface(
 
             # Properly handle path joining to avoid double slashes
             controller_path = rest_controller.path or ""
+            # Also apply path transformation to the controller path
+            controller_path = parse_path_with_params(controller_path, arg_params_spec)
             path_parts = []
 
             if controller_path and controller_path.strip("/"):
@@ -1008,8 +1045,6 @@ class HttpParemeterSpec:
 def parse_path_with_params(path: str, parameters: list[HttpParemeterSpec]) -> str:
     # Use a regular expression to match both simple parameters {param} and
     # parameters with converters {param:converter}
-    import re
-
     pattern = re.compile(r"{([^:}]+)(?::[^}]*)?}")
 
     # For each parameter found in the path, replace it with :param format
@@ -1020,6 +1055,212 @@ def parse_path_with_params(path: str, parameters: list[HttpParemeterSpec]) -> st
         )
 
     return path
+
+
+def extract_middleware_parameters(
+    middleware_type: type,
+    controller: RestController,
+    mapping: HttpMapping,
+) -> tuple[list[HttpParemeterSpec], set[Any]]:
+    """
+    Extract parameters from a middleware class's intercept method.
+    """
+    parameters_list: list[HttpParemeterSpec] = []
+    mapped_types: set[Any] = set()
+
+    # Get the intercept method from the middleware class
+    if not hasattr(middleware_type, "intercept"):
+        return parameters_list, mapped_types
+
+    intercept_method = getattr(middleware_type, "intercept")
+
+    # Use the same logic as extract_parameters but specifically for the intercept method
+    try:
+        signature = inspect.signature(intercept_method)
+        for parameter_name, parameter in signature.parameters.items():
+            # Skip 'self' parameter
+            if parameter_name == "self":
+                continue
+
+            parameter_type = parameter.annotation
+            if parameter_type == inspect.Parameter.empty:
+                continue
+
+            if parameter_type in EXCLUDED_REQUESTS_TYPES:
+                continue
+
+            if get_origin(parameter_type) == Annotated:
+                unwrapped_type, all_metadata = unwrap_annotated_type(parameter_type)
+                # Look for FastAPI parameter annotations in all metadata layers
+                annotated_type_hook = None
+                for metadata in all_metadata:
+                    if isinstance(
+                        metadata, (Header, Cookie, Form, Body, Query, Path, Depends)
+                    ):
+                        annotated_type_hook = metadata
+                        break
+
+                if annotated_type_hook is None and all_metadata:
+                    # Fallback to first metadata if no FastAPI annotation found
+                    annotated_type_hook = all_metadata[0]
+
+                annotated_type = unwrapped_type
+                if isinstance(annotated_type_hook, Header):
+                    mapped_types.add(str)
+                    parameters_list.append(
+                        HttpParemeterSpec(
+                            type_="header",
+                            name=parameter_name,
+                            required=True,
+                            argument_type_str=get_field_type_for_ts(str),
+                        )
+                    )
+                elif isinstance(annotated_type_hook, Cookie):
+                    mapped_types.add(str)
+                    parameters_list.append(
+                        HttpParemeterSpec(
+                            type_="cookie",
+                            name=parameter_name,
+                            required=True,
+                            argument_type_str=get_field_type_for_ts(str),
+                        )
+                    )
+                elif isinstance(annotated_type_hook, Form):
+                    mapped_types.add(annotated_type)
+                    parameters_list.append(
+                        HttpParemeterSpec(
+                            type_="form",
+                            name=parameter_name,
+                            required=True,
+                            argument_type_str=get_field_type_for_ts(annotated_type),
+                        )
+                    )
+                elif isinstance(annotated_type_hook, Body):
+                    mapped_types.update(extract_all_envolved_types(parameter_type))
+                    # For body parameters, use Input suffix if it's a split model
+                    context_suffix = (
+                        "Input"
+                        if (
+                            inspect.isclass(parameter_type)
+                            and hasattr(parameter_type, "__dict__")
+                            and SplitInputOutput.is_split_model(parameter_type)
+                        )
+                        else ""
+                    )
+                    parameters_list.append(
+                        HttpParemeterSpec(
+                            type_="body",
+                            name=parameter_name,
+                            required=True,
+                            argument_type_str=get_field_type_for_ts(
+                                parameter_type, context_suffix
+                            ),
+                        )
+                    )
+                elif isinstance(annotated_type_hook, Query):
+                    mapped_types.add(parameter_type)
+                    # For query parameters, use Input suffix if it's a split model
+                    context_suffix = (
+                        "Input"
+                        if (
+                            inspect.isclass(parameter_type)
+                            and hasattr(parameter_type, "__dict__")
+                            and SplitInputOutput.is_split_model(parameter_type)
+                        )
+                        else ""
+                    )
+                    parameters_list.append(
+                        HttpParemeterSpec(
+                            type_="query",
+                            name=parameter_name,
+                            required=True,
+                            argument_type_str=get_field_type_for_ts(
+                                parameter_type, context_suffix
+                            ),
+                        )
+                    )
+                elif isinstance(annotated_type_hook, Path):
+                    mapped_types.add(parameter_type)
+                    # For path parameters, use Input suffix if it's a split model
+                    context_suffix = (
+                        "Input"
+                        if (
+                            inspect.isclass(parameter_type)
+                            and hasattr(parameter_type, "__dict__")
+                            and SplitInputOutput.is_split_model(parameter_type)
+                        )
+                        else ""
+                    )
+                    parameters_list.append(
+                        HttpParemeterSpec(
+                            type_="path",
+                            name=parameter_name,
+                            required=True,
+                            argument_type_str=get_field_type_for_ts(
+                                parameter_type, context_suffix
+                            ),
+                        )
+                    )
+                elif isinstance(annotated_type_hook, Depends):
+                    # For Dependencies, recursively extract parameters
+                    depends_hook = (
+                        annotated_type_hook.dependency or parameter_type.__args__[0]
+                    )
+                    if isinstance(depends_hook, HTTPBase):
+                        # Skip HTTP authentication dependencies
+                        pass
+                    else:
+                        # TODO: We might need to recursively extract from dependencies
+                        # For now, skip to avoid infinite recursion
+                        pass
+            else:
+                # Handle non-annotated parameters - check if they are path parameters
+                mapped_types.add(parameter_type)
+
+                # Check if parameter matches path parameters in controller or method paths
+                if (
+                    # Match both simple parameters {param} and parameters with converters {param:converter}
+                    re.search(f"{{{parameter_name}(:.*?)?}}", controller.path)
+                    is not None
+                    or re.search(f"{{{parameter_name}(:.*?)?}}", mapping.path)
+                    is not None
+                ):
+                    # This is a path parameter
+                    context_suffix = (
+                        "Input"
+                        if (
+                            inspect.isclass(parameter_type)
+                            and hasattr(parameter_type, "__dict__")
+                            and SplitInputOutput.is_split_model(parameter_type)
+                        )
+                        else ""
+                    )
+                    parameters_list.append(
+                        HttpParemeterSpec(
+                            type_="path",
+                            name=parameter_name,
+                            required=True,
+                            argument_type_str=get_field_type_for_ts(
+                                parameter_type, context_suffix
+                            ),
+                        )
+                    )
+                elif is_primitive(parameter_type):
+                    # Default to query parameters for simple types that aren't in the path
+                    parameters_list.append(
+                        HttpParemeterSpec(
+                            type_="query",
+                            name=parameter_name,
+                            required=True,
+                            argument_type_str=get_field_type_for_ts(parameter_type),
+                        )
+                    )
+
+    except (ValueError, TypeError):
+        # If we can't inspect the signature, return empty
+        pass
+
+    return parameters_list, mapped_types
 
 
 def mount_parametes_arguments(parameters: list[HttpParemeterSpec]) -> str:
