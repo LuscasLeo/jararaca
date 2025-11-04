@@ -18,6 +18,9 @@ if TYPE_CHECKING:
         use_app_type,
     )
     from jararaca.observability.decorators import TracedClass, TracedFunc, traced_class
+    from jararaca.observability.fastapi_exception_handler import (
+        setup_fastapi_exception_handler,
+    )
     from jararaca.observability.hooks import (
         add_event,
         get_tracing_provider,
@@ -239,6 +242,7 @@ if TYPE_CHECKING:
         "spawn_trace",
         "set_span_attribute",
         "add_event",
+        "setup_fastapi_exception_handler",
         "set_span_status",
         "record_exception",
         "get_tracing_provider",
@@ -416,6 +420,11 @@ _dynamic_imports: "dict[str, tuple[str, str, str | None]]" = {
     "TracedClass": (__SPEC_PARENT__, "observability.decorators", None),
     "traced_class": (__SPEC_PARENT__, "observability.decorators", None),
     "spawn_trace": (__SPEC_PARENT__, "observability.hooks", None),
+    "setup_fastapi_exception_handler": (
+        __SPEC_PARENT__,
+        "observability.fastapi_exception_handler",
+        None,
+    ),
     "set_span_attribute": (__SPEC_PARENT__, "observability.hooks", None),
     "start_span": (__SPEC_PARENT__, "observability.hooks", None),
     "add_event": (__SPEC_PARENT__, "observability.hooks", None),
