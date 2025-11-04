@@ -2,6 +2,7 @@ import logging
 from contextlib import asynccontextmanager, contextmanager
 from typing import Any, AsyncGenerator, Generator, Literal, Protocol
 
+from fastapi import HTTPException
 from opentelemetry import metrics, trace
 from opentelemetry._logs import set_logger_provider
 from opentelemetry.baggage.propagation import W3CBaggagePropagator
@@ -36,6 +37,7 @@ from jararaca.microservice import (
 )
 from jararaca.observability.decorators import (
     AttributeMap,
+    AttributeValue,
     TracingContextProvider,
     TracingContextProviderFactory,
 )
@@ -50,7 +52,7 @@ class OtelTracingContextProvider(TracingContextProvider):
         self.app_context = app_context
 
     @contextmanager
-    def start_trace_context(
+    def start_span_context(
         self,
         trace_name: str,
         context_attributes: AttributeMap | None,
@@ -81,6 +83,14 @@ class OtelTracingContextProvider(TracingContextProvider):
     ) -> None:
         span = trace.get_current_span()
         span.record_exception(exception, attributes=attributes, escaped=escaped)
+
+    def set_span_attribute(self, key: str, value: AttributeValue) -> None:
+        span = trace.get_current_span()
+        span.set_attribute(key, value)
+
+    def update_span_name(self, new_name: str) -> None:
+        span = trace.get_current_span()
+        span.update_name(new_name)
 
 
 class OtelTracingContextProviderFactory(TracingContextProviderFactory):
@@ -193,7 +203,17 @@ class OtelTracingContextProviderFactory(TracingContextProviderFactory):
             TraceContextTextMapPropagator().inject(tracing_headers)
             W3CBaggagePropagator().inject(tracing_headers)
             with provide_implicit_headers(tracing_headers):
-                yield
+                try:
+                    yield
+                except HTTPException as http_exc:
+                    root_span.record_exception(http_exc)
+                    root_span.set_status(
+                        trace.Status(
+                            trace.StatusCode.ERROR,
+                            f"HTTP {http_exc.status_code}: {http_exc.detail}",
+                        )
+                    )
+                    raise
 
 
 class LoggerHandlerCallback(Protocol):
