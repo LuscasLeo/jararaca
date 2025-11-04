@@ -2,7 +2,6 @@ import logging
 from contextlib import asynccontextmanager, contextmanager
 from typing import Any, AsyncGenerator, Generator, Literal, Protocol
 
-from fastapi import HTTPException
 from opentelemetry import metrics, trace
 from opentelemetry._logs import set_logger_provider
 from opentelemetry.baggage.propagation import W3CBaggagePropagator
@@ -35,6 +34,7 @@ from jararaca.microservice import (
     Microservice,
     use_app_transaction_context,
 )
+from jararaca.observability.constants import TRACEPARENT_KEY
 from jararaca.observability.decorators import (
     AttributeMap,
     AttributeValue,
@@ -195,25 +195,20 @@ class OtelTracingContextProviderFactory(TracingContextProviderFactory):
             },
         ) as root_span:
             cx = root_span.get_span_context()
+            span_traceparent_id = hex(cx.trace_id)[2:].rjust(32, "0")
             if app_tx_ctx.transaction_data.context_type == "http":
-                app_tx_ctx.transaction_data.response.headers["traceparent"] = hex(
-                    cx.trace_id
-                )[2:].rjust(32, "0")
+                app_tx_ctx.transaction_data.request.scope[TRACEPARENT_KEY] = (
+                    span_traceparent_id
+                )
+            elif app_tx_ctx.transaction_data.context_type == "websocket":
+                app_tx_ctx.transaction_data.websocket.scope[TRACEPARENT_KEY] = (
+                    span_traceparent_id
+                )
             tracing_headers: ImplicitHeaders = {}
             TraceContextTextMapPropagator().inject(tracing_headers)
             W3CBaggagePropagator().inject(tracing_headers)
             with provide_implicit_headers(tracing_headers):
-                try:
-                    yield
-                except HTTPException as http_exc:
-                    root_span.record_exception(http_exc)
-                    root_span.set_status(
-                        trace.Status(
-                            trace.StatusCode.ERROR,
-                            f"HTTP {http_exc.status_code}: {http_exc.detail}",
-                        )
-                    )
-                    raise
+                yield
 
 
 class LoggerHandlerCallback(Protocol):
