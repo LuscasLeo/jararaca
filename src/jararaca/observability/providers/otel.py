@@ -40,10 +40,24 @@ from jararaca.observability.decorators import (
     AttributeValue,
     TracingContextProvider,
     TracingContextProviderFactory,
+    TracingSpan,
+    TracingSpanContext,
 )
 from jararaca.observability.interceptor import ObservabilityProvider
 
 tracer: trace.Tracer = trace.get_tracer(__name__)
+
+
+class OtelTracingSpan(TracingSpan):
+
+    def __init__(self, span: trace.Span) -> None:
+        self.span = span
+
+
+class OtelTracingSpanContext(TracingSpanContext):
+
+    def __init__(self, span_context: trace.SpanContext) -> None:
+        self.span_context = span_context
 
 
 class OtelTracingContextProvider(TracingContextProvider):
@@ -90,7 +104,20 @@ class OtelTracingContextProvider(TracingContextProvider):
 
     def update_span_name(self, new_name: str) -> None:
         span = trace.get_current_span()
+
         span.update_name(new_name)
+
+    def add_link(self, span_context: TracingSpanContext) -> None:
+        if not isinstance(span_context, OtelTracingSpanContext):
+            return
+        span = trace.get_current_span()
+        span.add_link(span_context.span_context)
+
+    def get_current_span(self) -> TracingSpan | None:
+        return OtelTracingSpan(trace.get_current_span())
+
+    def get_current_span_context(self) -> TracingSpanContext | None:
+        return OtelTracingSpanContext(trace.get_current_span().get_span_context())
 
 
 class OtelTracingContextProviderFactory(TracingContextProviderFactory):
