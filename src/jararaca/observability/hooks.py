@@ -6,6 +6,8 @@ from jararaca.observability.decorators import (
     AttributeMap,
     AttributeValue,
     TracingContextProvider,
+    TracingSpan,
+    TracingSpanContext,
     get_tracing_ctx_provider,
 )
 
@@ -84,3 +86,23 @@ def set_span_attribute(
 
 def get_tracing_provider() -> TracingContextProvider | None:
     return get_tracing_ctx_provider()
+
+
+def get_current_span_context() -> TracingSpanContext | None:
+
+    if trace_context_provider := get_tracing_ctx_provider():
+        return trace_context_provider.get_current_span_context()
+    return None
+
+
+def get_current_span() -> TracingSpan | None:
+
+    if trace_context_provider := get_tracing_ctx_provider():
+        return trace_context_provider.get_current_span()
+    return None
+
+
+def add_span_link(span_context: TracingSpanContext) -> None:
+
+    if trace_context_provider := get_tracing_ctx_provider():
+        trace_context_provider.add_link(span_context=span_context)

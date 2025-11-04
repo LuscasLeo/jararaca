@@ -35,6 +35,12 @@ AttributeValue = Union[
 AttributeMap = Mapping[str, AttributeValue]
 
 
+class TracingSpan(Protocol): ...
+
+
+class TracingSpanContext(Protocol): ...
+
+
 class TracingContextProvider(Protocol):
 
     def start_span_context(
@@ -63,6 +69,13 @@ class TracingContextProvider(Protocol):
     ) -> None: ...
 
     def update_span_name(self, new_name: str) -> None: ...
+
+    def add_link(self, span_context: TracingSpanContext) -> None: ...
+
+    def get_current_span(self) -> TracingSpan | None: ...
+    def get_current_span_context(self) -> TracingSpanContext | None: ...
+
+
 class TracingContextProviderFactory(Protocol):
 
     def root_setup(
