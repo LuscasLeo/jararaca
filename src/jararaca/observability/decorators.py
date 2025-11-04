@@ -37,7 +37,7 @@ AttributeMap = Mapping[str, AttributeValue]
 
 class TracingContextProvider(Protocol):
 
-    def start_trace_context(
+    def start_span_context(
         self, trace_name: str, context_attributes: AttributeMap | None
     ) -> ContextManager[Any]: ...
 
@@ -56,7 +56,13 @@ class TracingContextProvider(Protocol):
         escaped: bool = False,
     ) -> None: ...
 
+    def set_span_attribute(
+        self,
+        key: str,
+        value: AttributeValue,
+    ) -> None: ...
 
+    def update_span_name(self, new_name: str) -> None: ...
 class TracingContextProviderFactory(Protocol):
 
     def root_setup(
@@ -117,7 +123,7 @@ class TracedFunc:
         ) -> Any:
 
             if ctx_provider := get_tracing_ctx_provider():
-                with ctx_provider.start_trace_context(
+                with ctx_provider.start_span_context(
                     self.trace_name,
                     self.trace_mapper(*args, **kwargs),
                 ):

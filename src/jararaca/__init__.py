@@ -23,7 +23,7 @@ if TYPE_CHECKING:
         get_tracing_provider,
         record_exception,
         set_span_status,
-        spawn_trace,
+        start_span,
     )
     from jararaca.observability.interceptor import ObservabilityInterceptor
     from jararaca.observability.providers.otel import OtelObservabilityProvider
@@ -233,6 +233,7 @@ if TYPE_CHECKING:
         "TracedFunc",
         "TracedClass",
         "traced_class",
+        "start_span",
         "spawn_trace",
         "add_event",
         "set_span_status",
@@ -412,6 +413,7 @@ _dynamic_imports: "dict[str, tuple[str, str, str | None]]" = {
     "TracedClass": (__SPEC_PARENT__, "observability.decorators", None),
     "traced_class": (__SPEC_PARENT__, "observability.decorators", None),
     "spawn_trace": (__SPEC_PARENT__, "observability.hooks", None),
+    "start_span": (__SPEC_PARENT__, "observability.hooks", None),
     "add_event": (__SPEC_PARENT__, "observability.hooks", None),
     "set_span_status": (__SPEC_PARENT__, "observability.hooks", None),
     "record_exception": (__SPEC_PARENT__, "observability.hooks", None),

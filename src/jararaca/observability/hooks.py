@@ -1,3 +1,4 @@
+import logging
 from contextlib import contextmanager
 from typing import Any, Generator, Literal
 
@@ -9,18 +10,31 @@ from jararaca.observability.decorators import (
 
 
 @contextmanager
-def spawn_trace(
+def start_span(
     name: str,
     attributes: AttributeMap | None = None,
 ) -> Generator[None, Any, None]:
 
     if trace_context_provider := get_tracing_ctx_provider():
-        with trace_context_provider.start_trace_context(
+        with trace_context_provider.start_span_context(
             trace_name=name, context_attributes=attributes
         ):
             yield
     else:
         yield
+
+
+def spawn_span(
+    name: str,
+    attributes: AttributeMap | None = None,
+) -> None:
+    logging.warning(
+        "spawn_span is deprecated, use start_span as context manager instead."
+    )
+    if trace_context_provider := get_tracing_ctx_provider():
+        trace_context_provider.start_span_context(
+            trace_name=name, context_attributes=attributes
+        )
 
 
 def add_event(
