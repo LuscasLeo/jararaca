@@ -22,7 +22,9 @@ if TYPE_CHECKING:
         add_event,
         get_tracing_provider,
         record_exception,
+        set_span_attribute,
         set_span_status,
+        spawn_trace,
         start_span,
     )
     from jararaca.observability.interceptor import ObservabilityInterceptor
@@ -235,6 +237,7 @@ if TYPE_CHECKING:
         "traced_class",
         "start_span",
         "spawn_trace",
+        "set_span_attribute",
         "add_event",
         "set_span_status",
         "record_exception",
@@ -413,6 +416,7 @@ _dynamic_imports: "dict[str, tuple[str, str, str | None]]" = {
     "TracedClass": (__SPEC_PARENT__, "observability.decorators", None),
     "traced_class": (__SPEC_PARENT__, "observability.decorators", None),
     "spawn_trace": (__SPEC_PARENT__, "observability.hooks", None),
+    "set_span_attribute": (__SPEC_PARENT__, "observability.hooks", None),
     "start_span": (__SPEC_PARENT__, "observability.hooks", None),
     "add_event": (__SPEC_PARENT__, "observability.hooks", None),
     "set_span_status": (__SPEC_PARENT__, "observability.hooks", None),

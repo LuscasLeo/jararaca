@@ -4,6 +4,7 @@ from typing import Any, Generator, Literal
 
 from jararaca.observability.decorators import (
     AttributeMap,
+    AttributeValue,
     TracingContextProvider,
     get_tracing_ctx_provider,
 )
@@ -24,12 +25,12 @@ def start_span(
         yield
 
 
-def spawn_span(
+def spawn_trace(
     name: str,
     attributes: AttributeMap | None = None,
 ) -> None:
     logging.warning(
-        "spawn_span is deprecated, use start_span as context manager instead."
+        "spawn_trace is deprecated, use start_span as context manager instead."
     )
     if trace_context_provider := get_tracing_ctx_provider():
         trace_context_provider.start_span_context(
@@ -66,6 +67,18 @@ def record_exception(
             exception=exception,
             attributes=attributes,
             escaped=escaped,
+        )
+
+
+def set_span_attribute(
+    key: str,
+    value: AttributeValue,
+) -> None:
+
+    if trace_context_provider := get_tracing_ctx_provider():
+        trace_context_provider.set_span_attribute(
+            key=key,
+            value=value,
         )
 
 
