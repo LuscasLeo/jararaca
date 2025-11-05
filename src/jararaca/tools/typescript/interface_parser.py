@@ -864,6 +864,9 @@ def write_rest_controller_to_typescript_interface(
                 member, rest_controller, mapping
             )
 
+            # Collect middleware parameters separately
+            middleware_params_list: list[HttpParemeterSpec] = []
+
             # Extract parameters from controller-level middlewares
             for middleware_type in rest_controller.middlewares:
                 middleware_params, middleware_mapped_types = (
@@ -871,7 +874,7 @@ def write_rest_controller_to_typescript_interface(
                         middleware_type, rest_controller, mapping
                     )
                 )
-                arg_params_spec.extend(middleware_params)
+                middleware_params_list.extend(middleware_params)
                 parametes_mapped_types.update(middleware_mapped_types)
 
             # Extract parameters from class-level UseMiddleware decorators
@@ -881,7 +884,7 @@ def write_rest_controller_to_typescript_interface(
                         middleware_instance.middleware, rest_controller, mapping
                     )
                 )
-                arg_params_spec.extend(middleware_params)
+                middleware_params_list.extend(middleware_params)
                 parametes_mapped_types.update(middleware_mapped_types)
 
             # Extract parameters from method-level middlewares (UseMiddleware)
@@ -894,8 +897,11 @@ def write_rest_controller_to_typescript_interface(
                             middleware_instance.middleware, rest_controller, mapping
                         )
                     )
-                    arg_params_spec.extend(middleware_params)
+                    middleware_params_list.extend(middleware_params)
                     parametes_mapped_types.update(middleware_mapped_types)
+
+            # Combine parameters: middleware params first, then controller params
+            arg_params_spec = middleware_params_list + arg_params_spec
 
             for param in parametes_mapped_types:
                 mapped_types.update(extract_all_envolved_types(param))
