@@ -1,4 +1,5 @@
 import logging
+import typing
 from contextlib import contextmanager
 from typing import Any, Generator, Literal
 
@@ -30,14 +31,11 @@ def start_span(
 def spawn_trace(
     name: str,
     attributes: AttributeMap | None = None,
-) -> None:
+) -> typing.ContextManager[None]:
     logging.warning(
         "spawn_trace is deprecated, use start_span as context manager instead."
     )
-    if trace_context_provider := get_tracing_ctx_provider():
-        trace_context_provider.start_span_context(
-            trace_name=name, context_attributes=attributes
-        )
+    return start_span(name=name, attributes=attributes)
 
 
 def add_event(
