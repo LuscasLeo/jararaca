@@ -18,7 +18,6 @@ def start_span(
     name: str,
     attributes: AttributeMap | None = None,
 ) -> Generator[None, Any, None]:
-
     if trace_context_provider := get_tracing_ctx_provider():
         with trace_context_provider.start_span_context(
             trace_name=name, context_attributes=attributes
