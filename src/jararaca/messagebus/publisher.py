@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2025 Lucas S
+#
+# SPDX-License-Identifier: GPL-3.0-or-later
+
 from abc import ABC, abstractmethod
 from contextlib import contextmanager, suppress
 from contextvars import ContextVar

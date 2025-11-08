@@ -81,6 +81,18 @@ files = [
 ]
 
 [[package]]
+name = "attrs"
+version = "25.4.0"
+description = "Classes Without Boilerplate"
+optional = false
+python-versions = ">=3.9"
+groups = ["dev"]
+files = [
+    {file = "attrs-25.4.0-py3-none-any.whl", hash = "sha256:adcf7e2a1fb3b36ac48d97835bb6d8ade15b8dcce26aba8bf1d14847b57a3373"},
+    {file = "attrs-25.4.0.tar.gz", hash = "sha256:16d5969b87f0859ef33a48b35d55ac1be6e42ae49d5e853b597db70c35c57e11"},
+]
+
+[[package]]
 name = "autoflake"
 version = "2.3.1"
 description = "Removes unused imports and unused variables"
@@ -177,6 +189,24 @@ colorama = ["colorama (>=0.4.3)"]
 d = ["aiohttp (>=3.10)"]
 jupyter = ["ipython (>=7.8.0)", "tokenize-rt (>=3.2.0)"]
 uvloop = ["uvloop (>=0.15.2)"]
+
+[[package]]
+name = "boolean-py"
+version = "5.0"
+description = "Define boolean algebras, create and parse boolean expressions and create custom boolean DSL."
+optional = false
+python-versions = "*"
+groups = ["dev"]
+files = [
+    {file = "boolean_py-5.0-py3-none-any.whl", hash = "sha256:ef28a70bd43115208441b53a045d1549e2f0ec6e3d08a9d142cbc41c1938e8d9"},
+    {file = "boolean_py-5.0.tar.gz", hash = "sha256:60cbc4bad079753721d32649545505362c754e121570ada4658b852a3a318d95"},
+]
+
+[package.extras]
+dev = ["build", "twine"]
+docs = ["Sphinx (>=3.3.1)", "doc8 (>=0.8.1)", "sphinx-rtd-theme (>=0.5.0)", "sphinxcontrib-apidoc (>=0.3.0)"]
+linting = ["black", "isort", "pycodestyle"]
+testing = ["pytest (>=6,!=7.0.0)", "pytest-xdist (>=2)"]
 
 [[package]]
 name = "certifi"
@@ -290,7 +320,7 @@ version = "3.4.1"
 description = "The Real First Universal Charset Detector. Open, modern and actively maintained alternative to Chardet."
 optional = false
 python-versions = ">=3.7"
-groups = ["main", "docs"]
+groups = ["main", "dev", "docs"]
 files = [
     {file = "charset_normalizer-3.4.1-cp310-cp310-macosx_10_9_universal2.whl", hash = "sha256:91b36a978b5ae0ee86c394f5a54d6ef44db1de0815eb43de826d41d21e4af3de"},
     {file = "charset_normalizer-3.4.1-cp310-cp310-manylinux_2_17_aarch64.manylinux2014_aarch64.whl", hash = "sha256:7461baadb4dc00fd9e0acbe254e3d7d2112e7f92ced2adc96e54ef6501c5f176"},
@@ -393,7 +423,7 @@ version = "8.1.8"
 description = "Composable command line interface toolkit"
 optional = false
 python-versions = ">=3.7"
-groups = ["main", "docs", "lint"]
+groups = ["main", "dev", "docs", "lint"]
 files = [
     {file = "click-8.1.8-py3-none-any.whl", hash = "sha256:63c132bbbed01578a06712a2d1f497bb62d9c1c0d329b7903a866228027263b2"},
     {file = "click-8.1.8.tar.gz", hash = "sha256:ed53c9d8990d83c2a27deae68e4ee337473f6330c040a31d4225c9574d16096a"},
@@ -413,7 +443,7 @@ files = [
     {file = "colorama-0.4.6-py2.py3-none-any.whl", hash = "sha256:4f1d9991f5acc0ca119f9d443620b77f9d6b33703e51011c16baf57afb285fc6"},
     {file = "colorama-0.4.6.tar.gz", hash = "sha256:08695f5cb7ed6e0531a20572697297273c47b8cae5a63ffc6d6ed5c201be6e44"},
 ]
-markers = {main = "platform_system == \"Windows\"", dev = "sys_platform == \"win32\"", lint = "platform_system == \"Windows\""}
+markers = {main = "platform_system == \"Windows\"", dev = "platform_system == \"Windows\" or sys_platform == \"win32\"", lint = "platform_system == \"Windows\""}
 
 [[package]]
 name = "coverage"
@@ -1071,6 +1101,7 @@ description = "Read metadata from Python packages"
 optional = false
 python-versions = ">=3.8"
 groups = ["main"]
+markers = "extra == \"opentelemetry\""
 files = [
     {file = "importlib_metadata-8.5.0-py3-none-any.whl", hash = "sha256:45e54197d28b7a7f1559e60b95e7c567032b602131fbd588f1497f47880aa68b"},
     {file = "importlib_metadata-8.5.0.tar.gz", hash = "sha256:71522656f0abace1d072b9e5481a48f07c138e00f079c38c8f883823f9c26bd7"},
@@ -1121,7 +1152,7 @@ version = "3.1.5"
 description = "A very fast and expressive template engine."
 optional = false
 python-versions = ">=3.7"
-groups = ["docs"]
+groups = ["dev", "docs"]
 files = [
     {file = "jinja2-3.1.5-py3-none-any.whl", hash = "sha256:aba0f4dc9ed8013c424088f68a5c226f7d6097ed89b246d7749c2ec4175c6adb"},
     {file = "jinja2-3.1.5.tar.gz", hash = "sha256:8fefff8dc3034e27bb80d67c671eb8a9bc424c0ef4c0826edbff304cceff43bb"},
@@ -1148,6 +1179,24 @@ files = [
 [package.dependencies]
 editorconfig = ">=0.12.2"
 six = ">=1.13.0"
+
+[[package]]
+name = "license-expression"
+version = "30.4.4"
+description = "license-expression is a comprehensive utility library to parse, compare, simplify and normalize license expressions (such as SPDX license expressions) using boolean logic."
+optional = false
+python-versions = ">=3.9"
+groups = ["dev"]
+files = [
+    {file = "license_expression-30.4.4-py3-none-any.whl", hash = "sha256:421788fdcadb41f049d2dc934ce666626265aeccefddd25e162a26f23bcbf8a4"},
+    {file = "license_expression-30.4.4.tar.gz", hash = "sha256:73448f0aacd8d0808895bdc4b2c8e01a8d67646e4188f887375398c761f340fd"},
+]
+
+[package.dependencies]
+"boolean.py" = ">=4.0"
+
+[package.extras]
+dev = ["Sphinx (>=5.0.2)", "doc8 (>=0.11.2)", "pytest (>=7.0.1)", "pytest-xdist (>=2)", "ruff", "sphinx-autobuild", "sphinx-copybutton", "sphinx-reredirects (>=0.1.2)", "sphinx-rtd-dark-mode (>=1.3.0)", "sphinx-rtd-theme (>=1.0.0)", "sphinxcontrib-apidoc (>=0.4.0)", "twine"]
 
 [[package]]
 name = "mako"
@@ -1191,7 +1240,7 @@ version = "3.0.2"
 description = "Safely add untrusted strings to HTML/XML markup."
 optional = false
 python-versions = ">=3.9"
-groups = ["main", "docs"]
+groups = ["main", "dev", "docs"]
 files = [
     {file = "MarkupSafe-3.0.2-cp310-cp310-macosx_10_9_universal2.whl", hash = "sha256:7e94c425039cde14257288fd61dcfb01963e658efbc0ff54f5306b06054700f8"},
     {file = "MarkupSafe-3.0.2-cp310-cp310-macosx_11_0_arm64.whl", hash = "sha256:9e2d922824181480953426608b81967de705c3cef4d1af983af849d7bd619158"},
@@ -1573,6 +1622,7 @@ description = "OpenTelemetry Python API"
 optional = false
 python-versions = ">=3.9"
 groups = ["main"]
+markers = "extra == \"opentelemetry\""
 files = [
     {file = "opentelemetry_api-1.38.0-py3-none-any.whl", hash = "sha256:2891b0197f47124454ab9f0cf58f3be33faca394457ac3e09daba13ff50aa582"},
     {file = "opentelemetry_api-1.38.0.tar.gz", hash = "sha256:f4c193b5e8acb0912b06ac5b16321908dd0843d75049c091487322284a3eea12"},
@@ -1589,6 +1639,7 @@ description = "OpenTelemetry Python Distro"
 optional = false
 python-versions = ">=3.9"
 groups = ["main"]
+markers = "extra == \"opentelemetry\""
 files = [
     {file = "opentelemetry_distro-0.59b0-py3-none-any.whl", hash = "sha256:bbe568d84d801d7e1ead320c4521fc37a4c24b3b2cd49a64f6d8a3c10676cea4"},
     {file = "opentelemetry_distro-0.59b0.tar.gz", hash = "sha256:a72703a514e1773d35d1ec01489a5fd1f1e7ce92e93cf459ba60f85b880d0099"},
@@ -1689,6 +1740,7 @@ description = "Instrumentation Tools & Auto Instrumentation for OpenTelemetry Py
 optional = false
 python-versions = ">=3.9"
 groups = ["main"]
+markers = "extra == \"opentelemetry\""
 files = [
     {file = "opentelemetry_instrumentation-0.59b0-py3-none-any.whl", hash = "sha256:44082cc8fe56b0186e87ee8f7c17c327c4c2ce93bdbe86496e600985d74368ee"},
     {file = "opentelemetry_instrumentation-0.59b0.tar.gz", hash = "sha256:6010f0faaacdaf7c4dff8aac84e226d23437b331dcda7e70367f6d73a7db1adc"},
@@ -1723,6 +1775,7 @@ description = "OpenTelemetry Python SDK"
 optional = false
 python-versions = ">=3.9"
 groups = ["main"]
+markers = "extra == \"opentelemetry\""
 files = [
     {file = "opentelemetry_sdk-1.38.0-py3-none-any.whl", hash = "sha256:1c66af6564ecc1553d72d811a01df063ff097cdc82ce188da9951f93b8d10f6b"},
     {file = "opentelemetry_sdk-1.38.0.tar.gz", hash = "sha256:93df5d4d871ed09cb4272305be4d996236eedb232253e3ab864c8620f051cebe"},
@@ -1740,6 +1793,7 @@ description = "OpenTelemetry Semantic Conventions"
 optional = false
 python-versions = ">=3.9"
 groups = ["main"]
+markers = "extra == \"opentelemetry\""
 files = [
     {file = "opentelemetry_semantic_conventions-0.59b0-py3-none-any.whl", hash = "sha256:35d3b8833ef97d614136e253c1da9342b4c3c083bbaf29ce31d572a1c3825eed"},
     {file = "opentelemetry_semantic_conventions-0.59b0.tar.gz", hash = "sha256:7a6db3f30d70202d5bf9fa4b69bc866ca6a30437287de6c510fb594878aed6b0"},
@@ -1760,6 +1814,7 @@ files = [
     {file = "packaging-24.2-py3-none-any.whl", hash = "sha256:09abb1bccd265c01f4a3aa3f7a7db064b36514d2cba19a2f694fe6150451a759"},
     {file = "packaging-24.2.tar.gz", hash = "sha256:c228a6dc5e932d346bc5739379109d49e8853dd8223571c7c5b55260edc0b97f"},
 ]
+markers = {main = "extra == \"opentelemetry\""}
 
 [[package]]
 name = "paginate"
@@ -2258,6 +2313,36 @@ files = [
 six = ">=1.5"
 
 [[package]]
+name = "python-debian"
+version = "1.0.1"
+description = "Modules to read and manipulate many file formats related to Debian packages and repositories"
+optional = false
+python-versions = ">=3.7"
+groups = ["dev"]
+files = [
+    {file = "python-debian-1.0.1.tar.gz", hash = "sha256:3ada9b83a3d671b58081782c0969cffa0102f6ce433fbbc7cf21275b8b5cc771"},
+    {file = "python_debian-1.0.1-py3-none-any.whl", hash = "sha256:8f137c230c1d9279c2ac892b35915068b2aca090c9fd3da5671ff87af32af12c"},
+]
+
+[package.dependencies]
+charset-normalizer = "*"
+
+[package.extras]
+test = ["pytest", "pytest-cov"]
+
+[[package]]
+name = "python-magic"
+version = "0.4.27"
+description = "File type identification using libmagic"
+optional = false
+python-versions = ">=2.7, !=3.0.*, !=3.1.*, !=3.2.*, !=3.3.*, !=3.4.*"
+groups = ["dev"]
+files = [
+    {file = "python-magic-0.4.27.tar.gz", hash = "sha256:c1ba14b08e4a5f5c31a302b7721239695b2f0f058d125bd5ce1ee36b9d9d3c3b"},
+    {file = "python_magic-0.4.27-py2.py3-none-any.whl", hash = "sha256:c212960ad306f700aa0d01e5d7a325d20548ff97eb9920dcd29513174f0294d3"},
+]
+
+[[package]]
 name = "pytz"
 version = "2024.2"
 description = "World timezone definitions, modern and historical"
@@ -2494,6 +2579,32 @@ socks = ["PySocks (>=1.5.6,!=1.5.7)"]
 use-chardet-on-py3 = ["chardet (>=3.0.2,<6)"]
 
 [[package]]
+name = "reuse"
+version = "6.2.0"
+description = "reuse is a tool for compliance with the REUSE recommendations."
+optional = false
+python-versions = ">=3.10"
+groups = ["dev"]
+files = [
+    {file = "reuse-6.2.0-cp310-cp310-manylinux_2_41_x86_64.whl", hash = "sha256:12b68549bb9d5f4957f06d726a83a9780628810008fb732bb0d0f21607f8c6d6"},
+    {file = "reuse-6.2.0.tar.gz", hash = "sha256:4feae057a2334c9a513e6933cdb9be819d8b822f3b5b435a36138bd218897d23"},
+]
+
+[package.dependencies]
+attrs = ">=23.2"
+click = ">=8.1"
+Jinja2 = ">=3.0.0"
+license-expression = ">=21.6.14"
+python-debian = ">=0.1.48"
+python-magic = ">=0.4.12"
+tomlkit = ">=0.8"
+
+[package.extras]
+chardet = ["chardet (>=3.0.2)"]
+charset-normalizer = ["charset-normalizer (>=2.0.5)"]
+file-magic = ["file-magic (>=0.4.1)"]
+
+[[package]]
 name = "setuptools"
 version = "78.1.0"
 description = "Easily download, build, install, upgrade, and uninstall Python packages"
@@ -2663,6 +2774,18 @@ anyio = ">=3.4.0,<5"
 
 [package.extras]
 full = ["httpx (>=0.22.0)", "itsdangerous", "jinja2", "python-multipart (>=0.0.7)", "pyyaml"]
+
+[[package]]
+name = "tomlkit"
+version = "0.13.3"
+description = "Style preserving TOML library"
+optional = false
+python-versions = ">=3.8"
+groups = ["dev"]
+files = [
+    {file = "tomlkit-0.13.3-py3-none-any.whl", hash = "sha256:c89c649d79ee40629a9fda55f8ace8c6a1b42deb912b2a8fd8d942ddadb606b0"},
+    {file = "tomlkit-0.13.3.tar.gz", hash = "sha256:430cf247ee57df2b94ee3fbe588e71d362a941ebb545dec29b53961d61add2a1"},
+]
 
 [[package]]
 name = "types-cffi"
@@ -2995,6 +3118,7 @@ description = "Module for decorators, wrappers and monkey patching."
 optional = false
 python-versions = ">=3.8"
 groups = ["main"]
+markers = "extra == \"opentelemetry\""
 files = [
     {file = "wrapt-1.17.1-cp310-cp310-macosx_10_9_x86_64.whl", hash = "sha256:9176057c60438c2ce2284cdefc2b3ee5eddc8c87cd6e24c558d9f5c64298fa4a"},
     {file = "wrapt-1.17.1-cp310-cp310-macosx_11_0_arm64.whl", hash = "sha256:e0f0e731e0ca1583befd3af71b9f90d64ded1535da7b80181cb9e907cc10bbae"},
@@ -3174,6 +3298,7 @@ description = "Backport of pathlib-compatible object wrapper for zip files"
 optional = false
 python-versions = ">=3.9"
 groups = ["main"]
+markers = "extra == \"opentelemetry\""
 files = [
     {file = "zipp-3.21.0-py3-none-any.whl", hash = "sha256:ac1bbe05fd2991f160ebce24ffbac5f6d11d83dc90891255885223d42b3cd931"},
     {file = "zipp-3.21.0.tar.gz", hash = "sha256:2c9958f6430a2040341a52eb608ed6dd93ef4392e02ffe219417c1b28b5dd1f4"},
@@ -3196,4 +3321,4 @@ watch = ["watchdog"]
 [metadata]
 lock-version = "2.1"
 python-versions = "^3.11"
-content-hash = "5378238a69fa4bb3b1d7d06d6b498a300a8d9b64de336c963ffab1183bfb044d"
+content-hash = "000edc39f2d5fdfcd89281a33b2371ac474135dac7dcc9f94a688826452aa634"

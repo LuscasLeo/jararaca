@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2025 Lucas S
+#
+# SPDX-License-Identifier: GPL-3.0-or-later
+
 # HTTP RPC Module - Complete REST Client Implementation
 """
 This module provides a complete REST client implementation with support for:

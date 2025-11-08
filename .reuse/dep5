@@ -1,0 +1,29 @@
+Format: https://www.debian.org/doc/packaging-manuals/copyright-format/1.0/
+Upstream-Name: jararaca
+Upstream-Contact: Lucas S <me@luscasleo.dev>
+Source: https://github.com/LuscasLeo/jararaca
+
+# Documentation files
+Files: docs/* *.md
+Copyright: 2025 Lucas S
+License: GPL-3.0-or-later
+
+# Configuration files
+Files: pyproject.toml Makefile mkdocs.yml .github/* .gitignore poetry.lock
+Copyright: 2025 Lucas S
+License: GPL-3.0-or-later
+
+# Example files
+Files: examples/*
+Copyright: 2025 Lucas S
+License: GPL-3.0-or-later
+
+# Test files
+Files: tests/* scripts/*
+Copyright: 2025 Lucas S
+License: GPL-3.0-or-later
+
+# Build artifacts and cache (no license needed)
+Files: __pycache__/* htmlcov/* *.pyc
+Copyright: 2025 Lucas S
+License: GPL-3.0-or-later
