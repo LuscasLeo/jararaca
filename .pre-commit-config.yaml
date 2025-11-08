@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2025 Lucas S
+#
+# SPDX-License-Identifier: GPL-3.0-or-later
+
 # See https://pre-commit.com for more information
 # See https://pre-commit.com/hooks.html for more hooks
 exclude: '^frontend/'
@@ -65,6 +69,13 @@ repos:
         pass_filenames: true
 
         minimum_pre_commit_version: "2.9.2"
+
+  # reuse - REUSE specification compliance check
+  - repo: https://github.com/fsfe/reuse-tool
+    rev: v4.0.3
+    hooks:
+      - id: reuse
+
   # -   repo: local
   #     hooks:
   #     -   id: codespell

@@ -49,13 +49,19 @@ theme:
 nav:
   - Home: index.md
   - Architecture: architecture.md
-  - HTTP RPC: http-rpc.md
-  - Message Bus: messagebus.md
+  - HTTP:
+    - Middleware: http-middleware.md
+    - HTTP RPC: http-rpc.md
   - WebSocket: websocket.md
+  - Message Bus: messagebus.md
   - Scheduler: scheduler.md
-  - Interceptors: interceptors.md
-  - TypeScript Generation:
-      - Expose Type: expose-type.md
+  - Database:
+    - Persistence: persistence.md
+  - Features:
+    - Interceptors: interceptors.md
+    - Retry: retry.md
+    - Type Generation: expose-type.md
+  - Testing: testing.md
 
 markdown_extensions:
   - pymdownx.highlight:
