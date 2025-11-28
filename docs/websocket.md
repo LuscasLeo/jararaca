@@ -78,12 +78,13 @@ The WebSocketConnectionManager:
 Jararaca uses context variables to provide access to WebSocket functionality anywhere in your application:
 
 ```python
-from jararaca.presentation.websocket.context import use_ws_manager, use_ws_message_sender
+from jararaca import use_ws_manager
 
 # Send a message to specific rooms
 async def notify_users(message_data: dict, room_id: str):
     message = UserNotificationMessage(**message_data)
-    await use_ws_message_sender().send([room_id], message)
+    # Note: use_ws_message_sender is not directly exported, use use_ws_manager instead
+    await use_ws_manager().send([room_id], message)
 
 # Or directly from a WebSocketMessage instance
 async def send_update(update_data: dict, room_id: str):

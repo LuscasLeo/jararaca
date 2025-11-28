@@ -91,8 +91,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.types import Lifespan
 
-from jararaca.presentation.http_microservice import HttpMicroservice
-from jararaca.presentation.server import create_http_server
+from jararaca import HttpMicroservice, create_http_server
 
 
 def fastapi_factory(lifespan: Lifespan[FastAPI]) -> FastAPI:

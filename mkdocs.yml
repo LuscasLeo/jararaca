@@ -63,6 +63,7 @@ nav:
     - Interceptors: interceptors.md
     - Metadata: metadata.md
     - Retry: retry.md
+  - Observability: observability.md
   - Testing: testing.md
 
 markdown_extensions:

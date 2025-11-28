@@ -59,12 +59,12 @@ Retry behavior can be customized through URL parameters when configuring the Rab
 broker_url = "amqp://guest:guest@localhost:5672/?exchange=jararaca&prefetch_count=10&connection_retry_max=10&connection_retry_delay=2.0"
 
 # Use custom retry configuration in code:
-from jararaca.utils.retry import RetryConfig, retry_with_backoff
+from jararaca import RetryConfig, retry
 
 config = RetryConfig(max_retries=3, initial_delay=1.0, max_delay=30.0)
 
 async def connect_with_retry():
-    return await retry_with_backoff(
+    return await retry(
         establish_connection,
         retry_config=config,
         retry_exceptions=(ConnectionError, TimeoutError)
