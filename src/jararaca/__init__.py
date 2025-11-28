@@ -63,10 +63,12 @@ if TYPE_CHECKING:
     )
     from jararaca.reflect.metadata import (
         SetMetadata,
+        TransactionMetadata,
         get_all_metadata,
         get_metadata,
         get_metadata_value,
-        provide_metadata,
+        start_providing_metadata,
+        start_transaction_metadata_context,
     )
     from jararaca.rpc.http.backends.httpx import HTTPXHttpRPCAsyncBackend
     from jararaca.rpc.http.backends.otel import TracedRequestMiddleware
@@ -173,6 +175,7 @@ if TYPE_CHECKING:
         RestController,
         UseDependency,
         UseMiddleware,
+        compose_route_decorators,
     )
     from .presentation.http_microservice import HttpMicroservice, HttpMiddleware
     from .presentation.server import create_http_server
@@ -199,7 +202,9 @@ if TYPE_CHECKING:
 
     __all__ = [
         "SetMetadata",
-        "provide_metadata",
+        "start_transaction_metadata_context",
+        "start_providing_metadata",
+        "TransactionMetadata",
         "get_metadata",
         "get_all_metadata",
         "get_metadata_value",
@@ -320,6 +325,7 @@ if TYPE_CHECKING:
         "SplitInputOutput",
         "UseMiddleware",
         "UseDependency",
+        "compose_route_decorators",
         "GlobalHttpErrorHandler",
         "RouteHttpErrorHandler",
         "WebSocketMessage",
@@ -361,7 +367,9 @@ __SPEC_PARENT__: str = __spec__.parent  # type: ignore
 # A mapping of {<member name>: (package, <module name>)} defining dynamic imports
 _dynamic_imports: "dict[str, tuple[str, str, str | None]]" = {
     "SetMetadata": (__SPEC_PARENT__, "reflect.metadata", None),
-    "provide_metadata": (__SPEC_PARENT__, "reflect.metadata", None),
+    "TransactionMetadata": (__SPEC_PARENT__, "reflect.metadata", None),
+    "start_transaction_metadata_context": (__SPEC_PARENT__, "reflect.metadata", None),
+    "start_providing_metadata": (__SPEC_PARENT__, "reflect.metadata", None),
     "get_metadata": (__SPEC_PARENT__, "reflect.metadata", None),
     "get_all_metadata": (__SPEC_PARENT__, "reflect.metadata", None),
     "get_metadata_value": (__SPEC_PARENT__, "reflect.metadata", None),
@@ -570,6 +578,7 @@ _dynamic_imports: "dict[str, tuple[str, str, str | None]]" = {
     "SplitInputOutput": (__SPEC_PARENT__, "tools.typescript.decorators", None),
     "UseMiddleware": (__SPEC_PARENT__, "presentation.decorators", None),
     "UseDependency": (__SPEC_PARENT__, "presentation.decorators", None),
+    "compose_route_decorators": (__SPEC_PARENT__, "presentation.decorators", None),
     "GlobalHttpErrorHandler": (__SPEC_PARENT__, "rpc.http.decorators", None),
     "RouteHttpErrorHandler": (__SPEC_PARENT__, "rpc.http.decorators", None),
     "WebSocketMessage": (__SPEC_PARENT__, "presentation.websocket.types", None),
