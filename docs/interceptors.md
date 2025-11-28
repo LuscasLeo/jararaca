@@ -75,8 +75,7 @@ This order ensures that:
 Jararaca's interceptor system makes implementing the transactional outbox pattern straightforward. This pattern ensures that database changes and message publishing are atomic:
 
 ```python
-from jararaca.persistence.session import use_session
-from jararaca.messagebus.publisher import use_publisher
+from jararaca import use_publisher, use_session
 
 async def create_user(user_data: dict):
     # Get the current database session from the context
@@ -137,10 +136,13 @@ In a WebSocket context:
 ## Code Example: Configuring Interceptors
 
 ```python
-from jararaca import Microservice
-from jararaca.persistence.interceptors import AIOSqlAlchemySessionInterceptor, AIOSQAConfig
-from jararaca.messagebus.interceptors import MessageBusPublisherInterceptor
-from jararaca.presentation.websocket import WebSocketInterceptor
+from jararaca import (
+    AIOSQAConfig,
+    AIOSqlAlchemySessionInterceptor,
+    MessageBusPublisherInterceptor,
+    Microservice,
+    WebSocketInterceptor,
+)
 
 # Create the microservice
 microservice = Microservice(
@@ -189,7 +191,7 @@ You can create custom interceptors by implementing the `AppInterceptor` interfac
 ```python
 from contextlib import asynccontextmanager
 from typing import AsyncGenerator
-from jararaca.microservice import AppInterceptor, AppTransactionContext
+from jararaca import AppInterceptor, AppTransactionContext
 
 class CustomInterceptor(AppInterceptor):
     @asynccontextmanager

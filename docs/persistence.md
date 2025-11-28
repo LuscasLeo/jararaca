@@ -53,7 +53,7 @@ async def create_user(user_data: dict):
 Create a new independent session within the current transaction context:
 
 ```python
-from jararaca.persistence.interceptors.aiosqa_interceptor import providing_new_session
+from jararaca import providing_new_session
 
 
 async def create_audit_log(action: str):
@@ -86,6 +86,7 @@ class SessionManager(Protocol):
 Access the session manager directly when needed:
 
 ```python
+# use_session_manager is not exported by jararaca, so we import it from the module
 from jararaca.persistence.interceptors.aiosqa_interceptor import use_session_manager
 
 

@@ -41,7 +41,7 @@ Next, we define the interface for an external service (or even our own service) 
 from typing import Protocol, runtime_checkable
 
 from examples.schemas import HelloResponse
-from jararaca.rpc.http.decorators import Body, Get, Post, Query, RestClient
+from jararaca import Body, Get, Post, Query, RestClient
 
 
 @RestClient("/my")
@@ -77,10 +77,15 @@ from opentelemetry import metrics
 
 from examples.client import HelloRPC
 from examples.schemas import HelloResponse
-from jararaca import Get, RestController, Token
-from jararaca.observability.decorators import TracedFunc
-from jararaca.presentation.decorators import Post, UseMiddleware
-from jararaca.presentation.http_microservice import HttpMiddleware
+from jararaca import (
+    Get,
+    HttpMiddleware,
+    Post,
+    RestController,
+    Token,
+    TracedFunc,
+    UseMiddleware,
+)
 
 logger = logging.getLogger(__name__)
 

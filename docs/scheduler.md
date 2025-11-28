@@ -168,6 +168,8 @@ The V2 scheduler also supports delayed messages:
 
 ```python
 from jararaca import use_publisher
+
+# DelayedMessageData is not exported by jararaca, so we import it from the module
 from jararaca.scheduler.types import DelayedMessageData
 
 

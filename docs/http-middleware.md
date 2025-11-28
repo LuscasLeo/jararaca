@@ -16,8 +16,8 @@ Jararaca currently implements UoW context management using FastAPI's dependency 
 
 ```python
 from fastapi import Depends
-from jararaca.presentation.server import HttpUowContextProviderDependency, create_http_server
-from jararaca.presentation.http_microservice import HttpMicroservice
+from jararaca import HttpMicroservice, create_http_server
+from jararaca.presentation.server import HttpUowContextProviderDependency
 
 # The create_http_server function automatically sets up the UoW context
 http_app = HttpMicroservice(app=app)
@@ -203,9 +203,8 @@ fastapi_app = create_http_server(http_app)
 In rare cases, you might need to manually manage the UoW context (e.g., in background tasks):
 
 ```python
+from jararaca import AppTransactionContext, Container
 from jararaca.core.uow import UnitOfWorkContextProvider
-from jararaca.microservice import AppTransactionContext
-from jararaca.di import Container
 
 async def background_task():
     """Execute a background task with UoW context."""

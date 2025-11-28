@@ -211,6 +211,8 @@ graph LR
 
 ```python
 from jararaca import MessageBusController, MessageHandler
+
+# AioPikaWorkerConfig is not exported by jararaca, so we import it from the module
 from jararaca.messagebus.worker import AioPikaWorkerConfig
 
 # Define worker configuration with queue binding patterns
