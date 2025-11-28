@@ -255,3 +255,4 @@ If messages aren't being published:
 - [Persistence](persistence.md) - Database and session management
 - [Message Bus](messagebus.md) - Event publishing and handling
 - [WebSocket](websocket.md) - WebSocket communication
+- [Metadata](metadata.md) - Metadata system and custom decorators
