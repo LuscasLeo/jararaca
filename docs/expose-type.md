@@ -213,9 +213,87 @@ The generated TypeScript will be:
 ```typescript
 export interface NotificationPreference {
   emailEnabled: boolean;
-  pushEnabled: boolean;
   frequency: string;
+  pushEnabled: boolean;
 }
 ```
 
 The type is available in your TypeScript code even if no REST endpoint uses it yet.
+
+## Full Example
+
+You can find a complete example in `examples/full_expose_example.py`. To generate the TypeScript interfaces for this example, run:
+
+```bash
+jararaca gen-tsi examples.full_expose_example:app --stdout
+```
+
+This will output:
+
+```typescript
+/* eslint-disable */
+// @ts-nocheck
+// noinspection JSUnusedGlobalSymbols
+
+import { HttpService, HttpBackend, HttpBackendRequest, ResponseType, createClassQueryHooks , createClassMutationHooks, createClassInfiniteQueryHooks, paginationModelByFirstArgPaginationFilter, recursiveCamelToSnakeCase } from "@jararaca/core";
+
+// ... helper functions ...
+
+export interface NotificationPreference {
+  emailEnabled: boolean;
+  frequency: string;
+  pushEnabled: boolean;
+  smsEnabled: boolean;
+}
+export interface ThemeSettings {
+  accentColor: string;
+  darkMode: boolean;
+  fontSize: string;
+  primaryColor: string;
+}
+export interface UserListResponse {
+  page: number;
+  pageSize: number;
+  total: number;
+  users: Array<UserProfile>;
+}
+export interface UserPermissionSet {
+  canAdmin: boolean;
+  canDelete: boolean;
+  canRead: boolean;
+  canWrite: boolean;
+  resourceType: string;
+}
+export interface UserProfileInput {
+  avatarUrl?: string | null;
+  displayName?: string | null;
+  email: string;
+  id: string;
+  username: string;
+}
+export interface UserProfileOutput {
+  avatarUrl: string | null;
+  displayName: string | null;
+  email: string;
+  id: string;
+  username: string;
+}
+export class UserController extends HttpService {
+    async listUsers(page: number, page_size: number): Promise<UserListResponse> {
+        const response = await this.httpBackend.request<UserListResponse>({
+            method: "GET",
+            path: `/api/users`,
+            pathParams: {
+            },
+            headers: {
+            },
+            query: {
+                "page": page,
+                "page_size": page_size,
+            },
+            body: undefined
+        });
+        return response;
+    }
+}
+```

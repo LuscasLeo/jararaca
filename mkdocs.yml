@@ -48,6 +48,7 @@ theme:
 
 nav:
   - Home: index.md
+  - Example App: example-app.md
   - Architecture: architecture.md
   - HTTP:
     - Middleware: http-middleware.md
@@ -57,10 +58,11 @@ nav:
   - Scheduler: scheduler.md
   - Database:
     - Persistence: persistence.md
+  - TypeScript: expose-type.md
   - Features:
     - Interceptors: interceptors.md
+    - Metadata: metadata.md
     - Retry: retry.md
-    - Type Generation: expose-type.md
   - Testing: testing.md
 
 markdown_extensions:

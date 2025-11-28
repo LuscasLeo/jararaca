@@ -134,7 +134,8 @@ class Article(DatedEntity):
     id: Mapped[str] = mapped_column(String, primary_key=True)
     title: Mapped[str] = mapped_column(String)
     content: Mapped[str] = mapped_column(String)
-    # created_at and updated_at are automatically handled
+    # created_at is set on creation
+    # updated_at is set on creation and automatically updated on modification
 ```
 
 ### IdentifiableEntity
