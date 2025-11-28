@@ -56,6 +56,7 @@ class HttpTransactionData:
 class MessageBusTransactionData:
     topic: str
     message: MessageOf[Message]
+    message_type: Type[Message]
     context_type: Literal["message_bus"] = "message_bus"
 
 

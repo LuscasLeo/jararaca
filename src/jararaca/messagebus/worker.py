@@ -1483,6 +1483,7 @@ class MessageHandlerCallback:
                 AppTransactionContext(
                     controller_member_reflect=handler_data.controller_member,
                     transaction_data=MessageBusTransactionData(
+                        message_type=message_type,
                         message=builded_message,
                         topic=routing_key,
                     ),
