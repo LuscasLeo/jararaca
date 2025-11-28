@@ -4,6 +4,7 @@
 
 import inspect
 from dataclasses import dataclass
+from types import MethodType
 from typing import Any, Awaitable, Callable, TypeVar, cast
 
 from jararaca.reflect.controller_inspect import (
@@ -107,7 +108,15 @@ def get_type_scheduled_actions(
 
     _, member_metadata_map = inspect_controller(instance.__class__)
 
-    members = inspect.getmembers(instance, predicate=inspect.ismethod)
+    members: list[tuple[str, MethodType]] = []
+    for name in dir(instance):
+        try:
+            value = getattr(instance, name)
+        except Exception:
+            continue
+
+        if inspect.ismethod(value):
+            members.append((name, value))
 
     scheduled_actions: list[ScheduledActionData] = []
 

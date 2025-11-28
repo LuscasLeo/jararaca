@@ -23,6 +23,8 @@ class IMessage(BaseModel):
 
     MESSAGE_TYPE: ClassVar[Literal["task", "event"]] = "task"
 
+    MESSAGE_CATEGORY: ClassVar[str] = "uncategorized"
+
 
 class MessagePublisher(ABC):
     @abstractmethod

@@ -52,6 +52,63 @@ from jararaca.observability.interceptor import ObservabilityProvider
 tracer: trace.Tracer = trace.get_tracer(__name__)
 
 
+def extract_context_attributes(ctx: AppTransactionContext) -> dict[str, Any]:
+    tx_data = ctx.transaction_data
+    extra_attributes: dict[str, Any] = {}
+
+    if tx_data.context_type == "http":
+        extra_attributes = {
+            "http.method": tx_data.request.method,
+            "http.url": str(tx_data.request.url),
+            "http.path": tx_data.request.url.path,
+            "http.route.path": tx_data.request.scope["route"].path,
+            "http.route.endpoint.name": tx_data.request["route"].endpoint.__qualname__,
+            "http.query": tx_data.request.url.query,
+            **{
+                f"http.request.path_param.{k}": v
+                for k, v in tx_data.request.path_params.items()
+            },
+            **{
+                f"http.request.query_param.{k}": v
+                for k, v in tx_data.request.query_params.items()
+            },
+            **{
+                f"http.request.header.{k}": v
+                for k, v in tx_data.request.headers.items()
+            },
+            "http.request.client.host": (
+                tx_data.request.client.host if tx_data.request.client else ""
+            ),
+        }
+    elif tx_data.context_type == "message_bus":
+        extra_attributes = {
+            "bus.message.name": tx_data.message_type.__qualname__,
+            "bus.message.module": tx_data.message_type.__module__,
+            "bus.message.category": tx_data.message_type.MESSAGE_CATEGORY,
+            "bus.message.type": tx_data.message_type.MESSAGE_TYPE,
+            "bus.message.topic": tx_data.message_type.MESSAGE_TOPIC,
+        }
+    elif tx_data.context_type == "websocket":
+        extra_attributes = {
+            "ws.url": str(tx_data.websocket.url),
+        }
+    elif tx_data.context_type == "scheduler":
+        extra_attributes = {
+            "sched.task_name": tx_data.task_name,
+            "sched.scheduled_to": tx_data.scheduled_to.isoformat(),
+            "sched.cron_expression": tx_data.cron_expression,
+            "sched.triggered_at": tx_data.triggered_at.isoformat(),
+        }
+    return {
+        "app.context_type": tx_data.context_type,
+        "controller_member_reflect.rest_controller.class_name": ctx.controller_member_reflect.controller_reflect.controller_class.__class__.__qualname__,
+        "controller_member_reflect.rest_controller.module": ctx.controller_member_reflect.controller_reflect.controller_class.__module__,
+        "controller_member_reflect.member_function.name": ctx.controller_member_reflect.member_function.__qualname__,
+        "controller_member_reflect.member_function.module": ctx.controller_member_reflect.member_function.__module__,
+        **extra_attributes,
+    }
+
+
 class OtelTracingSpan(TracingSpan):
 
     def __init__(self, span: trace.Span) -> None:
@@ -139,66 +196,25 @@ class OtelTracingContextProviderFactory(TracingContextProviderFactory):
         title: str = "Unmapped App Context Execution"
         headers: dict[str, Any] = {}
         tx_data = app_tx_ctx.transaction_data
-        extra_attributes: dict[str, str] = {}
-        if tx_data.context_type == "http":
+        extra_attributes = extract_context_attributes(app_tx_ctx)
 
+        if tx_data.context_type == "http":
             headers = dict(tx_data.request.headers)
             title = f"HTTP {tx_data.request.method} {tx_data.request.url}"
-            extra_attributes = {
-                "http.method": tx_data.request.method,
-                "http.url": str(tx_data.request.url),
-                "http.path": tx_data.request.url.path,  # Path with the key applied to the template
-                "http.route.path": tx_data.request.scope["route"].path,
-                "http.route.endpoint.name": tx_data.request[
-                    "route"
-                ].endpoint.__qualname__,
-                "http.query": tx_data.request.url.query,
-                **{
-                    f"http.request.path_param.{k}": v
-                    for k, v in tx_data.request.path_params.items()
-                },
-                **{
-                    f"http.request.query_param.{k}": v
-                    for k, v in tx_data.request.query_params.items()
-                },
-                **{
-                    f"http.request.header.{k}": v
-                    for k, v in tx_data.request.headers.items()
-                },
-                "http.request.body": (await tx_data.request.body())[:5000].decode(
-                    errors="ignore"
-                ),
-                "http.request.client.host": (
-                    tx_data.request.client.host if tx_data.request.client else ""
-                ),
-            }
+            extra_attributes["http.request.body"] = (await tx_data.request.body())[
+                :5000
+            ].decode(errors="ignore")
 
         elif tx_data.context_type == "message_bus":
             title = f"Message Bus {tx_data.topic}"
             headers = use_implicit_headers() or {}
-            payload = tx_data.message.payload()
-            extra_attributes = {
-                "bus.topic": tx_data.topic,
-                "bus.message.body": payload.model_dump_json(),
-                "bus.message.name": payload.__class__.__qualname__,
-                "bus.message.module": payload.__class__.__module__,
-            }
 
         elif tx_data.context_type == "websocket":
             headers = dict(tx_data.websocket.headers)
             title = f"WebSocket {tx_data.websocket.url}"
-            extra_attributes = {
-                "ws.url": str(tx_data.websocket.url),
-            }
 
         elif tx_data.context_type == "scheduler":
             title = f"Scheduler Task {tx_data.task_name}"
-            extra_attributes = {
-                "sched.task_name": tx_data.task_name,
-                "sched.scheduled_to": tx_data.scheduled_to.isoformat(),
-                "sched.cron_expression": tx_data.cron_expression,
-                "sched.triggered_at": tx_data.triggered_at.isoformat(),
-            }
 
         carrier = {
             key: value
@@ -221,7 +237,6 @@ class OtelTracingContextProviderFactory(TracingContextProviderFactory):
             name=title,
             context=ctx2,
             attributes={
-                "app.context_type": tx_data.context_type,
                 **extra_attributes,
             },
         ) as root_span:
@@ -252,12 +267,25 @@ class CustomLoggingHandler(LoggingHandler):
     def _translate(self, record: logging.LogRecord) -> dict[str, Any]:
         try:
             ctx = use_app_transaction_context()
-            return {
-                **super()._translate(record),
-                "attributes": {
-                    "context_type": ctx.transaction_data.context_type,
-                },
+            data = super()._translate(record)
+            extra_attributes = extract_context_attributes(ctx)
+
+            current_span = trace.get_current_span()
+
+            data["attributes"] = {
+                **data.get("attributes", {}),
+                **extra_attributes,
+                **(
+                    {
+                        "span_name": current_span.name,
+                    }
+                    if hasattr(current_span, "name")
+                    and current_span.is_recording() is False
+                    else {}
+                ),
             }
+
+            return data
         except LookupError:
             return super()._translate(record)
 
