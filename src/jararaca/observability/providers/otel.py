@@ -101,7 +101,7 @@ def extract_context_attributes(ctx: AppTransactionContext) -> dict[str, Any]:
         }
     return {
         "app.context_type": tx_data.context_type,
-        "controller_member_reflect.rest_controller.class_name": ctx.controller_member_reflect.controller_reflect.controller_class.__class__.__qualname__,
+        "controller_member_reflect.rest_controller.class_name": ctx.controller_member_reflect.controller_reflect.controller_class.__qualname__,
         "controller_member_reflect.rest_controller.module": ctx.controller_member_reflect.controller_reflect.controller_class.__module__,
         "controller_member_reflect.member_function.name": ctx.controller_member_reflect.member_function.__qualname__,
         "controller_member_reflect.member_function.module": ctx.controller_member_reflect.member_function.__module__,
