@@ -8,21 +8,21 @@ from typing import Any, Callable, Mapping, Tuple, Type
 
 from frozendict import frozendict
 
-from jararaca.reflect.metadata import ControllerInstanceMetadata, SetMetadata
+from jararaca.reflect.metadata import SetMetadata, TransactionMetadata
 
 
 @dataclass(frozen=True)
 class ControllerReflect:
 
     controller_class: Type[Any]
-    metadata: Mapping[str, ControllerInstanceMetadata]
+    metadata: Mapping[str, TransactionMetadata]
 
 
 @dataclass(frozen=True)
 class ControllerMemberReflect:
     controller_reflect: ControllerReflect
     member_function: Callable[..., Any]
-    metadata: Mapping[str, ControllerInstanceMetadata]
+    metadata: Mapping[str, TransactionMetadata]
 
 
 def inspect_controller(
@@ -41,8 +41,8 @@ def inspect_controller(
 
     controller_metadata_map = frozendict(
         {
-            metadata.key: ControllerInstanceMetadata(
-                value=metadata.value, inherited=False
+            metadata.key: TransactionMetadata(
+                value=metadata.value, inherited_from_controller=False
             )
             for metadata in controller_metadata_list
         }
@@ -59,14 +59,14 @@ def inspect_controller(
             metadata=frozendict(
                 {
                     **{
-                        key: ControllerInstanceMetadata(
-                            value=value.value, inherited=True
+                        key: TransactionMetadata(
+                            value=value.value, inherited_from_controller=True
                         )
                         for key, value in controller_metadata_map.items()
                     },
                     **{
-                        metadata.key: ControllerInstanceMetadata(
-                            value=metadata.value, inherited=False
+                        metadata.key: TransactionMetadata(
+                            value=metadata.value, inherited_from_controller=False
                         )
                         for metadata in SetMetadata.get(member)
                     },

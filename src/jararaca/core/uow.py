@@ -13,7 +13,7 @@ from jararaca.microservice import (
     provide_app_context,
     provide_container,
 )
-from jararaca.reflect.metadata import provide_metadata
+from jararaca.reflect.metadata import start_transaction_metadata_context
 
 
 class ContainerInterceptor(AppInterceptor):
@@ -60,7 +60,9 @@ class UnitOfWorkContextProvider:
     ) -> AsyncGenerator[None, None]:
 
         app_interceptors = self.factory_app_interceptors()
-        with provide_metadata(app_context.controller_member_reflect.metadata):
+        with start_transaction_metadata_context(
+            app_context.controller_member_reflect.metadata
+        ):
             ctxs = [self.container_interceptor.intercept(app_context)] + [
                 interceptor.intercept(app_context) for interceptor in app_interceptors
             ]

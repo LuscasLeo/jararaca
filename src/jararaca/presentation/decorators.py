@@ -20,6 +20,7 @@ from jararaca.reflect.controller_inspect import (
     inspect_controller,
 )
 
+DECORATED_TYPE = TypeVar("DECORATED_TYPE", bound=Any)
 DECORATED_FUNC = TypeVar("DECORATED_FUNC", bound=Callable[..., Any])
 DECORATED_CLASS = TypeVar("DECORATED_CLASS", bound=Any)
 
@@ -315,6 +316,36 @@ class UseDependency:
     @staticmethod
     def get_dependencies(subject: DECORATED_FUNC) -> list["UseDependency"]:
         return getattr(subject, UseDependency.__DEPENDENCY_ATTR__, [])
+
+
+def compose_route_decorators(
+    *decorators: UseMiddleware | UseDependency,
+    reverse: bool = False,
+) -> Callable[[DECORATED_TYPE], DECORATED_TYPE]:
+    """
+    Compose multiple route decorators (middlewares/dependencies) into a single decorator.
+
+    Args:
+        *decorators (UseMiddleware | UseDependency): The decorators to compose.
+        reverse (bool): Whether to apply the decorators in reverse order. Warning: This may affect the order of middleware execution.
+
+    Returns:
+        Callable[[DECORATED_TYPE], DECORATED_TYPE]: A single decorator that applies all the given decorators.
+
+    Example:
+        IsWorkspaceAdmin = compose_route_decorators(
+            UseMiddleware(AuthMiddleware),
+            UseMiddleware(IsWorkspaceScoped),
+            UseMiddleware(RequiresAdminRole),
+        )
+    """
+
+    def composed_decorator(func: DECORATED_TYPE) -> DECORATED_TYPE:
+        for decorator in reversed(decorators) if reverse else decorators:
+            func = decorator(func)
+        return func
+
+    return composed_decorator
 
 
 def wraps_with_member_data(
