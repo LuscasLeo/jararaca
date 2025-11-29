@@ -37,7 +37,7 @@ class AppLifecycle:
         self.container.fill_providers(False)
         lifecycle_ctxs: list[AsyncContextManager[None]] = []
 
-        logger.info("Initializing interceptors lifecycle")
+        logger.debug("Initializing interceptors lifecycle")
         for interceptor_dep in self.app.interceptors:
             interceptor: AppInterceptor
             if not isinstance(interceptor_dep, AppInterceptor):
@@ -61,6 +61,6 @@ class AppLifecycle:
 
         yield
 
-        logger.info("Finalizing interceptors lifecycle")
+        logger.debug("Finalizing interceptors lifecycle")
         for ctx in lifecycle_ctxs:
             await ctx.__aexit__(None, None, None)

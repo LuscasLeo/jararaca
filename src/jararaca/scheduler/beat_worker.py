@@ -155,12 +155,12 @@ class _RabbitMQBrokerDispatcher(_MessageBrokerDispatcher):
         """
 
         async def _establish_connection() -> AbstractRobustConnection:
-            logger.info("Establishing connection to RabbitMQ")
+            logger.debug("Establishing connection to RabbitMQ")
             connection = await connect_robust(
                 self.url,
                 heartbeat=self.config.connection_heartbeat_interval,
             )
-            logger.info("Connected to RabbitMQ successfully")
+            logger.debug("Connected to RabbitMQ successfully")
             return connection
 
         return await retry_with_backoff(
@@ -203,7 +203,7 @@ class _RabbitMQBrokerDispatcher(_MessageBrokerDispatcher):
             await self._wait_for_connection()
 
         async def _dispatch() -> None:
-            logger.info(f"Dispatching message to {action_id} at {timestamp}")
+            logger.debug(f"Dispatching message to {action_id} at {timestamp}")
             async with self.channel_pool.acquire() as channel:
                 exchange = await RabbitmqUtils.get_main_exchange(channel, self.exchange)
 
@@ -211,7 +211,7 @@ class _RabbitMQBrokerDispatcher(_MessageBrokerDispatcher):
                     aio_pika.Message(body=str(timestamp).encode()),
                     routing_key=action_id,
                 )
-                logger.info(f"Dispatched message to {action_id} at {timestamp}")
+                logger.debug(f"Dispatched message to {action_id} at {timestamp}")
 
         try:
             await retry_with_backoff(
@@ -293,7 +293,7 @@ class _RabbitMQBrokerDispatcher(_MessageBrokerDispatcher):
                     )
 
         try:
-            logger.info("Initializing RabbitMQ connection...")
+            logger.debug("Initializing RabbitMQ connection...")
             await retry_with_backoff(
                 _initialize,
                 retry_config=self.config.connection_retry_config,
@@ -317,7 +317,7 @@ class _RabbitMQBrokerDispatcher(_MessageBrokerDispatcher):
                     raise ConnectionError("Connection not healthy after initialization")
 
             self.connection_healthy = True
-            logger.info("RabbitMQ connection initialized successfully")
+            logger.debug("RabbitMQ connection initialized successfully")
 
             # Start health monitoring
             self.health_check_task = asyncio.create_task(
@@ -330,7 +330,7 @@ class _RabbitMQBrokerDispatcher(_MessageBrokerDispatcher):
 
     async def dispose(self) -> None:
         """Clean up resources"""
-        logger.info("Disposing RabbitMQ broker dispatcher")
+        logger.debug("Disposing RabbitMQ broker dispatcher")
         self.shutdown_event.set()
 
         # Cancel health monitoring
@@ -362,7 +362,7 @@ class _RabbitMQBrokerDispatcher(_MessageBrokerDispatcher):
                         asyncio.create_task(self._handle_reconnection())
 
             except asyncio.CancelledError:
-                logger.info("Connection health monitoring cancelled")
+                logger.debug("Connection health monitoring cancelled")
                 break
             except Exception as e:
                 logger.error(f"Error in connection health monitoring: {e}")
@@ -394,13 +394,13 @@ class _RabbitMQBrokerDispatcher(_MessageBrokerDispatcher):
             self.reconnection_in_progress = True
             self.connection_healthy = False
 
-        logger.info("Starting reconnection process")
+        logger.warning("Starting reconnection process")
 
         attempt = 0
         while not self.shutdown_event.is_set():
             try:
                 attempt += 1
-                logger.info(f"Reconnection attempt {attempt}")
+                logger.warning(f"Reconnection attempt {attempt}")
 
                 # Close existing pools
                 await self._cleanup_pools()
@@ -418,7 +418,7 @@ class _RabbitMQBrokerDispatcher(_MessageBrokerDispatcher):
                 # Test connection
                 if await self._is_connection_healthy():
                     self.connection_healthy = True
-                    logger.info("Reconnection successful")
+                    logger.warning("Reconnection successful")
                     break
                 else:
                     raise ConnectionError(
@@ -440,7 +440,7 @@ class _RabbitMQBrokerDispatcher(_MessageBrokerDispatcher):
 
                 delay = min(delay, self.config.connection_retry_config.max_delay)
 
-                logger.info(f"Retrying reconnection in {delay:.2f} seconds")
+                logger.warning(f"Retrying reconnection in {delay:.2f} seconds")
                 await asyncio.sleep(delay)
 
         self.reconnection_in_progress = False
@@ -560,7 +560,7 @@ class BeatWorker:
     def run(self) -> None:
 
         def on_shutdown(loop: asyncio.AbstractEventLoop) -> None:
-            logger.info("Shutting down - signal received")
+            logger.debug("Shutting down - signal received")
             # Schedule the shutdown to run in the event loop
             asyncio.create_task(self._graceful_shutdown())
 
@@ -584,21 +584,21 @@ class BeatWorker:
                 )
 
                 # Initialize and wait for connection to be established
-                logger.info("Initializing broker connection...")
+                logger.debug("Initializing broker connection...")
                 await self.broker.initialize(scheduled_actions)
 
                 # Wait for connection to be healthy before starting scheduler
-                logger.info("Waiting for connection to be established...")
+                logger.debug("Waiting for connection to be established...")
                 await self._wait_for_broker_connection()
 
-                logger.info("Connection established, starting scheduler...")
+                logger.debug("Connection established, starting scheduler...")
                 await self.run_scheduled_actions(scheduled_actions)
 
     async def run_scheduled_actions(
         self, scheduled_actions: list[ScheduledActionData]
     ) -> None:
 
-        logger.info("Starting scheduled actions processing loop")
+        logger.debug("Starting scheduled actions processing loop")
 
         # Ensure we have a healthy connection before starting the main loop
         if (
@@ -646,7 +646,7 @@ class BeatWorker:
                                 tzinfo=UTC
                             )
                             if next_run > datetime.now(UTC):
-                                logger.info(
+                                logger.debug(
                                     f"Skipping {func.__module__}.{func.__qualname__} until {next_run}"
                                 )
                                 continue
@@ -670,7 +670,7 @@ class BeatWorker:
                                 ScheduledAction.get_function_id(func), now
                             )
 
-                            logger.info(
+                            logger.debug(
                                 f"Scheduled {func.__module__}.{func.__qualname__} at {now}"
                             )
                         except Exception as e:
@@ -703,7 +703,7 @@ class BeatWorker:
             with contextlib.suppress(asyncio.TimeoutError):
                 await asyncio.wait_for(self.shutdown_event.wait(), self.interval)
 
-        logger.info("Scheduler stopped")
+        logger.debug("Scheduler stopped")
 
         try:
             await self.backend.dispose()
@@ -717,9 +717,9 @@ class BeatWorker:
 
     async def _graceful_shutdown(self) -> None:
         """Handles graceful shutdown process"""
-        logger.info("Initiating graceful shutdown sequence")
+        logger.debug("Initiating graceful shutdown sequence")
         self.shutdown_event.set()
-        logger.info("Graceful shutdown completed")
+        logger.debug("Graceful shutdown completed")
 
     async def _wait_for_broker_connection(self) -> None:
         """
@@ -730,7 +730,7 @@ class BeatWorker:
         check_interval = 2.0  # Check every 2 seconds
         elapsed_time = 0.0
 
-        logger.info(
+        logger.debug(
             f"Waiting for broker connection to be established (timeout: {max_wait_time}s)..."
         )
 
@@ -745,20 +745,20 @@ class BeatWorker:
                 hasattr(self.broker, "connection_healthy")
                 and self.broker.connection_healthy
             ):
-                logger.info("Broker connection is healthy")
+                logger.debug("Broker connection is healthy")
                 return
 
             # If broker doesn't have health status, try a simple health check
             if not hasattr(self.broker, "connection_healthy"):
                 try:
                     # For non-RabbitMQ brokers, assume connection is ready after initialization
-                    logger.info("Broker connection assumed to be ready")
+                    logger.debug("Broker connection assumed to be ready")
                     return
                 except Exception as e:
                     logger.debug(f"Broker connection check failed: {e}")
 
             if elapsed_time % 10.0 == 0.0:  # Log every 10 seconds
-                logger.info(
+                logger.warning(
                     f"Still waiting for broker connection... ({elapsed_time:.1f}s elapsed)"
                 )
 
@@ -778,11 +778,13 @@ class BeatWorker:
         check_interval = 5.0  # Check every 5 seconds
         elapsed_time = 0.0
 
-        logger.info(f"Waiting for broker reconnection (timeout: {max_wait_time}s)...")
+        logger.warning(
+            f"Waiting for broker reconnection (timeout: {max_wait_time}s)..."
+        )
 
         while elapsed_time < max_wait_time:
             if self.shutdown_event.is_set():
-                logger.info("Shutdown requested while waiting for broker reconnection")
+                logger.debug("Shutdown requested while waiting for broker reconnection")
                 return
 
             # Check if broker connection is healthy again
@@ -790,11 +792,11 @@ class BeatWorker:
                 hasattr(self.broker, "connection_healthy")
                 and self.broker.connection_healthy
             ):
-                logger.info("Broker connection restored, resuming scheduler")
+                logger.warning("Broker connection restored, resuming scheduler")
                 return
 
             if elapsed_time % 30.0 == 0.0:  # Log every 30 seconds
-                logger.info(
+                logger.warning(
                     f"Still waiting for broker reconnection... ({elapsed_time:.1f}s elapsed)"
                 )
 

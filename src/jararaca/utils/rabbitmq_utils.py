@@ -314,7 +314,7 @@ class RabbitmqUtils:
             )
         except ChannelNotFoundEntity:
             # Exchange might not exist, which is fine
-            logger.info(
+            logger.debug(
                 f"Exchange '{exchange_name}' does not exist, nothing to delete."
             )
         except ChannelClosed as e:
@@ -343,7 +343,7 @@ class RabbitmqUtils:
             )
         except ChannelNotFoundEntity:
             # Queue might not exist, which is fine
-            logger.info(f"Queue '{queue_name}' does not exist, nothing to delete.")
+            logger.debug(f"Queue '{queue_name}' does not exist, nothing to delete.")
         except ChannelClosed as e:
             logger.warning(f"Channel closed while deleting queue '{queue_name}': {e}")
         except AMQPError as e:
