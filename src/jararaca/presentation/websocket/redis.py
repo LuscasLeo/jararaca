@@ -221,42 +221,42 @@ class RedisWebSocketConnectionBackend(WebSocketConnectionBackend):
 
     async def _retry_broadcast_consumer_with_delay(self) -> None:
         """Retry setting up broadcast consumer after a delay to avoid excessive CPU usage."""
-        logger.info(
+        logger.warning(
             f"Waiting {self.retry_delay} seconds before retrying broadcast consumer..."
         )
         await asyncio.sleep(self.retry_delay)
 
         if not self.shutdown_event.is_set():
-            logger.info("Retrying broadcast consumer setup...")
+            logger.warning("Retrying broadcast consumer setup...")
             self.setup_broadcast_consumer()
 
     async def _retry_send_consumer_with_delay(self) -> None:
         """Retry setting up send consumer after a delay to avoid excessive CPU usage."""
-        logger.info(
+        logger.warning(
             f"Waiting {self.retry_delay} seconds before retrying send consumer..."
         )
         await asyncio.sleep(self.retry_delay)
 
         if not self.shutdown_event.is_set():
-            logger.info("Retrying send consumer setup...")
+            logger.warning("Retrying send consumer setup...")
             self.setup_send_consumer()
 
     async def consume_broadcast(
         self, broadcast: BroadcastFunc, shutdown_event: asyncio.Event
     ) -> None:
-        logger.info("Starting broadcast consumer...")
+        logger.debug("Starting broadcast consumer...")
         try:
             # Validate Redis connection before starting
             try:
                 await self.redis.ping()
-                logger.info("Redis connection validated for broadcast consumer")
+                logger.debug("Redis connection validated for broadcast consumer")
             except Exception as e:
                 logger.error(f"Redis connection validation failed: {e}", exc_info=True)
                 raise
 
             async with self.redis.pubsub() as pubsub:
                 await pubsub.subscribe(self.broadcast_pubsub_channel)
-                logger.info(
+                logger.debug(
                     f"Subscribed to broadcast channel: {self.broadcast_pubsub_channel}"
                 )
 
@@ -307,19 +307,19 @@ class RedisWebSocketConnectionBackend(WebSocketConnectionBackend):
             raise
 
     async def consume_send(self, send: SendFunc, shutdown_event: asyncio.Event) -> None:
-        logger.info("Starting send consumer...")
+        logger.debug("Starting send consumer...")
         try:
             # Validate Redis connection before starting
             try:
                 await self.redis.ping()
-                logger.info("Redis connection validated for send consumer")
+                logger.debug("Redis connection validated for send consumer")
             except Exception as e:
                 logger.error(f"Redis connection validation failed: {e}", exc_info=True)
                 raise
 
             async with self.redis.pubsub() as pubsub:
                 await pubsub.subscribe(self.send_pubsub_channel)
-                logger.info(f"Subscribed to send channel: {self.send_pubsub_channel}")
+                logger.debug(f"Subscribed to send channel: {self.send_pubsub_channel}")
 
                 while not shutdown_event.is_set():
                     message: dict[str, Any] | None = await pubsub.get_message(

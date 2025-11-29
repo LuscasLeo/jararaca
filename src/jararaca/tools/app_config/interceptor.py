@@ -94,7 +94,7 @@ class AppConfigurationInterceptor(AppInterceptor, AppInterceptorWithLifecycle):
 
         yield
 
-        logger.info("finalizando")
+        logger.debug("finalizando")
 
 
 class AppConfigValidationError(Exception):
