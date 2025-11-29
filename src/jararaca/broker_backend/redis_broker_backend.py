@@ -151,9 +151,11 @@ class RedisMessageBrokerBackend(MessageBrokerBackend):
                 )
                 delayed_messages.append(delayed_message)
             except Exception:
-                logger.error(
-                    f"Error parsing delayed message: {task_bytes_data.decode()}"
-                )
+                if logger.isEnabledFor(logging.ERROR):
+                    logger.error(
+                        "Error parsing delayed message: %s",
+                        task_bytes_data.decode(),
+                    )
                 continue
 
         return delayed_messages

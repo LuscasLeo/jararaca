@@ -84,7 +84,7 @@ async def retry_with_backoff(
 
             if retry_count >= retry_config.max_retries:
                 logger.error(
-                    f"Max retries ({retry_config.max_retries}) exceeded: {str(e)}"
+                    "Max retries (%s) exceeded: %s", retry_config.max_retries, e
                 )
                 raise
 
@@ -100,8 +100,11 @@ async def retry_with_backoff(
                 delay = max(delay, 0.1)
 
             logger.warning(
-                f"Retry {retry_count+1}/{retry_config.max_retries} after error: {str(e)}. "
-                f"Retrying in {delay:.2f}s"
+                "Retry %s/%s after error: %s. Retrying in %.2fs",
+                retry_count + 1,
+                retry_config.max_retries,
+                e,
+                delay,
             )
 
             # Call the optional retry callback if provided
