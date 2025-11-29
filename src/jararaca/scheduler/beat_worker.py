@@ -203,7 +203,7 @@ class _RabbitMQBrokerDispatcher(_MessageBrokerDispatcher):
             await self._wait_for_connection()
 
         async def _dispatch() -> None:
-            logger.debug(f"Dispatching message to {action_id} at {timestamp}")
+            logger.debug("Dispatching message to %s at %s", action_id, timestamp)
             async with self.channel_pool.acquire() as channel:
                 exchange = await RabbitmqUtils.get_main_exchange(channel, self.exchange)
 
@@ -211,7 +211,7 @@ class _RabbitMQBrokerDispatcher(_MessageBrokerDispatcher):
                     aio_pika.Message(body=str(timestamp).encode()),
                     routing_key=action_id,
                 )
-                logger.debug(f"Dispatched message to {action_id} at {timestamp}")
+                logger.debug("Dispatched message to %s at %s", action_id, timestamp)
 
         try:
             await retry_with_backoff(
@@ -227,7 +227,7 @@ class _RabbitMQBrokerDispatcher(_MessageBrokerDispatcher):
             )
         except Exception as e:
             logger.error(
-                f"Failed to dispatch message to {action_id} after retries: {e}"
+                "Failed to dispatch message to %s after retries: %s", action_id, e
             )
             # Trigger reconnection if dispatch fails
             if not self.reconnection_in_progress:
@@ -266,7 +266,7 @@ class _RabbitMQBrokerDispatcher(_MessageBrokerDispatcher):
                 ),
             )
         except Exception as e:
-            logger.error(f"Failed to dispatch delayed message after retries: {e}")
+            logger.error("Failed to dispatch delayed message after retries: %s", e)
             # Trigger reconnection if dispatch fails
             if not self.reconnection_in_progress:
                 asyncio.create_task(self._handle_reconnection())
@@ -325,7 +325,7 @@ class _RabbitMQBrokerDispatcher(_MessageBrokerDispatcher):
             )
 
         except Exception as e:
-            logger.error(f"Failed to initialize RabbitMQ after retries: {e}")
+            logger.error("Failed to initialize RabbitMQ after retries: %s", e)
             raise
 
     async def dispose(self) -> None:
@@ -365,7 +365,7 @@ class _RabbitMQBrokerDispatcher(_MessageBrokerDispatcher):
                 logger.debug("Connection health monitoring cancelled")
                 break
             except Exception as e:
-                logger.error(f"Error in connection health monitoring: {e}")
+                logger.error("Error in connection health monitoring: %s", e)
                 await asyncio.sleep(5)  # Wait before retrying
 
     async def _is_connection_healthy(self) -> bool:
@@ -382,7 +382,7 @@ class _RabbitMQBrokerDispatcher(_MessageBrokerDispatcher):
                 return True
 
         except Exception as e:
-            logger.debug(f"Connection health check failed: {e}")
+            logger.debug("Connection health check failed: %s", e)
             return False
 
     async def _handle_reconnection(self) -> None:
@@ -400,7 +400,7 @@ class _RabbitMQBrokerDispatcher(_MessageBrokerDispatcher):
         while not self.shutdown_event.is_set():
             try:
                 attempt += 1
-                logger.warning(f"Reconnection attempt {attempt}")
+                logger.warning("Reconnection attempt %s", attempt)
 
                 # Close existing pools
                 await self._cleanup_pools()
@@ -426,7 +426,7 @@ class _RabbitMQBrokerDispatcher(_MessageBrokerDispatcher):
                     )
 
             except Exception as e:
-                logger.error(f"Reconnection attempt {attempt} failed: {e}")
+                logger.error("Reconnection attempt %s failed: %s", attempt, e)
 
                 if self.shutdown_event.is_set():
                     break
@@ -440,7 +440,7 @@ class _RabbitMQBrokerDispatcher(_MessageBrokerDispatcher):
 
                 delay = min(delay, self.config.connection_retry_config.max_delay)
 
-                logger.warning(f"Retrying reconnection in {delay:.2f} seconds")
+                logger.warning("Retrying reconnection in %.2f seconds", delay)
                 await asyncio.sleep(delay)
 
         self.reconnection_in_progress = False
@@ -451,13 +451,13 @@ class _RabbitMQBrokerDispatcher(_MessageBrokerDispatcher):
             if hasattr(self, "channel_pool"):
                 await self.channel_pool.close()
         except Exception as e:
-            logger.warning(f"Error closing channel pool: {e}")
+            logger.warning("Error closing channel pool: %s", e)
 
         try:
             if hasattr(self, "conn_pool"):
                 await self.conn_pool.close()
         except Exception as e:
-            logger.warning(f"Error closing connection pool: {e}")
+            logger.warning("Error closing connection pool: %s", e)
 
     async def _wait_for_connection(self) -> None:
         """Wait for connection to be healthy"""
@@ -647,7 +647,10 @@ class BeatWorker:
                             )
                             if next_run > datetime.now(UTC):
                                 logger.debug(
-                                    f"Skipping {func.__module__}.{func.__qualname__} until {next_run}"
+                                    "Skipping %s.%s until %s",
+                                    func.__module__,
+                                    func.__qualname__,
+                                    next_run,
                                 )
                                 continue
 
@@ -671,18 +674,27 @@ class BeatWorker:
                             )
 
                             logger.debug(
-                                f"Scheduled {func.__module__}.{func.__qualname__} at {now}"
+                                "Scheduled %s.%s at %s",
+                                func.__module__,
+                                func.__qualname__,
+                                now,
                             )
                         except Exception as e:
                             logger.error(
-                                f"Failed to dispatch scheduled action {func.__module__}.{func.__qualname__}: {e}"
+                                "Failed to dispatch scheduled action %s.%s: %s",
+                                func.__module__,
+                                func.__qualname__,
+                                e,
                             )
                             # Continue with other scheduled actions even if one fails
                             continue
 
                 except Exception as e:
                     logger.error(
-                        f"Error processing scheduled action {func.__module__}.{func.__qualname__}: {e}"
+                        "Error processing scheduled action %s.%s: %s",
+                        func.__module__,
+                        func.__qualname__,
+                        e,
                     )
                     # Continue with other scheduled actions even if one fails
                     continue
@@ -694,11 +706,11 @@ class BeatWorker:
                     try:
                         await self.broker.dispatch_delayed_message(delayed_message_data)
                     except Exception as e:
-                        logger.error(f"Failed to dispatch delayed message: {e}")
+                        logger.error("Failed to dispatch delayed message: %s", e)
                         # Continue with other delayed messages even if one fails
                         continue
             except Exception as e:
-                logger.error(f"Error processing delayed messages: {e}")
+                logger.error("Error processing delayed messages: %s", e)
 
             with contextlib.suppress(asyncio.TimeoutError):
                 await asyncio.wait_for(self.shutdown_event.wait(), self.interval)
@@ -708,12 +720,12 @@ class BeatWorker:
         try:
             await self.backend.dispose()
         except Exception as e:
-            logger.error(f"Error disposing backend: {e}")
+            logger.error("Error disposing backend: %s", e)
 
         try:
             await self.broker.dispose()
         except Exception as e:
-            logger.error(f"Error disposing broker: {e}")
+            logger.error("Error disposing broker: %s", e)
 
     async def _graceful_shutdown(self) -> None:
         """Handles graceful shutdown process"""
@@ -731,7 +743,8 @@ class BeatWorker:
         elapsed_time = 0.0
 
         logger.debug(
-            f"Waiting for broker connection to be established (timeout: {max_wait_time}s)..."
+            "Waiting for broker connection to be established (timeout: %ss)...",
+            max_wait_time,
         )
 
         while elapsed_time < max_wait_time:
@@ -755,11 +768,12 @@ class BeatWorker:
                     logger.debug("Broker connection assumed to be ready")
                     return
                 except Exception as e:
-                    logger.debug(f"Broker connection check failed: {e}")
+                    logger.debug("Broker connection check failed: %s", e)
 
             if elapsed_time % 10.0 == 0.0:  # Log every 10 seconds
                 logger.warning(
-                    f"Still waiting for broker connection... ({elapsed_time:.1f}s elapsed)"
+                    "Still waiting for broker connection... (%.1fs elapsed)",
+                    elapsed_time,
                 )
 
             await asyncio.sleep(check_interval)
@@ -779,7 +793,7 @@ class BeatWorker:
         elapsed_time = 0.0
 
         logger.warning(
-            f"Waiting for broker reconnection (timeout: {max_wait_time}s)..."
+            "Waiting for broker reconnection (timeout: %ss)...", max_wait_time
         )
 
         while elapsed_time < max_wait_time:
@@ -797,12 +811,13 @@ class BeatWorker:
 
             if elapsed_time % 30.0 == 0.0:  # Log every 30 seconds
                 logger.warning(
-                    f"Still waiting for broker reconnection... ({elapsed_time:.1f}s elapsed)"
+                    "Still waiting for broker reconnection... (%.1fs elapsed)",
+                    elapsed_time,
                 )
 
             await asyncio.sleep(check_interval)
             elapsed_time += check_interval
 
-        logger.error(f"Broker connection not restored after {max_wait_time} seconds")
+        logger.error("Broker connection not restored after %s seconds", max_wait_time)
         # Don't raise an exception here, just continue and let the scheduler retry
         # This allows the scheduler to be more resilient to long-term connection issues
