@@ -31,20 +31,24 @@ class RabbitmqUtils:
             )
         except ChannelNotFoundEntity as e:
             logger.error(
-                f"Dead Letter Exchange '{cls.DEAD_LETTER_EXCHANGE}' does not exist. "
-                f"Please use the declare command to create it first. Error: {e}"
+                "Dead Letter Exchange '%s' does not exist. "
+                "Please use the declare command to create it first. Error: %s",
+                cls.DEAD_LETTER_EXCHANGE,
+                e,
             )
             raise
         except ChannelClosed as e:
             logger.error(
-                f"Channel closed while getting Dead Letter Exchange '{cls.DEAD_LETTER_EXCHANGE}'. "
-                f"Error: {e}"
+                "Channel closed while getting Dead Letter Exchange '%s'. " "Error: %s",
+                cls.DEAD_LETTER_EXCHANGE,
+                e,
             )
             raise
         except AMQPError as e:
             logger.error(
-                f"AMQP error while getting Dead Letter Exchange '{cls.DEAD_LETTER_EXCHANGE}'. "
-                f"Error: {e}"
+                "AMQP error while getting Dead Letter Exchange '%s'. " "Error: %s",
+                cls.DEAD_LETTER_EXCHANGE,
+                e,
             )
             raise
 
@@ -75,20 +79,24 @@ class RabbitmqUtils:
             )
         except ChannelNotFoundEntity as e:
             logger.error(
-                f"Dead Letter Queue '{cls.DEAD_LETTER_QUEUE}' does not exist. "
-                f"Please use the declare command to create it first. Error: {e}"
+                "Dead Letter Queue '%s' does not exist. "
+                "Please use the declare command to create it first. Error: %s",
+                cls.DEAD_LETTER_QUEUE,
+                e,
             )
             raise
         except ChannelClosed as e:
             logger.error(
-                f"Channel closed while getting Dead Letter Queue '{cls.DEAD_LETTER_QUEUE}'. "
-                f"Error: {e}"
+                "Channel closed while getting Dead Letter Queue '%s'. " "Error: %s",
+                cls.DEAD_LETTER_QUEUE,
+                e,
             )
             raise
         except AMQPError as e:
             logger.error(
-                f"AMQP error while getting Dead Letter Queue '{cls.DEAD_LETTER_QUEUE}'. "
-                f"Error: {e}"
+                "AMQP error while getting Dead Letter Queue '%s'. " "Error: %s",
+                cls.DEAD_LETTER_QUEUE,
+                e,
             )
             raise
 
@@ -124,19 +132,20 @@ class RabbitmqUtils:
             return dlx, dlq
         except ChannelNotFoundEntity as e:
             logger.error(
-                f"Dead Letter infrastructure does not exist completely. "
-                f"Please use the declare command to create it first. Error: {e}"
+                "Dead Letter infrastructure does not exist completely. "
+                "Please use the declare command to create it first. Error: %s",
+                e,
             )
             raise
         except ChannelClosed as e:
             logger.error(
-                f"Channel closed while getting Dead Letter infrastructure. "
-                f"Error: {e}"
+                "Channel closed while getting Dead Letter infrastructure. " "Error: %s",
+                e,
             )
             raise
         except AMQPError as e:
             logger.error(
-                f"AMQP error while getting Dead Letter infrastructure. " f"Error: {e}"
+                "AMQP error while getting Dead Letter infrastructure. " "Error: %s", e
             )
             raise
 
@@ -165,19 +174,22 @@ class RabbitmqUtils:
             return await channel.get_exchange(exchange_name)
         except ChannelNotFoundEntity as e:
             logger.error(
-                f"Exchange '{exchange_name}' does not exist. "
-                f"Please use the declare command to create it first. Error: {e}"
+                "Exchange '%s' does not exist. "
+                "Please use the declare command to create it first. Error: %s",
+                exchange_name,
+                e,
             )
             raise
         except ChannelClosed as e:
             logger.error(
-                f"Channel closed while getting exchange '{exchange_name}'. "
-                f"Error: {e}"
+                "Channel closed while getting exchange '%s'. " "Error: %s",
+                exchange_name,
+                e,
             )
             raise
         except AMQPError as e:
             logger.error(
-                f"AMQP error while getting exchange '{exchange_name}'. " f"Error: {e}"
+                "AMQP error while getting exchange '%s'. " "Error: %s", exchange_name, e
             )
             raise
 
@@ -210,18 +222,20 @@ class RabbitmqUtils:
             return await channel.get_queue(queue_name)
         except ChannelNotFoundEntity as e:
             logger.error(
-                f"Queue '{queue_name}' does not exist. "
-                f"Please use the declare command to create it first. Error: {e}"
+                "Queue '%s' does not exist. "
+                "Please use the declare command to create it first. Error: %s",
+                queue_name,
+                e,
             )
             raise
         except ChannelClosed as e:
             logger.error(
-                f"Channel closed while getting queue '{queue_name}'. " f"Error: {e}"
+                "Channel closed while getting queue '%s'. " "Error: %s", queue_name, e
             )
             raise
         except AMQPError as e:
             logger.error(
-                f"AMQP error while getting queue '{queue_name}'. " f"Error: {e}"
+                "AMQP error while getting queue '%s'. " "Error: %s", queue_name, e
             )
             raise
 
@@ -259,20 +273,24 @@ class RabbitmqUtils:
             return await channel.get_queue(queue_name)
         except ChannelNotFoundEntity as e:
             logger.error(
-                f"Scheduler queue '{queue_name}' does not exist. "
-                f"Please use the declare command to create it first. Error: {e}"
+                "Scheduler queue '%s' does not exist. "
+                "Please use the declare command to create it first. Error: %s",
+                queue_name,
+                e,
             )
             raise
         except ChannelClosed as e:
             logger.error(
-                f"Channel closed while getting scheduler queue '{queue_name}'. "
-                f"Error: {e}"
+                "Channel closed while getting scheduler queue '%s'. " "Error: %s",
+                queue_name,
+                e,
             )
             raise
         except AMQPError as e:
             logger.error(
-                f"AMQP error while getting scheduler queue '{queue_name}'. "
-                f"Error: {e}"
+                "AMQP error while getting scheduler queue '%s'. " "Error: %s",
+                queue_name,
+                e,
             )
             raise
 
@@ -315,14 +333,16 @@ class RabbitmqUtils:
         except ChannelNotFoundEntity:
             # Exchange might not exist, which is fine
             logger.debug(
-                f"Exchange '{exchange_name}' does not exist, nothing to delete."
+                "Exchange '%s' does not exist, nothing to delete.", exchange_name
             )
         except ChannelClosed as e:
             logger.warning(
-                f"Channel closed while deleting exchange '{exchange_name}': {e}"
+                "Channel closed while deleting exchange '%s': %s", exchange_name, e
             )
         except AMQPError as e:
-            logger.warning(f"AMQP error while deleting exchange '{exchange_name}': {e}")
+            logger.warning(
+                "AMQP error while deleting exchange '%s': %s", exchange_name, e
+            )
 
     @classmethod
     async def delete_queue(
@@ -343,8 +363,10 @@ class RabbitmqUtils:
             )
         except ChannelNotFoundEntity:
             # Queue might not exist, which is fine
-            logger.debug(f"Queue '{queue_name}' does not exist, nothing to delete.")
+            logger.debug("Queue '%s' does not exist, nothing to delete.", queue_name)
         except ChannelClosed as e:
-            logger.warning(f"Channel closed while deleting queue '{queue_name}': {e}")
+            logger.warning(
+                "Channel closed while deleting queue '%s': %s", queue_name, e
+            )
         except AMQPError as e:
-            logger.warning(f"AMQP error while deleting queue '{queue_name}': {e}")
+            logger.warning("AMQP error while deleting queue '%s': %s", queue_name, e)

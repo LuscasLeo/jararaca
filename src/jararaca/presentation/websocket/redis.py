@@ -115,7 +115,7 @@ class RedisWebSocketConnectionBackend(WebSocketConnectionBackend):
             )
         except Exception as e:
             logger.error(
-                f"Failed to publish broadcast message to Redis: {e}", exc_info=True
+                "Failed to publish broadcast message to Redis: %s", e, exc_info=True
             )
             raise
 
@@ -126,7 +126,9 @@ class RedisWebSocketConnectionBackend(WebSocketConnectionBackend):
                 SendToRoomsMessage.from_message(rooms, message).encode(),
             )
         except Exception as e:
-            logger.error(f"Failed to publish send message to Redis: {e}", exc_info=True)
+            logger.error(
+                "Failed to publish send message to Redis: %s", e, exc_info=True
+            )
             raise
 
     def configure(
@@ -181,7 +183,7 @@ class RedisWebSocketConnectionBackend(WebSocketConnectionBackend):
             logger.warning("Broadcast task was cancelled.")
         elif task.exception() is not None:
             logger.exception(
-                f"Broadcast task raised an exception:", exc_info=task.exception()
+                "Broadcast task raised an exception:", exc_info=task.exception()
             )
         else:
             logger.warning("Broadcast task somehow completed successfully.")
@@ -207,7 +209,7 @@ class RedisWebSocketConnectionBackend(WebSocketConnectionBackend):
             logger.warning("Send task was cancelled.")
         elif task.exception() is not None:
             logger.exception(
-                f"Send task raised an exception:", exc_info=task.exception()
+                "Send task raised an exception:", exc_info=task.exception()
             )
         else:
             logger.warning("Send task somehow completed successfully.")
@@ -222,7 +224,7 @@ class RedisWebSocketConnectionBackend(WebSocketConnectionBackend):
     async def _retry_broadcast_consumer_with_delay(self) -> None:
         """Retry setting up broadcast consumer after a delay to avoid excessive CPU usage."""
         logger.warning(
-            f"Waiting {self.retry_delay} seconds before retrying broadcast consumer..."
+            "Waiting %s seconds before retrying broadcast consumer...", self.retry_delay
         )
         await asyncio.sleep(self.retry_delay)
 
@@ -233,7 +235,7 @@ class RedisWebSocketConnectionBackend(WebSocketConnectionBackend):
     async def _retry_send_consumer_with_delay(self) -> None:
         """Retry setting up send consumer after a delay to avoid excessive CPU usage."""
         logger.warning(
-            f"Waiting {self.retry_delay} seconds before retrying send consumer..."
+            "Waiting %s seconds before retrying send consumer...", self.retry_delay
         )
         await asyncio.sleep(self.retry_delay)
 
@@ -251,13 +253,13 @@ class RedisWebSocketConnectionBackend(WebSocketConnectionBackend):
                 await self.redis.ping()
                 logger.debug("Redis connection validated for broadcast consumer")
             except Exception as e:
-                logger.error(f"Redis connection validation failed: {e}", exc_info=True)
+                logger.error("Redis connection validation failed: %s", e, exc_info=True)
                 raise
 
             async with self.redis.pubsub() as pubsub:
                 await pubsub.subscribe(self.broadcast_pubsub_channel)
                 logger.debug(
-                    f"Subscribed to broadcast channel: {self.broadcast_pubsub_channel}"
+                    "Subscribed to broadcast channel: %s", self.broadcast_pubsub_channel
                 )
 
                 while not shutdown_event.is_set():
@@ -296,13 +298,13 @@ class RedisWebSocketConnectionBackend(WebSocketConnectionBackend):
                         if acquired:
                             self.task_semaphore.release()
                         logger.error(
-                            f"Error processing broadcast message: {e}", exc_info=True
+                            "Error processing broadcast message: %s", e, exc_info=True
                         )
                         # Continue processing other messages
                         continue
         except Exception as e:
             logger.error(
-                f"Fatal error in broadcast consumer, will retry: {e}", exc_info=True
+                "Fatal error in broadcast consumer, will retry: %s", e, exc_info=True
             )
             raise
 
@@ -314,12 +316,12 @@ class RedisWebSocketConnectionBackend(WebSocketConnectionBackend):
                 await self.redis.ping()
                 logger.debug("Redis connection validated for send consumer")
             except Exception as e:
-                logger.error(f"Redis connection validation failed: {e}", exc_info=True)
+                logger.error("Redis connection validation failed: %s", e, exc_info=True)
                 raise
 
             async with self.redis.pubsub() as pubsub:
                 await pubsub.subscribe(self.send_pubsub_channel)
-                logger.debug(f"Subscribed to send channel: {self.send_pubsub_channel}")
+                logger.debug("Subscribed to send channel: %s", self.send_pubsub_channel)
 
                 while not shutdown_event.is_set():
                     message: dict[str, Any] | None = await pubsub.get_message(
@@ -362,13 +364,13 @@ class RedisWebSocketConnectionBackend(WebSocketConnectionBackend):
                         if acquired:
                             self.task_semaphore.release()
                         logger.error(
-                            f"Error processing send message: {e}", exc_info=True
+                            "Error processing send message: %s", e, exc_info=True
                         )
                         # Continue processing other messages
                         continue
         except Exception as e:
             logger.error(
-                f"Fatal error in send consumer, will retry: {e}", exc_info=True
+                "Fatal error in send consumer, will retry: %s", e, exc_info=True
             )
             raise
 
