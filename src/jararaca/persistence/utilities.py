@@ -344,28 +344,36 @@ class QueryOperations(Generic[QUERY_FILTER_T, QUERY_ENTITY_T]):
                 )
             )
 
-        unpaginated_total = (
-            await self.session.execute(
-                select(func.count()).select_from(tier_two_filtered_query.subquery())
-            )
-        ).scalar_one()
-
-        paginated_query = tier_two_filtered_query.limit(filter.page_size).offset(
+        paginated_query = tier_two_filtered_query.add_columns(
+            func.count().over().label("total_count")
+        )
+        paginated_query = paginated_query.limit(filter.page_size).offset(
             (filter.page) * filter.page_size
         )
 
-        paginated_total = (
-            await self.session.execute(
-                select(func.count()).select_from(paginated_query.subquery())
-            )
-        ).scalar_one()
-
         result = await self.session.execute(paginated_query)
-        result_scalars = list(self.judge_unique(result).scalars().all())
+        result = self.judge_unique(result)
+        rows = result.all()
+
+        if rows:
+            unpaginated_total = rows[0].total_count
+            result_scalars = [row[0] for row in rows]
+        else:
+            result_scalars = []
+            if filter.page == 0:
+                unpaginated_total = 0
+            else:
+                unpaginated_total = (
+                    await self.session.execute(
+                        select(func.count()).select_from(
+                            tier_two_filtered_query.subquery()
+                        )
+                    )
+                ).scalar_one()
 
         return Paginated(
             items=result_scalars,
-            total=paginated_total,
+            total=len(result_scalars),
             unpaginated_total=unpaginated_total,
             total_pages=int(unpaginated_total / filter.page_size) + 1,
         )
