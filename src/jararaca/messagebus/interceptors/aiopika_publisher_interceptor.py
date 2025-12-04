@@ -46,7 +46,7 @@ class AIOPikaMessagePublisher(MessagePublisher):
         if not exchange:
             logging.warning(f"Exchange {self.exchange_name} not found")
             return
-        routing_key = f"{topic}."
+        routing_key = f"{topic}.#"
 
         implicit_headers_data = implicit_headers.use_implicit_headers()
         await exchange.publish(
