@@ -2,7 +2,7 @@
 #
 # SPDX-License-Identifier: GPL-3.0-or-later
 
-from typing import Any, Self, Type, TypeVar
+from typing import Any, Callable, Protocol, Self, Type, TypeVar
 
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncAttrs
@@ -25,6 +25,19 @@ def recursive_get_dict(obj: Any) -> Any:
         return obj
 
 
+RESULT_T = TypeVar("RESULT_T", covariant=True)
+ENTITY_T_CONTRA = TypeVar("ENTITY_T_CONTRA", bound="BaseEntity", contravariant=True)
+
+
+class EntityParserType(Protocol[ENTITY_T_CONTRA, RESULT_T]):
+
+    @classmethod
+    def parse_entity(cls, model: ENTITY_T_CONTRA) -> "RESULT_T": ...
+
+
+EntityParserFunc = Callable[[ENTITY_T_CONTRA], RESULT_T]
+
+
 class BaseEntity(AsyncAttrs, DeclarativeBase):
 
     @classmethod
@@ -36,3 +49,19 @@ class BaseEntity(AsyncAttrs, DeclarativeBase):
 
     def to_basemodel(self, model: Type[T_BASEMODEL]) -> T_BASEMODEL:
         return model.model_validate(recursive_get_dict(self))
+
+    def parse_entity_with_func(
+        self, model_cls: EntityParserFunc["Self", RESULT_T]
+    ) -> RESULT_T:
+        return model_cls(self)
+
+    def parse_entity_with_type(
+        self, model_cls: Type[EntityParserType["Self", RESULT_T]]
+    ) -> RESULT_T:
+        return model_cls.parse_entity(self)
+
+    def __rshift__(self, model: EntityParserFunc["Self", RESULT_T]) -> RESULT_T:
+        return self.parse_entity_with_func(model)
+
+    def __and__(self, model: Type[EntityParserType["Self", RESULT_T]]) -> RESULT_T:
+        return self.parse_entity_with_type(model)
