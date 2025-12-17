@@ -96,15 +96,6 @@ class AioPikaWorkerConfig:
     # Connection health monitoring settings
     connection_heartbeat_interval: float = 30.0  # seconds
     connection_health_check_interval: float = 10.0  # seconds
-    reconnection_backoff_config: RetryConfig = field(
-        default_factory=lambda: RetryConfig(
-            max_retries=-1,  # Infinite retries for reconnection
-            initial_delay=2.0,
-            max_delay=120.0,
-            backoff_factor=2.0,
-            jitter=True,
-        )
-    )
 
 
 class AioPikaMessage(MessageOf[Message]):
@@ -512,17 +503,17 @@ class AioPikaMicroserviceConsumer(MessageBusConsumer):
                             "Failed to recreate channel for %s: %s", queue_name, e
                         )
                         # Trigger shutdown if channel creation fails
-                        self._trigger_reconnection()
+                        self._trigger_shutdown()
                         return None
                 else:
                     # Connection is not healthy, trigger shutdown
-                    self._trigger_reconnection()
+                    self._trigger_shutdown()
                     return None
             return channel
         except Exception as e:
             logger.error("Error accessing channel for queue %s: %s", queue_name, e)
             # Trigger shutdown on any channel access error
-            self._trigger_reconnection()
+            self._trigger_shutdown()
             return None
 
     async def _establish_channel(self, queue_name: str) -> aio_pika.abc.AbstractChannel:
@@ -678,7 +669,7 @@ class AioPikaMicroserviceConsumer(MessageBusConsumer):
                         "Connection not healthy while getting channel for %s, triggering shutdown",
                         queue_name,
                     )
-                    self._trigger_reconnection()
+                    self._trigger_shutdown()
                     raise RuntimeError(
                         f"Cannot get channel for queue {queue_name}: connection is not healthy"
                     )
@@ -743,7 +734,7 @@ class AioPikaMicroserviceConsumer(MessageBusConsumer):
             logger.debug("Connection health check failed: %s", e)
             return False
 
-    def _trigger_reconnection(self) -> None:
+    def _trigger_shutdown(self) -> None:
         """
         Trigger worker shutdown due to connection loss.
         """
@@ -839,15 +830,6 @@ def create_message_bus(
             max_retries=30, initial_delay=5, max_delay=60.0, backoff_factor=3.0
         )
 
-        # Parse optional reconnection configuration parameters
-        reconnection_backoff_config = RetryConfig(
-            max_retries=-1,  # Infinite retries for reconnection
-            initial_delay=2.0,
-            max_delay=120.0,
-            backoff_factor=2.0,
-            jitter=True,
-        )
-
         # Parse heartbeat and health check intervals
         connection_heartbeat_interval = 30.0
         connection_health_check_interval = 10.0
@@ -918,39 +900,6 @@ def create_message_bus(
             except ValueError:
                 pass
 
-        # Reconnection backoff config parameters
-        if (
-            "reconnection_retry_max" in query_params
-            and query_params["reconnection_retry_max"][0].isdigit()
-        ):
-            reconnection_backoff_config.max_retries = int(
-                query_params["reconnection_retry_max"][0]
-            )
-
-        if "reconnection_retry_delay" in query_params:
-            try:
-                reconnection_backoff_config.initial_delay = float(
-                    query_params["reconnection_retry_delay"][0]
-                )
-            except ValueError:
-                pass
-
-        if "reconnection_retry_max_delay" in query_params:
-            try:
-                reconnection_backoff_config.max_delay = float(
-                    query_params["reconnection_retry_max_delay"][0]
-                )
-            except ValueError:
-                pass
-
-        if "reconnection_retry_backoff" in query_params:
-            try:
-                reconnection_backoff_config.backoff_factor = float(
-                    query_params["reconnection_retry_backoff"][0]
-                )
-            except ValueError:
-                pass
-
         # Heartbeat and health check intervals
         if "connection_heartbeat_interval" in query_params:
             try:
@@ -976,7 +925,6 @@ def create_message_bus(
             consumer_retry_config=consumer_retry_config,
             connection_heartbeat_interval=connection_heartbeat_interval,
             connection_health_check_interval=connection_health_check_interval,
-            reconnection_backoff_config=reconnection_backoff_config,
         )
 
         return AioPikaMicroserviceConsumer(
@@ -1035,8 +983,6 @@ class ScheduledMessageHandlerCallback:
                 self.queue_name,
             )
             try:
-                # Wait briefly for potential reconnection
-                await asyncio.sleep(0.1)
                 if not self.consumer.connection_healthy:
                     # Still not healthy, requeue the message
                     async with self.consumer.get_channel_ctx(self.queue_name):
@@ -1203,8 +1149,6 @@ class MessageHandlerCallback:
                 "Connection not healthy, requeuing message for %s", self.queue_name
             )
             try:
-                # Wait briefly for potential reconnection
-                await asyncio.sleep(0.1)
                 if not self.consumer.connection_healthy:
                     # Still not healthy, requeue the message
                     async with self.consumer.get_channel_ctx(self.queue_name):

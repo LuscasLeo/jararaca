@@ -5,7 +5,6 @@
 import asyncio
 import contextlib
 import logging
-import random
 import signal
 import time
 from abc import ABC, abstractmethod
@@ -19,8 +18,8 @@ import croniter
 import urllib3
 import urllib3.util
 import uvloop
-from aio_pika import connect_robust
-from aio_pika.abc import AbstractChannel, AbstractRobustConnection
+from aio_pika import connect
+from aio_pika.abc import AbstractChannel, AbstractConnection
 from aio_pika.exceptions import (
     AMQPChannelError,
     AMQPConnectionError,
@@ -29,6 +28,7 @@ from aio_pika.exceptions import (
     ConnectionClosed,
 )
 from aio_pika.pool import Pool
+from aiormq.exceptions import ChannelInvalidStateError
 
 from jararaca.broker_backend import MessageBrokerBackend
 from jararaca.broker_backend.mapper import get_message_broker_backend_from_url
@@ -114,16 +114,19 @@ class _MessageBrokerDispatcher(ABC):
 
 class _RabbitMQBrokerDispatcher(_MessageBrokerDispatcher):
 
-    def __init__(self, url: str, config: "BeatWorkerConfig | None" = None) -> None:
+    def __init__(
+        self,
+        url: str,
+        config: "BeatWorkerConfig | None" = None,
+        shutdown_event: asyncio.Event | None = None,
+    ) -> None:
         self.url = url
         self.config = config or BeatWorkerConfig()
         self.connection_healthy = False
-        self.reconnection_in_progress = False
-        self.shutdown_event = asyncio.Event()
+        self.shutdown_event = shutdown_event or asyncio.Event()
         self.health_check_task: asyncio.Task[Any] | None = None
-        self.reconnection_lock = asyncio.Lock()
 
-        self.conn_pool: "Pool[AbstractRobustConnection]" = Pool(
+        self.conn_pool: "Pool[AbstractConnection]" = Pool(
             self._create_connection,
             max_size=self.config.max_pool_size,
         )
@@ -149,14 +152,14 @@ class _RabbitMQBrokerDispatcher(_MessageBrokerDispatcher):
 
         self.exchange = str(query_params["exchange"][0])
 
-    async def _create_connection(self) -> AbstractRobustConnection:
+    async def _create_connection(self) -> AbstractConnection:
         """
-        Create a robust connection to the RabbitMQ server with retry logic.
+        Create a connection to the RabbitMQ server with retry logic.
         """
 
-        async def _establish_connection() -> AbstractRobustConnection:
+        async def _establish_connection() -> AbstractConnection:
             logger.debug("Establishing connection to RabbitMQ")
-            connection = await connect_robust(
+            connection = await connect(
                 self.url,
                 heartbeat=self.config.connection_heartbeat_interval,
             )
@@ -225,13 +228,21 @@ class _RabbitMQBrokerDispatcher(_MessageBrokerDispatcher):
                     AMQPError,
                 ),
             )
+
+        except ChannelInvalidStateError as e:
+            logger.error(
+                "Channel invalid state error when dispatching to %s: %s", action_id, e
+            )
+            # Trigger shutdown if dispatch fails
+            self.shutdown_event.set()
+            raise
+
         except Exception as e:
             logger.error(
                 "Failed to dispatch message to %s after retries: %s", action_id, e
             )
-            # Trigger reconnection if dispatch fails
-            if not self.reconnection_in_progress:
-                asyncio.create_task(self._handle_reconnection())
+            # Trigger shutdown if dispatch fails
+            self.shutdown_event.set()
             raise
 
     async def dispatch_delayed_message(
@@ -267,9 +278,8 @@ class _RabbitMQBrokerDispatcher(_MessageBrokerDispatcher):
             )
         except Exception as e:
             logger.error("Failed to dispatch delayed message after retries: %s", e)
-            # Trigger reconnection if dispatch fails
-            if not self.reconnection_in_progress:
-                asyncio.create_task(self._handle_reconnection())
+            # Trigger shutdown if dispatch fails
+            self.shutdown_event.set()
             raise
 
     async def initialize(self, scheduled_actions: list[ScheduledActionData]) -> None:
@@ -345,7 +355,7 @@ class _RabbitMQBrokerDispatcher(_MessageBrokerDispatcher):
         await self._cleanup_pools()
 
     async def _monitor_connection_health(self) -> None:
-        """Monitor connection health and trigger reconnection if needed"""
+        """Monitor connection health and trigger shutdown if needed"""
         while not self.shutdown_event.is_set():
             try:
                 await asyncio.sleep(self.config.health_check_interval)
@@ -355,11 +365,9 @@ class _RabbitMQBrokerDispatcher(_MessageBrokerDispatcher):
 
                 # Check connection health
                 if not await self._is_connection_healthy():
-                    logger.warning(
-                        "Connection health check failed, triggering reconnection"
-                    )
-                    if not self.reconnection_in_progress:
-                        asyncio.create_task(self._handle_reconnection())
+                    logger.error("Connection health check failed, triggering shutdown")
+                    self.shutdown_event.set()
+                    break
 
             except asyncio.CancelledError:
                 logger.debug("Connection health monitoring cancelled")
@@ -384,66 +392,6 @@ class _RabbitMQBrokerDispatcher(_MessageBrokerDispatcher):
         except Exception as e:
             logger.debug("Connection health check failed: %s", e)
             return False
-
-    async def _handle_reconnection(self) -> None:
-        """Handle reconnection process with exponential backoff"""
-        async with self.reconnection_lock:
-            if self.reconnection_in_progress:
-                return
-
-            self.reconnection_in_progress = True
-            self.connection_healthy = False
-
-        logger.warning("Starting reconnection process")
-
-        attempt = 0
-        while not self.shutdown_event.is_set():
-            try:
-                attempt += 1
-                logger.warning("Reconnection attempt %s", attempt)
-
-                # Close existing pools
-                await self._cleanup_pools()
-
-                # Recreate pools
-                self.conn_pool = Pool(
-                    self._create_connection,
-                    max_size=self.config.max_pool_size,
-                )
-                self.channel_pool = Pool(
-                    self._create_channel,
-                    max_size=self.config.max_pool_size,
-                )
-
-                # Test connection
-                if await self._is_connection_healthy():
-                    self.connection_healthy = True
-                    logger.warning("Reconnection successful")
-                    break
-                else:
-                    raise ConnectionError(
-                        "Connection health check failed after reconnection"
-                    )
-
-            except Exception as e:
-                logger.error("Reconnection attempt %s failed: %s", attempt, e)
-
-                if self.shutdown_event.is_set():
-                    break
-
-                # Calculate backoff delay
-                delay = self.config.reconnection_delay * (2 ** min(attempt - 1, 10))
-                if self.config.connection_retry_config.jitter:
-                    jitter_amount = delay * 0.25
-                    delay = delay + random.uniform(-jitter_amount, jitter_amount)
-                    delay = max(delay, 0.1)
-
-                delay = min(delay, self.config.connection_retry_config.max_delay)
-
-                logger.warning("Retrying reconnection in %.2f seconds", delay)
-                await asyncio.sleep(delay)
-
-        self.reconnection_in_progress = False
 
     async def _cleanup_pools(self) -> None:
         """Clean up existing connection pools"""
@@ -476,14 +424,18 @@ class _RabbitMQBrokerDispatcher(_MessageBrokerDispatcher):
 
 
 def _get_message_broker_dispatcher_from_url(
-    url: str, config: "BeatWorkerConfig | None" = None
+    url: str,
+    config: "BeatWorkerConfig | None" = None,
+    shutdown_event: asyncio.Event | None = None,
 ) -> _MessageBrokerDispatcher:
     """
     Factory function to create a message broker instance from a URL.
     Currently, only RabbitMQ is supported.
     """
     if url.startswith("amqp://") or url.startswith("amqps://"):
-        return _RabbitMQBrokerDispatcher(url=url, config=config)
+        return _RabbitMQBrokerDispatcher(
+            url=url, config=config, shutdown_event=shutdown_event
+        )
     else:
         raise ValueError(f"Unsupported message broker URL: {url}")
 
@@ -515,12 +467,9 @@ class BeatWorkerConfig:
     )
     connection_heartbeat_interval: float = 30.0
     health_check_interval: float = 15.0
-    max_reconnection_attempts: int = -1  # Infinite retries
-    reconnection_delay: float = 5.0
 
     # Connection establishment timeouts
     connection_wait_timeout: float = 300.0  # 5 minutes to wait for initial connection
-    reconnection_wait_timeout: float = 600.0  # 10 minutes to wait for reconnection
 
     # Pool configuration
     max_pool_size: int = 10
@@ -537,12 +486,15 @@ class BeatWorker:
         backend_url: str,
         scheduled_action_names: set[str] | None = None,
         config: "BeatWorkerConfig | None" = None,
+        shutdown_event: asyncio.Event | None = None,
     ) -> None:
+        self.shutdown_event = shutdown_event or asyncio.Event()
+
         self.app = app
         self.config = config or BeatWorkerConfig()
 
         self.broker: _MessageBrokerDispatcher = _get_message_broker_dispatcher_from_url(
-            broker_url, self.config
+            broker_url, self.config, shutdown_event=self.shutdown_event
         )
         self.backend: MessageBrokerBackend = get_message_broker_backend_from_url(
             backend_url
@@ -552,8 +504,6 @@ class BeatWorker:
         self.scheduler_names = scheduled_action_names
         self.container = Container(self.app)
         self.uow_provider = UnitOfWorkContextProvider(app, self.container)
-
-        self.shutdown_event = asyncio.Event()
 
         self.lifecycle = AppLifecycle(app, self.container)
 
@@ -569,7 +519,16 @@ class BeatWorker:
             loop.add_signal_handler(signal.SIGINT, on_shutdown, loop)
             # Add graceful shutdown handler for SIGTERM as well
             loop.add_signal_handler(signal.SIGTERM, on_shutdown, loop)
-            runner.run(self.start_scheduler())
+            try:
+                runner.run(self.start_scheduler())
+            except Exception as e:
+                logger.critical(
+                    "Scheduler failed to start due to connection error: %s", e
+                )
+                # Exit with error code 1 to indicate startup failure
+                import sys
+
+                sys.exit(1)
 
     async def start_scheduler(self) -> None:
         """
@@ -605,10 +564,8 @@ class BeatWorker:
             hasattr(self.broker, "connection_healthy")
             and not self.broker.connection_healthy
         ):
-            logger.warning(
-                "Connection not healthy at start of processing loop, waiting..."
-            )
-            await self._wait_for_broker_reconnection()
+            logger.error("Connection not healthy at start of processing loop. Exiting.")
+            return
 
         while not self.shutdown_event.is_set():
             # Check connection health before processing scheduled actions
@@ -616,11 +573,8 @@ class BeatWorker:
                 hasattr(self.broker, "connection_healthy")
                 and not self.broker.connection_healthy
             ):
-                logger.warning(
-                    "Broker connection is not healthy, waiting for reconnection..."
-                )
-                await self._wait_for_broker_reconnection()
-                continue
+                logger.error("Broker connection is not healthy. Exiting.")
+                break
 
             now = int(time.time())
             for sched_act_data in scheduled_actions:
@@ -679,6 +633,16 @@ class BeatWorker:
                                 func.__qualname__,
                                 now,
                             )
+                        except ChannelInvalidStateError as e:
+                            logger.error(
+                                "Channel invalid state error when dispatching %s.%s: %s",
+                                func.__module__,
+                                func.__qualname__,
+                                e,
+                            )
+                            # Trigger shutdown if dispatch fails
+                            self.shutdown_event.set()
+                            raise
                         except Exception as e:
                             logger.error(
                                 "Failed to dispatch scheduled action %s.%s: %s",
@@ -782,42 +746,3 @@ class BeatWorker:
         raise ConnectionError(
             f"Broker connection not established after {max_wait_time} seconds"
         )
-
-    async def _wait_for_broker_reconnection(self) -> None:
-        """
-        Wait for the broker to reconnect when connection is lost during operation.
-        This pauses the scheduler until the connection is restored.
-        """
-        max_wait_time = self.config.reconnection_wait_timeout
-        check_interval = 5.0  # Check every 5 seconds
-        elapsed_time = 0.0
-
-        logger.warning(
-            "Waiting for broker reconnection (timeout: %ss)...", max_wait_time
-        )
-
-        while elapsed_time < max_wait_time:
-            if self.shutdown_event.is_set():
-                logger.debug("Shutdown requested while waiting for broker reconnection")
-                return
-
-            # Check if broker connection is healthy again
-            if (
-                hasattr(self.broker, "connection_healthy")
-                and self.broker.connection_healthy
-            ):
-                logger.warning("Broker connection restored, resuming scheduler")
-                return
-
-            if elapsed_time % 30.0 == 0.0:  # Log every 30 seconds
-                logger.warning(
-                    "Still waiting for broker reconnection... (%.1fs elapsed)",
-                    elapsed_time,
-                )
-
-            await asyncio.sleep(check_interval)
-            elapsed_time += check_interval
-
-        logger.error("Broker connection not restored after %s seconds", max_wait_time)
-        # Don't raise an exception here, just continue and let the scheduler retry
-        # This allows the scheduler to be more resilient to long-term connection issues
