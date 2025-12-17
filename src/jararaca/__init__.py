@@ -47,6 +47,7 @@ if TYPE_CHECKING:
         SortModel,
         SortRuleApplier,
     )
+    from jararaca.presentation.exceptions import PresentationException
     from jararaca.presentation.hooks import (
         raises_200_on,
         raises_400_on,
@@ -226,6 +227,7 @@ if TYPE_CHECKING:
         "RegisterWebSocketMessage",
         "TracedRequestMiddleware",
         "raises_http_exception_on",
+        "PresentationException",
         "raises_200_on",
         "raises_422_on",
         "raises_404_on",
@@ -413,6 +415,7 @@ _dynamic_imports: "dict[str, tuple[str, str, str | None]]" = {
     ),
     "TracedRequestMiddleware": (__SPEC_PARENT__, "rpc.http.backends.otel", None),
     "raises_http_exception_on": (__SPEC_PARENT__, "presentation.hooks", None),
+    "PresentationException": (__SPEC_PARENT__, "presentation.exceptions", None),
     "raises_200_on": (__SPEC_PARENT__, "presentation.hooks", None),
     "raises_400_on": (__SPEC_PARENT__, "presentation.hooks", None),
     "raises_401_on": (__SPEC_PARENT__, "presentation.hooks", None),
