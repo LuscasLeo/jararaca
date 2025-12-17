@@ -1,0 +1,38 @@
+# SPDX-FileCopyrightText: 2025 Lucas S
+#
+# SPDX-License-Identifier: GPL-3.0-or-later
+
+version = 1
+SPDX-PackageName = "jararaca"
+SPDX-PackageSupplier = "Lucas S <me@luscasleo.dev>"
+SPDX-PackageDownloadLocation = "https://github.com/LuscasLeo/jararaca"
+
+[[annotations]]
+path = ["docs/**", "**.md"]
+precedence = "aggregate"
+SPDX-FileCopyrightText = "2025 Lucas S"
+SPDX-License-Identifier = "GPL-3.0-or-later"
+
+[[annotations]]
+path = ["pyproject.toml", "Makefile", "mkdocs.yml", ".github/**", ".gitignore", "poetry.lock"]
+precedence = "aggregate"
+SPDX-FileCopyrightText = "2025 Lucas S"
+SPDX-License-Identifier = "GPL-3.0-or-later"
+
+[[annotations]]
+path = "examples/**"
+precedence = "aggregate"
+SPDX-FileCopyrightText = "2025 Lucas S"
+SPDX-License-Identifier = "GPL-3.0-or-later"
+
+[[annotations]]
+path = ["tests/**", "scripts/**"]
+precedence = "aggregate"
+SPDX-FileCopyrightText = "2025 Lucas S"
+SPDX-License-Identifier = "GPL-3.0-or-later"
+
+[[annotations]]
+path = ["__pycache__/**", "htmlcov/**", "**.pyc"]
+precedence = "aggregate"
+SPDX-FileCopyrightText = "2025 Lucas S"
+SPDX-License-Identifier = "GPL-3.0-or-later"

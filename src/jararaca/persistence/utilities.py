@@ -289,9 +289,9 @@ class QueryOperations(Generic[QUERY_FILTER_T, QUERY_ENTITY_T]):
     def __init__(
         self,
         entity_type: Type[QUERY_ENTITY_T],
-        *,
         session_provider: Callable[[], AsyncSession] = use_session,
         filters_functions: list[QueryInjector] = [],
+        *,
         unique: bool = False,
         sort_rule_applier: SortRuleApplier | None = None,
         filter_rule_applier: FilterRuleApplier | None = None,

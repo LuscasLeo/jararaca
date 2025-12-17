@@ -5,7 +5,7 @@
 from contextlib import contextmanager
 from contextvars import ContextVar
 from functools import wraps
-from typing import Any, Awaitable, Callable, Literal, Protocol, TypeVar, cast
+from typing import Any, Awaitable, Callable, Literal, Mapping, Protocol, TypeVar, cast
 
 from fastapi import APIRouter
 from fastapi import Depends as DependsF
@@ -25,7 +25,7 @@ DECORATED_FUNC = TypeVar("DECORATED_FUNC", bound=Callable[..., Any])
 DECORATED_CLASS = TypeVar("DECORATED_CLASS", bound=Any)
 
 
-ControllerOptions = dict[str, Any]
+ControllerOptions = Mapping[str, Any]
 
 
 class RouterFactory(Protocol):
@@ -39,9 +39,12 @@ class RestController:
     def __init__(
         self,
         path: str = "",
+        *,
         options: ControllerOptions | None = None,
         middlewares: list[type[HttpMiddleware]] = [],
         router_factory: RouterFactory | None = None,
+        class_inherits_decorators: bool = True,
+        methods_inherit_decorators: bool = True,
     ) -> None:
         self.path = path
         self.options = options

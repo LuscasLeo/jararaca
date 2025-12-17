@@ -37,13 +37,15 @@ class EntityParserType(Protocol[ENTITY_T_CONTRA, RESULT_T]):
 
 EntityParserFunc = Callable[[ENTITY_T_CONTRA], RESULT_T]
 
+BASED_BASE_ENTITY_T = TypeVar("BASED_BASE_ENTITY_T", bound="BaseEntity")
+
 
 class BaseEntity(AsyncAttrs, DeclarativeBase):
 
     @classmethod
     def from_basemodel(cls, mutation: T_BASEMODEL) -> "Self":
         intersection = set(cls.__annotations__.keys()) & set(
-            mutation.model_fields.keys()
+            mutation.__class__.model_fields.keys()
         )
         return cls(**{k: getattr(mutation, k) for k in intersection})
 
@@ -56,7 +58,8 @@ class BaseEntity(AsyncAttrs, DeclarativeBase):
         return model_cls(self)
 
     def parse_entity_with_type(
-        self, model_cls: Type[EntityParserType["Self", RESULT_T]]
+        self: BASED_BASE_ENTITY_T,
+        model_cls: Type[EntityParserType[BASED_BASE_ENTITY_T, RESULT_T]],
     ) -> RESULT_T:
         return model_cls.parse_entity(self)
 
