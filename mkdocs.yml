@@ -58,7 +58,9 @@ nav:
   - Scheduler: scheduler.md
   - Database:
     - Persistence: persistence.md
-  - TypeScript: expose-type.md
+  - TypeScript:
+    - Generation: typescript-generation.md
+    - Expose Type: expose-type.md
   - Features:
     - Interceptors: interceptors.md
     - Metadata: metadata.md
