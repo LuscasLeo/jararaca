@@ -1,5 +1,20 @@
 # Changelog
 
+## [Unreleased] - 2025-12-17
+
+### Changed
+- Refactored decorator system for better type safety and Mypy compliance
+  - `SingleDecorator` and `StackableDecorator` now use bounded TypeVars
+  - Updated all decorators to use explicit type arguments where necessary
+- Improved TypeScript interface generation
+  - Added support for controller inheritance
+  - Decorators like `@Get`, `@Post`, `@UseMiddleware` are now correctly inherited from base classes
+  - Overridden methods without decorators inherit configuration from parent methods
+
+### Fixed
+- Fixed 53 Mypy type errors related to generic inheritance in decorators
+- Fixed TypeScript generation for inherited controller methods
+
 ## [Unreleased] - 2025-11-05
 
 ### Added
