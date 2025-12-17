@@ -311,14 +311,40 @@ def parse_literal_value(value: Any) -> str:
     return "unknown"
 
 
-def get_field_type_for_ts(field_type: Any, context_suffix: str = "") -> Any:
+def get_generic_type_mapping(controller_class: type) -> dict[Any, Any]:
+    mapping: dict[Any, Any] = {}
+    if not hasattr(controller_class, "__orig_bases__"):
+        return mapping
+
+    for base in controller_class.__orig_bases__:
+        origin = get_origin(base)
+        if origin and hasattr(origin, "__parameters__"):
+            args = typing.get_args(base)
+            params = origin.__parameters__
+            if len(args) == len(params):
+                for param, arg in zip(params, args):
+                    mapping[param] = arg
+    return mapping
+
+
+def get_field_type_for_ts(
+    field_type: Any,
+    context_suffix: str = "",
+    type_mapping: dict[Any, Any] | None = None,
+) -> Any:
     """
     Convert a Python type to its TypeScript equivalent.
 
     Args:
         field_type: The Python type to convert
         context_suffix: Suffix for split models (e.g., "Input", "Output")
+        type_mapping: Mapping of TypeVars to concrete types
     """
+    if type_mapping and field_type in type_mapping:
+        return get_field_type_for_ts(
+            type_mapping[field_type], context_suffix, type_mapping
+        )
+
     # Handle RootModel types - use the wrapped type directly
     if inspect.isclass(field_type) and issubclass(field_type, RootModel):
         # For concrete RootModel subclasses, get the wrapped type from annotations
@@ -327,7 +353,7 @@ def get_field_type_for_ts(field_type: Any, context_suffix: str = "") -> Any:
             and "root" in field_type.__annotations__
         ):
             wrapped_type = field_type.__annotations__["root"]
-            return get_field_type_for_ts(wrapped_type, context_suffix)
+            return get_field_type_for_ts(wrapped_type, context_suffix, type_mapping)
 
         # For parameterized RootModel[T] types, get the type from pydantic metadata
         if hasattr(field_type, "__pydantic_generic_metadata__"):
@@ -335,7 +361,7 @@ def get_field_type_for_ts(field_type: Any, context_suffix: str = "") -> Any:
             if metadata.get("origin") is RootModel and metadata.get("args"):
                 # Get the first (and only) type argument
                 wrapped_type = metadata["args"][0]
-                return get_field_type_for_ts(wrapped_type, context_suffix)
+                return get_field_type_for_ts(wrapped_type, context_suffix, type_mapping)
 
         return "unknown"
 
@@ -366,15 +392,17 @@ def get_field_type_for_ts(field_type: Any, context_suffix: str = "") -> Any:
     if field_type == Decimal:
         return "number"
     if get_origin(field_type) == ClassVar:
-        return get_field_type_for_ts(field_type.__args__[0], context_suffix)
+        return get_field_type_for_ts(
+            field_type.__args__[0], context_suffix, type_mapping
+        )
     if get_origin(field_type) == tuple:
-        return f"[{', '.join([get_field_type_for_ts(field, context_suffix) for field in field_type.__args__])}]"
+        return f"[{', '.join([get_field_type_for_ts(field, context_suffix, type_mapping) for field in field_type.__args__])}]"
     if get_origin(field_type) == list or get_origin(field_type) == frozenset:
-        return f"Array<{get_field_type_for_ts(field_type.__args__[0], context_suffix)}>"
+        return f"Array<{get_field_type_for_ts(field_type.__args__[0], context_suffix, type_mapping)}>"
     if get_origin(field_type) == set:
-        return f"Array<{get_field_type_for_ts(field_type.__args__[0], context_suffix)}> // Set"
+        return f"Array<{get_field_type_for_ts(field_type.__args__[0], context_suffix, type_mapping)}> // Set"
     if get_origin(field_type) == dict:
-        return f"{{[key: {get_field_type_for_ts(field_type.__args__[0], context_suffix)}]: {get_field_type_for_ts(field_type.__args__[1], context_suffix)}}}"
+        return f"{{[key: {get_field_type_for_ts(field_type.__args__[0], context_suffix, type_mapping)}]: {get_field_type_for_ts(field_type.__args__[1], context_suffix, type_mapping)}}}"
     if inspect.isclass(field_type):
         if not hasattr(field_type, "__pydantic_generic_metadata__"):
             # Check if this is a split model and use appropriate suffix
@@ -398,7 +426,12 @@ def get_field_type_for_ts(field_type: Any, context_suffix: str = "") -> Any:
         if len(args) > 0:
             return "%s<%s>" % (
                 name,
-                ", ".join([get_field_type_for_ts(arg, context_suffix) for arg in args]),
+                ", ".join(
+                    [
+                        get_field_type_for_ts(arg, context_suffix, type_mapping)
+                        for arg in args
+                    ]
+                ),
             )
 
         return name
@@ -409,7 +442,10 @@ def get_field_type_for_ts(field_type: Any, context_suffix: str = "") -> Any:
         return " | ".join([parse_literal_value(x) for x in field_type.__args__])
     if get_origin(field_type) == UnionType or get_origin(field_type) == typing.Union:
         return " | ".join(
-            [get_field_type_for_ts(x, context_suffix) for x in field_type.__args__]
+            [
+                get_field_type_for_ts(x, context_suffix, type_mapping)
+                for x in field_type.__args__
+            ]
         )
     if (get_origin(field_type) == Annotated) and (len(field_type.__args__) > 0):
         unwrapped_type, all_metadata = unwrap_annotated_type(field_type)
@@ -421,9 +457,9 @@ def get_field_type_for_ts(field_type: Any, context_suffix: str = "") -> Any:
             )
         ) is not None:
             return get_field_type_for_ts(
-                plain_validator.json_schema_input_type, context_suffix
+                plain_validator.json_schema_input_type, context_suffix, type_mapping
             )
-        return get_field_type_for_ts(unwrapped_type, context_suffix)
+        return get_field_type_for_ts(unwrapped_type, context_suffix, type_mapping)
     return "unknown"
 
 
@@ -840,6 +876,9 @@ def write_rest_controller_to_typescript_interface(
 
     mapped_types: set[Any] = set()
 
+    # Compute type mapping for generics
+    type_mapping = get_generic_type_mapping(controller)
+
     # Sort members for consistent output
     member_items = sorted(
         inspect.getmembers(controller, predicate=inspect.isfunction), key=lambda x: x[0]
@@ -862,10 +901,12 @@ def write_rest_controller_to_typescript_interface(
             mapped_types.update(extract_all_envolved_types(return_type))
 
             # For return types, use Output suffix if it's a split model
-            return_value_repr = get_field_type_for_ts(return_type, "Output")
+            return_value_repr = get_field_type_for_ts(
+                return_type, "Output", type_mapping
+            )
 
             arg_params_spec, parametes_mapped_types = extract_parameters(
-                member, rest_controller, mapping
+                member, rest_controller, mapping, type_mapping
             )
 
             # Collect middleware parameters separately
@@ -1280,7 +1321,10 @@ def mount_parametes_arguments(parameters: list[HttpParemeterSpec]) -> str:
 
 
 def extract_parameters(
-    member: Any, controller: RestController, mapping: HttpMapping
+    member: Any,
+    controller: RestController,
+    mapping: HttpMapping,
+    type_mapping: dict[Any, Any] | None = None,
 ) -> tuple[list[HttpParemeterSpec], set[Any]]:
     parameters_list: list[HttpParemeterSpec] = []
     mapped_types: set[Any] = set()
@@ -1289,7 +1333,7 @@ def extract_parameters(
             if is_primitive(arg):
                 continue
             rec_parameters, rec_mapped_types = extract_parameters(
-                arg, controller, mapping
+                arg, controller, mapping, type_mapping
             )
             mapped_types.update(rec_mapped_types)
             parameters_list.extend(rec_parameters)
@@ -1307,14 +1351,14 @@ def extract_parameters(
             ) is not None:
                 mapped_types.add(plain_validator.json_schema_input_type)
                 return parameters_list, mapped_types
-            return extract_parameters(unwrapped_type, controller, mapping)
+            return extract_parameters(unwrapped_type, controller, mapping, type_mapping)
         return parameters_list, mapped_types
 
     if hasattr(member, "__bases__"):
         for base in member.__bases__:
             # if base is not BaseModel:
             rec_parameters, rec_mapped_types = extract_parameters(
-                base, controller, mapping
+                base, controller, mapping, type_mapping
             )
             mapped_types.update(rec_mapped_types)
             parameters_list.extend(rec_parameters)
@@ -1325,6 +1369,10 @@ def extract_parameters(
                 continue
             if parameter_type in EXCLUDED_REQUESTS_TYPES:
                 continue
+
+            # Resolve generic type
+            if type_mapping and parameter_type in type_mapping:
+                parameter_type = type_mapping[parameter_type]
 
             if get_origin(parameter_type) == Annotated:
                 unwrapped_type, all_metadata = unwrap_annotated_type(parameter_type)
@@ -1349,7 +1397,9 @@ def extract_parameters(
                             type_="header",
                             name=parameter_name,
                             required=True,
-                            argument_type_str=get_field_type_for_ts(str),
+                            argument_type_str=get_field_type_for_ts(
+                                str, "", type_mapping
+                            ),
                         )
                     )
                 elif isinstance(annotated_type_hook, Cookie):
@@ -1359,7 +1409,9 @@ def extract_parameters(
                             type_="cookie",
                             name=parameter_name,
                             required=True,
-                            argument_type_str=get_field_type_for_ts(str),
+                            argument_type_str=get_field_type_for_ts(
+                                str, "", type_mapping
+                            ),
                         )
                     )
                 elif isinstance(annotated_type_hook, Form):
@@ -1369,7 +1421,9 @@ def extract_parameters(
                             type_="form",
                             name=parameter_name,
                             required=True,
-                            argument_type_str=get_field_type_for_ts(annotated_type),
+                            argument_type_str=get_field_type_for_ts(
+                                annotated_type, "", type_mapping
+                            ),
                         )
                     )
                 elif isinstance(annotated_type_hook, Body):
@@ -1390,7 +1444,7 @@ def extract_parameters(
                             name=parameter_name,
                             required=True,
                             argument_type_str=get_field_type_for_ts(
-                                parameter_type, context_suffix
+                                parameter_type, context_suffix, type_mapping
                             ),
                         )
                     )
@@ -1412,7 +1466,7 @@ def extract_parameters(
                             name=parameter_name,
                             required=True,
                             argument_type_str=get_field_type_for_ts(
-                                parameter_type, context_suffix
+                                parameter_type, context_suffix, type_mapping
                             ),
                         )
                     )
@@ -1434,7 +1488,7 @@ def extract_parameters(
                             name=parameter_name,
                             required=True,
                             argument_type_str=get_field_type_for_ts(
-                                parameter_type, context_suffix
+                                parameter_type, context_suffix, type_mapping
                             ),
                         )
                     )
@@ -1449,7 +1503,7 @@ def extract_parameters(
 
                     else:
                         rec_parameters, rec_mapped_types = extract_parameters(
-                            depends_hook, controller, mapping
+                            depends_hook, controller, mapping, type_mapping
                         )
                         mapped_types.update(rec_mapped_types)
                         parameters_list.extend(rec_parameters)
@@ -1473,7 +1527,7 @@ def extract_parameters(
                             name=parameter_name,
                             required=True,
                             argument_type_str=get_field_type_for_ts(
-                                annotated_type, context_suffix
+                                annotated_type, context_suffix, type_mapping
                             ),
                         )
                     )
@@ -1486,7 +1540,9 @@ def extract_parameters(
                                 type_="form",
                                 name=parameter_name,
                                 required=True,
-                                argument_type_str=get_field_type_for_ts(annotated_type),
+                                argument_type_str=get_field_type_for_ts(
+                                    annotated_type, "", type_mapping
+                                ),
                             )
                         )
                     else:
@@ -1506,7 +1562,7 @@ def extract_parameters(
                                 name=parameter_name,
                                 required=True,
                                 argument_type_str=get_field_type_for_ts(
-                                    annotated_type, context_suffix
+                                    annotated_type, context_suffix, type_mapping
                                 ),
                             )
                         )
@@ -1525,7 +1581,7 @@ def extract_parameters(
                         name=parameter_name,
                         required=True,
                         argument_type_str=get_field_type_for_ts(
-                            parameter_type, context_suffix
+                            parameter_type, context_suffix, type_mapping
                         ),
                     )
                 )
@@ -1537,7 +1593,9 @@ def extract_parameters(
                         type_="form",
                         name=parameter_name,
                         required=True,
-                        argument_type_str=get_field_type_for_ts(parameter_type),
+                        argument_type_str=get_field_type_for_ts(
+                            parameter_type, "", type_mapping
+                        ),
                     )
                 )
             elif (
@@ -1562,7 +1620,7 @@ def extract_parameters(
                         name=parameter_name,
                         required=True,
                         argument_type_str=get_field_type_for_ts(
-                            parameter_type, context_suffix
+                            parameter_type, context_suffix, type_mapping
                         ),
                     )
                 )
@@ -1575,7 +1633,9 @@ def extract_parameters(
                             type_="form",
                             name=parameter_name,
                             required=True,
-                            argument_type_str=get_field_type_for_ts(parameter_type),
+                            argument_type_str=get_field_type_for_ts(
+                                parameter_type, "", type_mapping
+                            ),
                         )
                     )
                 else:
@@ -1595,7 +1655,7 @@ def extract_parameters(
                             name=parameter_name,
                             required=True,
                             argument_type_str=get_field_type_for_ts(
-                                parameter_type, context_suffix
+                                parameter_type, context_suffix, type_mapping
                             ),
                         )
                     )
@@ -1630,7 +1690,7 @@ def extract_parameters(
                         else:
                             continue
                     _, types = extract_parameters(
-                        parameter_type.annotation, controller, mapping
+                        parameter_type.annotation, controller, mapping, type_mapping
                     )
                     mapped_types.update(types)
 
@@ -1638,7 +1698,7 @@ def extract_parameters(
         for arg in member.__args__:
 
             rec_parameters, rec_mapped_types = extract_parameters(
-                arg, controller, mapping
+                arg, controller, mapping, type_mapping
             )
             mapped_types.update(rec_mapped_types)
             parameters_list.extend(rec_parameters)
