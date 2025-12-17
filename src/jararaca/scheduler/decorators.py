@@ -5,18 +5,18 @@
 import inspect
 from dataclasses import dataclass
 from types import FunctionType
-from typing import Any, Awaitable, Callable, TypeVar, cast
+from typing import Any, Awaitable, Callable, TypeVar
 
 from jararaca.reflect.controller_inspect import (
     ControllerMemberReflect,
     inspect_controller,
 )
+from jararaca.reflect.decorators import StackableDecorator
 
 DECORATED_FUNC = TypeVar("DECORATED_FUNC", bound=Callable[..., Any])
 
 
-class ScheduledAction:
-    SCHEDULED_ACTION_ATTR = "__scheduled_action__"
+class ScheduledAction(StackableDecorator):
 
     def __init__(
         self,
@@ -67,23 +67,6 @@ class ScheduledAction:
         An optional name for the scheduled action, used for filtering which actions to run.
         """
 
-    def __call__(self, func: DECORATED_FUNC) -> DECORATED_FUNC:
-        ScheduledAction.register(func, self)
-        return func
-
-    @staticmethod
-    def register(func: DECORATED_FUNC, scheduled_action: "ScheduledAction") -> None:
-        setattr(func, ScheduledAction.SCHEDULED_ACTION_ATTR, scheduled_action)
-
-    @staticmethod
-    def get_scheduled_action(func: DECORATED_FUNC) -> "ScheduledAction | None":
-        if not hasattr(func, ScheduledAction.SCHEDULED_ACTION_ATTR):
-            return None
-
-        return cast(
-            ScheduledAction, getattr(func, ScheduledAction.SCHEDULED_ACTION_ATTR)
-        )
-
     @staticmethod
     def get_function_id(
         func: Callable[..., Any],
@@ -118,7 +101,7 @@ def get_type_scheduled_actions(
     scheduled_actions: list[ScheduledActionData] = []
 
     for name, member in members:
-        scheduled_action = ScheduledAction.get_scheduled_action(member)
+        scheduled_action = ScheduledAction.get_last(member)
 
         if scheduled_action is None:
             continue

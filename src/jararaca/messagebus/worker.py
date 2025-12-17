@@ -1466,7 +1466,7 @@ class MessageHandlerCallback:
 
         builded_message = AioPikaMessage(aio_pika_message, message_type)
 
-        incoming_message_spec = MessageHandler.get_message_incoming(handler)
+        incoming_message_spec = MessageHandler.get_last(handler)
         assert incoming_message_spec is not None
 
         with provide_implicit_headers(aio_pika_message.headers), provide_shutdown_state(
@@ -1614,7 +1614,7 @@ class MessageBusWorker:
         with providing_app_type("worker"):
             async with self.lifecycle():
                 for instance_class in self.app.controllers:
-                    controller = MessageBusController.get_messagebus(instance_class)
+                    controller = MessageBusController.get_last(instance_class)
 
                     if controller is None:
                         continue

@@ -27,7 +27,7 @@ class TestMessageHandlerDecorator:
             async def handle_test(self, message: MessageOf[SampleTestMessage]) -> None:
                 pass
 
-        handler = MessageHandler.get_message_incoming(TestController.handle_test)
+        handler = MessageHandler.get_last(TestController.handle_test)
         assert handler is not None
         assert handler.message_type == SampleTestMessage
         assert handler.auto_ack is True
@@ -41,7 +41,7 @@ class TestMessageHandlerDecorator:
             async def handle_test(self, message: MessageOf[SampleTestMessage]) -> None:
                 pass
 
-        handler = MessageHandler.get_message_incoming(TestController.handle_test)
+        handler = MessageHandler.get_last(TestController.handle_test)
         assert handler is not None
         assert handler.timeout == 30
 
@@ -54,7 +54,7 @@ class TestMessageHandlerDecorator:
             async def handle_tests(self, message: MessageOf[SampleTestMessage]) -> None:
                 pass
 
-        handler = MessageHandler.get_message_incoming(TestController.handle_tests)
+        handler = MessageHandler.get_last(TestController.handle_tests)
         assert handler is not None
         assert handler.requeue_on_exception is True
 
@@ -67,7 +67,7 @@ class TestMessageHandlerDecorator:
             async def handle_test(self, message: MessageOf[SampleTestMessage]) -> None:
                 pass
 
-        handler = MessageHandler.get_message_incoming(TestController.handle_test)
+        handler = MessageHandler.get_last(TestController.handle_test)
         assert handler is not None
         assert handler.name == "custom_handler"
 
@@ -77,7 +77,7 @@ class TestMessageHandlerDecorator:
         async def not_a_handler(message: MessageOf[SampleTestMessage]) -> None:
             pass
 
-        assert MessageHandler.get_message_incoming(not_a_handler) is None  # type: ignore[arg-type]
+        assert MessageHandler.get_last(not_a_handler) is None
 
 
 class TestMessageBusControllerDecorator:
@@ -92,4 +92,4 @@ class TestMessageBusControllerDecorator:
             async def handle_test(self, message: MessageOf[SampleTestMessage]) -> None:
                 pass
 
-        assert hasattr(TestController, MessageBusController.MESSAGEBUS_ATTR)
+        assert hasattr(TestController, MessageBusController._ATTR_NAME)

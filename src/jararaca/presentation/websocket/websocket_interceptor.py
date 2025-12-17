@@ -249,7 +249,7 @@ class WebSocketInterceptor(AppInterceptor, AppInterceptorWithLifecycle):
 
         for controller_type in app.controllers:
 
-            rest_controller = RestController.get_controller(controller_type)
+            rest_controller = RestController.get_last(controller_type)
             controller: Any = container.get_by_type(controller_type)
 
             members = inspect.getmembers_static(
@@ -257,7 +257,7 @@ class WebSocketInterceptor(AppInterceptor, AppInterceptorWithLifecycle):
             )
 
             for name, member in members:
-                if (ws_endpoint := WebSocketEndpoint.get(member)) is not None:
+                if (ws_endpoint := WebSocketEndpoint.get_last(member)) is not None:
                     final_path = (
                         rest_controller.path + ws_endpoint.path
                         if rest_controller
@@ -265,7 +265,7 @@ class WebSocketInterceptor(AppInterceptor, AppInterceptorWithLifecycle):
                     )
 
                     route_dependencies: list[Depends] = []
-                    for middlewares_by_hook in UseMiddleware.get_middlewares(
+                    for middlewares_by_hook in UseMiddleware.get(
                         getattr(controller_type, name)
                     ):
                         middleware_instance = container.get_by_type(
@@ -275,9 +275,7 @@ class WebSocketInterceptor(AppInterceptor, AppInterceptorWithLifecycle):
                             Depends(middleware_instance.intercept)
                         )
 
-                    for dependency in UseDependency.get_dependencies(
-                        getattr(controller_type, name)
-                    ):
+                    for dependency in UseDependency.get(getattr(controller_type, name)):
                         route_dependencies.append(DependsF(dependency.dependency))
 
                     api_router.add_api_websocket_route(

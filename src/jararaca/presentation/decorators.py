@@ -2,10 +2,11 @@
 #
 # SPDX-License-Identifier: GPL-3.0-or-later
 
+import inspect
 from contextlib import contextmanager
 from contextvars import ContextVar
 from functools import wraps
-from typing import Any, Awaitable, Callable, Literal, Mapping, Protocol, TypeVar, cast
+from typing import Any, Awaitable, Callable, Literal, Mapping, Protocol, TypeVar
 
 from fastapi import APIRouter
 from fastapi import Depends as DependsF
@@ -19,10 +20,10 @@ from jararaca.reflect.controller_inspect import (
     ControllerMemberReflect,
     inspect_controller,
 )
+from jararaca.reflect.decorators import DECORATED_T, StackableDecorator
 
 DECORATED_TYPE = TypeVar("DECORATED_TYPE", bound=Any)
 DECORATED_FUNC = TypeVar("DECORATED_FUNC", bound=Callable[..., Any])
-DECORATED_CLASS = TypeVar("DECORATED_CLASS", bound=Any)
 
 
 ControllerOptions = Mapping[str, Any]
@@ -33,7 +34,7 @@ class RouterFactory(Protocol):
     def __call__(self, lifecycle: AppLifecycle, instance: Any) -> APIRouter: ...
 
 
-class RestController:
+class RestController(StackableDecorator):
     REST_CONTROLLER_ATTR = "__rest_controller__"
 
     def __init__(
@@ -50,6 +51,8 @@ class RestController:
         self.options = options
         self.router_factory = router_factory
         self.middlewares = middlewares
+        self.class_inherits_decorators = class_inherits_decorators
+        self.methods_inherit_decorators = methods_inherit_decorators
 
     def get_router_factory(
         self,
@@ -58,12 +61,15 @@ class RestController:
             raise Exception("Router factory is not set")
         return self.router_factory
 
-    def __call__(self, cls: type[DECORATED_CLASS]) -> type[DECORATED_CLASS]:
+    def post_decorated(self, subject: DECORATED_T) -> None:
 
         def router_factory(
             lifecycle: AppLifecycle,
-            instance: DECORATED_CLASS,
+            instance: DECORATED_T,
         ) -> APIRouter:
+            assert inspect.isclass(
+                subject
+            ), "RestController can only be applied to classes"
             dependencies: list[Depends] = []
 
             for self_middleware_type in self.middlewares:
@@ -72,13 +78,19 @@ class RestController:
                 )
                 dependencies.append(Depends(middleware_instance.intercept))
 
-            for middlewares_by_hook in UseMiddleware.get_middlewares(instance):
+            class_middlewares = UseMiddleware.get_all_from_type(
+                subject, self.class_inherits_decorators
+            )
+            for middlewares_by_hook in class_middlewares:
                 middleware_instance = lifecycle.container.get_by_type(
                     middlewares_by_hook.middleware
                 )
                 dependencies.append(Depends(middleware_instance.intercept))
 
-            for dependency in UseDependency.get_dependencies(instance):
+            class_dependencies = UseDependency.get_all_from_type(
+                subject, self.class_inherits_decorators
+            )
+            for dependency in class_dependencies:
                 dependencies.append(DependsF(dependency.dependency))
 
             router = APIRouter(
@@ -87,15 +99,23 @@ class RestController:
                 **(self.options or {}),
             )
 
-            controller, members = inspect_controller(cls)
+            controller, members = inspect_controller(subject)
 
             router_members = [
                 (name, mapping, member)
                 for name, member in members.items()
                 if (
-                    mapping := (
-                        HttpMapping.get_http_mapping(member.member_function)
-                        or WebSocketEndpoint.get(member.member_function)
+                    mapping := HttpMapping.get_bound_from_method(
+                        subject,
+                        name,
+                        self.methods_inherit_decorators,
+                        last=True,
+                    )
+                    or WebSocketEndpoint.get_bound_from_method(
+                        subject,
+                        name,
+                        self.methods_inherit_decorators,
+                        last=True,
                     )
                 )
                 is not None
@@ -105,17 +125,22 @@ class RestController:
 
             for name, mapping, member in router_members:
                 route_dependencies: list[Depends] = []
-                for middlewares_by_hook in UseMiddleware.get_middlewares(
-                    getattr(instance, name)
-                ):
+
+                method_middlewares = UseMiddleware.get_all_from_method(
+                    subject, name, self.methods_inherit_decorators
+                )
+                for middlewares_by_hook in method_middlewares:
                     middleware_instance = lifecycle.container.get_by_type(
                         middlewares_by_hook.middleware
                     )
                     route_dependencies.append(Depends(middleware_instance.intercept))
 
-                for dependency in UseDependency.get_dependencies(
-                    getattr(instance, name)
-                ):
+                method_dependencies = UseDependency.get_all_from_method(
+                    subject,
+                    name,
+                    self.methods_inherit_decorators,
+                )
+                for dependency in method_dependencies:
                     route_dependencies.append(DependsF(dependency.dependency))
 
                 instance_method = getattr(instance, name)
@@ -149,21 +174,6 @@ class RestController:
 
         self.router_factory = router_factory
 
-        RestController.register(cls, self)
-
-        return cls
-
-    @staticmethod
-    def register(cls: type[DECORATED_CLASS], controller: "RestController") -> None:
-        setattr(cls, RestController.REST_CONTROLLER_ATTR, controller)
-
-    @staticmethod
-    def get_controller(cls: type[DECORATED_CLASS]) -> "RestController | None":
-        if not hasattr(cls, RestController.REST_CONTROLLER_ATTR):
-            return None
-
-        return cast(RestController, getattr(cls, RestController.REST_CONTROLLER_ATTR))
-
 
 Options = dict[str, Any]
 
@@ -178,9 +188,8 @@ ResponseType = Literal[
 ]
 
 
-class HttpMapping:
+class HttpMapping(StackableDecorator):
 
-    HTTP_MAPPING_ATTR = "__http_mapping__"
     ORDER_COUNTER = 0
 
     def __init__(
@@ -198,24 +207,20 @@ class HttpMapping:
         HttpMapping.ORDER_COUNTER += 1
         self.order = HttpMapping.ORDER_COUNTER
 
-    def __call__(self, func: DECORATED_FUNC) -> DECORATED_FUNC:
+    @classmethod
+    def decorator_key(cls) -> "type[HttpMapping]":
+        return HttpMapping
 
-        HttpMapping.register(func, self)
+    # def __call__(self, func: DECORATED_FUNC) -> DECORATED_FUNC:
 
-        return func
+    #     HttpMapping.register(func, self)
 
-    @staticmethod
-    def register(func: DECORATED_FUNC, mapping: "HttpMapping") -> None:
+    #     return func
 
-        setattr(func, HttpMapping.HTTP_MAPPING_ATTR, mapping)
+    # @staticmethod
+    # def register(func: DECORATED_FUNC, mapping: "HttpMapping") -> None:
 
-    @staticmethod
-    def get_http_mapping(func: DECORATED_FUNC) -> "HttpMapping | None":
-
-        if not hasattr(func, HttpMapping.HTTP_MAPPING_ATTR):
-            return None
-
-        return cast(HttpMapping, getattr(func, HttpMapping.HTTP_MAPPING_ATTR))
+    #     setattr(func, HttpMapping.HTTP_MAPPING_ATTR, mapping)
 
 
 class Post(HttpMapping):
@@ -273,52 +278,16 @@ class Patch(HttpMapping):
         super().__init__("PATCH", path, options, response_type)
 
 
-class UseMiddleware:
-
-    __MIDDLEWARES_ATTR__ = "__middlewares__"
+class UseMiddleware(StackableDecorator):
 
     def __init__(self, middleware: type[HttpMiddleware]) -> None:
         self.middleware = middleware
 
-    def __call__(self, subject: DECORATED_FUNC) -> DECORATED_FUNC:
 
-        UseMiddleware.register(subject, self)
-
-        return subject
-
-    @staticmethod
-    def register(subject: DECORATED_FUNC, middleware: "UseMiddleware") -> None:
-        middlewares = getattr(subject, UseMiddleware.__MIDDLEWARES_ATTR__, [])
-        middlewares.append(middleware)
-        setattr(subject, UseMiddleware.__MIDDLEWARES_ATTR__, middlewares)
-
-    @staticmethod
-    def get_middlewares(subject: DECORATED_FUNC) -> list["UseMiddleware"]:
-        return getattr(subject, UseMiddleware.__MIDDLEWARES_ATTR__, [])
-
-
-class UseDependency:
-
-    __DEPENDENCY_ATTR__ = "__dependencies__"
+class UseDependency(StackableDecorator):
 
     def __init__(self, dependency: Any) -> None:
         self.dependency = dependency
-
-    def __call__(self, subject: DECORATED_FUNC) -> DECORATED_FUNC:
-
-        UseDependency.register(subject, self)
-
-        return subject
-
-    @staticmethod
-    def register(subject: DECORATED_FUNC, dependency: "UseDependency") -> None:
-        dependencies = getattr(subject, UseDependency.__DEPENDENCY_ATTR__, [])
-        dependencies.append(dependency)
-        setattr(subject, UseDependency.__DEPENDENCY_ATTR__, dependencies)
-
-    @staticmethod
-    def get_dependencies(subject: DECORATED_FUNC) -> list["UseDependency"]:
-        return getattr(subject, UseDependency.__DEPENDENCY_ATTR__, [])
 
 
 def compose_route_decorators(

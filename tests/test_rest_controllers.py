@@ -16,7 +16,7 @@ class TestRestControllerDecorator:
         class TestController:
             pass
 
-        rest_controller = RestController.get_controller(TestController)
+        rest_controller = RestController.get_last(TestController)
         assert rest_controller is not None
         assert rest_controller.path == "/api/test"
 
@@ -27,7 +27,7 @@ class TestRestControllerDecorator:
         class TestController:
             pass
 
-        rest_controller = RestController.get_controller(TestController)
+        rest_controller = RestController.get_last(TestController)
         assert rest_controller is not None
         assert rest_controller.options == {"tags": ["test"]}
 
@@ -37,7 +37,7 @@ class TestRestControllerDecorator:
         class NotAController:
             pass
 
-        assert RestController.get_controller(NotAController) is None
+        assert RestController.get_last(NotAController) is None
 
 
 class TestHttpMethodDecorators:
@@ -52,7 +52,7 @@ class TestHttpMethodDecorators:
             async def get_items(self) -> list[str]:
                 return ["item1", "item2"]
 
-        mapping = HttpMapping.get_http_mapping(TestController.get_items)
+        mapping = HttpMapping.get_last(TestController.get_items)
         assert mapping is not None
         assert mapping.method == "GET"
         assert mapping.path == "/items"
@@ -66,7 +66,7 @@ class TestHttpMethodDecorators:
             async def create_item(self) -> dict[str, str]:
                 return {"status": "created"}
 
-        mapping = HttpMapping.get_http_mapping(TestController.create_item)
+        mapping = HttpMapping.get_last(TestController.create_item)
         assert mapping is not None
         assert mapping.method == "POST"
         assert mapping.path == "/items"
@@ -80,7 +80,7 @@ class TestHttpMethodDecorators:
             async def download_file(self) -> bytes:
                 return b"file content"
 
-        mapping = HttpMapping.get_http_mapping(TestController.download_file)
+        mapping = HttpMapping.get_last(TestController.download_file)
         assert mapping is not None
         assert mapping.response_type == "blob"
 
@@ -101,9 +101,9 @@ class TestHttpMethodDecorators:
             async def create_user(self) -> dict[str, str]:
                 return {"status": "created"}
 
-        list_mapping = HttpMapping.get_http_mapping(UserController.list_users)
-        get_mapping = HttpMapping.get_http_mapping(UserController.get_user)
-        create_mapping = HttpMapping.get_http_mapping(UserController.create_user)
+        list_mapping = HttpMapping.get_last(UserController.list_users)
+        get_mapping = HttpMapping.get_last(UserController.get_user)
+        create_mapping = HttpMapping.get_last(UserController.create_user)
 
         assert list_mapping is not None
         assert get_mapping is not None

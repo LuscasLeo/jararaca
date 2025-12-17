@@ -2,26 +2,21 @@
 #
 # SPDX-License-Identifier: GPL-3.0-or-later
 
+
 import inspect
 from dataclasses import dataclass
-from typing import Any, Awaitable, Callable, Generic, TypeVar, cast
+from typing import Any, Awaitable, Callable
 
-from jararaca.messagebus.message import INHERITS_MESSAGE_CO, Message, MessageOf
+from jararaca.messagebus.message import INHERITS_MESSAGE_CO
 from jararaca.reflect.controller_inspect import (
     ControllerMemberReflect,
     inspect_controller,
 )
+from jararaca.reflect.decorators import DECORATED_T, StackableDecorator
 from jararaca.scheduler.decorators import ScheduledAction, ScheduledActionData
 
-DECORATED_FUNC = TypeVar("DECORATED_FUNC", bound=Callable[..., Any])
-DECORATED_T = TypeVar("DECORATED_T", bound=Any)
-INSTANCE_T = TypeVar("INSTANCE_T", bound=Any)
-RETURN_T = TypeVar("RETURN_T", bound=Any)
 
-
-class MessageHandler(Generic[INHERITS_MESSAGE_CO]):
-
-    MESSAGE_INCOMING_ATTR = "__message_incoming__"
+class MessageHandler(StackableDecorator):
 
     def __init__(
         self,
@@ -40,39 +35,11 @@ class MessageHandler(Generic[INHERITS_MESSAGE_CO]):
         self.auto_ack = auto_ack
         self.name = name
 
-    def __call__(
-        self,
-        func: Callable[[INSTANCE_T, MessageOf[INHERITS_MESSAGE_CO]], Awaitable[None]],
-    ) -> Callable[[INSTANCE_T, MessageOf[INHERITS_MESSAGE_CO]], Awaitable[None]]:
-
-        MessageHandler[Any].register(func, self)
-
-        return func
-
-    @staticmethod
-    def register(
-        func: Callable[[Any, MessageOf[INHERITS_MESSAGE_CO]], Awaitable[None]],
-        message_incoming: "MessageHandler[Any]",
-    ) -> None:
-
-        setattr(func, MessageHandler.MESSAGE_INCOMING_ATTR, message_incoming)
-
-    @staticmethod
-    def get_message_incoming(
-        func: Callable[[Any, MessageOf[Any]], Awaitable[None]],
-    ) -> "MessageHandler[Message] | None":
-        if not hasattr(func, MessageHandler.MESSAGE_INCOMING_ATTR):
-            return None
-
-        return cast(
-            MessageHandler[Message], getattr(func, MessageHandler.MESSAGE_INCOMING_ATTR)
-        )
-
 
 @dataclass(frozen=True)
 class MessageHandlerData:
     message_type: type[Any]
-    spec: MessageHandler[Message]
+    spec: MessageHandler
     instance_callable: Callable[..., Awaitable[None]]
     controller_member: ControllerMemberReflect
 
@@ -87,15 +54,21 @@ SCHEDULED_ACTION_DATA_SET = set[ScheduledActionData]
 MESSAGE_HANDLER_DATA_SET = set[MessageHandlerData]
 
 
-class MessageBusController:
+class MessageBusController(StackableDecorator):
 
-    MESSAGEBUS_ATTR = "__messagebus__"
-
-    def __init__(self) -> None:
+    def __init__(
+        self,
+        *,
+        inherit_class_decorators: bool = True,
+        inherit_methods_decorators: bool = True,
+    ) -> None:
         self.messagebus_factory: (
             Callable[[Any], tuple[MESSAGE_HANDLER_DATA_SET, SCHEDULED_ACTION_DATA_SET]]
             | None
         ) = None
+
+        self.inherit_class_decorators = inherit_class_decorators
+        self.inherit_methods_decorators = inherit_methods_decorators
 
     def get_messagebus_factory(
         self,
@@ -106,7 +79,7 @@ class MessageBusController:
             raise Exception("MessageBus factory is not set")
         return self.messagebus_factory
 
-    def __call__(self, cls_t: type[DECORATED_T]) -> type[DECORATED_T]:
+    def post_decorated(self, subject: DECORATED_T) -> None:
 
         def messagebus_factory(
             instance: DECORATED_T,
@@ -115,13 +88,17 @@ class MessageBusController:
 
             schedulers: SCHEDULED_ACTION_DATA_SET = set()
 
-            _, members = inspect_controller(cls_t)
+            assert inspect.isclass(
+                subject
+            ), "MessageBusController can only be applied to classes"
+
+            _, members = inspect_controller(subject)
 
             for name, member in members.items():
-                message_handler_decoration = MessageHandler.get_message_incoming(
+                message_handler_decoration = MessageHandler.get_last(
                     member.member_function
                 )
-                scheduled_action_decoration = ScheduledAction.get_scheduled_action(
+                scheduled_action_decoration = ScheduledAction.get_last(
                     member.member_function
                 )
 
@@ -130,7 +107,7 @@ class MessageBusController:
                     if not inspect.iscoroutinefunction(member.member_function):
                         raise Exception(
                             "Message incoming handler '%s' from '%s.%s' must be a coroutine function"
-                            % (name, cls_t.__module__, cls_t.__qualname__)
+                            % (name, subject.__module__, subject.__qualname__)
                         )
 
                     handlers.add(
@@ -145,7 +122,7 @@ class MessageBusController:
                     if not inspect.iscoroutinefunction(member.member_function):
                         raise Exception(
                             "Scheduled action handler '%s' from '%s.%s' must be a coroutine function"
-                            % (name, cls_t.__module__, cls_t.__qualname__)
+                            % (name, subject.__module__, subject.__qualname__)
                         )
                     instance_callable = getattr(instance, name)
 
@@ -160,21 +137,3 @@ class MessageBusController:
             return handlers, schedulers
 
         self.messagebus_factory = messagebus_factory
-
-        MessageBusController.register(cls_t, self)
-
-        return cls_t
-
-    @staticmethod
-    def register(func: type[DECORATED_T], messagebus: "MessageBusController") -> None:
-
-        setattr(func, MessageBusController.MESSAGEBUS_ATTR, messagebus)
-
-    @staticmethod
-    def get_messagebus(func: type[DECORATED_T]) -> "MessageBusController | None":
-        if not hasattr(func, MessageBusController.MESSAGEBUS_ATTR):
-            return None
-
-        return cast(
-            MessageBusController, getattr(func, MessageBusController.MESSAGEBUS_ATTR)
-        )
