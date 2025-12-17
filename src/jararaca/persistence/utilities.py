@@ -4,6 +4,7 @@
 
 import asyncio
 import logging
+import math
 from datetime import UTC, date, datetime
 from functools import reduce
 from typing import (
@@ -33,6 +34,7 @@ from jararaca.persistence.base import (
     BaseEntity,
     recursive_get_dict,
 )
+from jararaca.persistence.interceptors.aiosqa_interceptor import use_session
 from jararaca.persistence.sort_filter import (
     FilterModel,
     FilterRuleApplier,
@@ -287,11 +289,13 @@ class QueryOperations(Generic[QUERY_FILTER_T, QUERY_ENTITY_T]):
     def __init__(
         self,
         entity_type: Type[QUERY_ENTITY_T],
-        session_provider: Callable[[], AsyncSession],
-        filters_functions: list[QueryInjector],
+        *,
+        session_provider: Callable[[], AsyncSession] = use_session,
+        filters_functions: list[QueryInjector] = [],
         unique: bool = False,
         sort_rule_applier: SortRuleApplier | None = None,
         filter_rule_applier: FilterRuleApplier | None = None,
+        base_statement: Select[Tuple[QUERY_ENTITY_T]] | None = None,
     ) -> None:
         self.entity_type: type[QUERY_ENTITY_T] = entity_type
         self.session_provider = session_provider
@@ -299,6 +303,7 @@ class QueryOperations(Generic[QUERY_FILTER_T, QUERY_ENTITY_T]):
         self.unique = unique
         self.sort_rule_applier = sort_rule_applier
         self.filter_rule_applier = filter_rule_applier
+        self.base_statement = base_statement
 
     @property
     def session(self) -> AsyncSession:
@@ -307,9 +312,15 @@ class QueryOperations(Generic[QUERY_FILTER_T, QUERY_ENTITY_T]):
     async def query(
         self,
         filter: QUERY_FILTER_T,
+        *,
         interceptors: list[
             Callable[[Select[Tuple[QUERY_ENTITY_T]]], Select[Tuple[QUERY_ENTITY_T]]]
         ] = [],
+        base_statement: (
+            Callable[[Select[Tuple[QUERY_ENTITY_T]]], Select[Tuple[QUERY_ENTITY_T]]]
+            | Select[Tuple[QUERY_ENTITY_T]]
+            | None
+        ) = None,
     ) -> "Paginated[QUERY_ENTITY_T]":
         """
         Executes a query with the provided filter and interceptors.
@@ -320,8 +331,15 @@ class QueryOperations(Generic[QUERY_FILTER_T, QUERY_ENTITY_T]):
             Paginated[QUERY_ENTITY_T]: A paginated result containing the items and metadata.
         """
 
+        initial_statement = self.base_statement or select(self.entity_type)
+
+        if base_statement and callable(base_statement):
+            initial_statement = base_statement(initial_statement)
+        elif base_statement and isinstance(base_statement, Select):
+            initial_statement = base_statement
+
         tier_one_filtered_query = self.generate_filtered_query(
-            filter, select(self.entity_type)
+            filter, initial_statement
         )
 
         tier_two_filtered_query = reduce(
@@ -375,7 +393,7 @@ class QueryOperations(Generic[QUERY_FILTER_T, QUERY_ENTITY_T]):
             items=result_scalars,
             total=len(result_scalars),
             unpaginated_total=unpaginated_total,
-            total_pages=int(unpaginated_total / filter.page_size) + 1,
+            total_pages=math.ceil(unpaginated_total / filter.page_size),
         )
 
     def judge_unique(
