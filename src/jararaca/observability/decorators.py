@@ -199,7 +199,9 @@ class TracedClass:
         trace_prefix = self.trace_name_prefix or cls.__name__
 
         # Get all methods in the class
-        for name, method in inspect.getmembers(cls, predicate=inspect.isfunction):
+        for name, method in inspect.getmembers_static(
+            cls, predicate=inspect.isfunction
+        ):
             # Skip if method should be excluded
             if name in self.exclude_methods:
                 continue

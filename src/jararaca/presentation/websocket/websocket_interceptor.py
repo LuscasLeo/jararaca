@@ -252,7 +252,9 @@ class WebSocketInterceptor(AppInterceptor, AppInterceptorWithLifecycle):
             rest_controller = RestController.get_controller(controller_type)
             controller: Any = container.get_by_type(controller_type)
 
-            members = inspect.getmembers(controller_type, predicate=inspect.isfunction)
+            members = inspect.getmembers_static(
+                controller_type, predicate=inspect.isfunction
+            )
 
             for name, member in members:
                 if (ws_endpoint := WebSocketEndpoint.get(member)) is not None:
