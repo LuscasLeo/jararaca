@@ -16,12 +16,13 @@ from typing import (
     Literal,
     Optional,
     Protocol,
-    Type,
     TypeVar,
     cast,
 )
 
 from pydantic import BaseModel
+
+from jararaca.reflect.decorators import StackableDecorator
 
 DECORATED_FUNC = TypeVar("DECORATED_FUNC", bound=Callable[..., Awaitable[Any]])
 DECORATED_CLASS = TypeVar("DECORATED_CLASS", bound=Any)
@@ -31,29 +32,12 @@ class TimeoutException(Exception):
     """Exception raised when a request times out"""
 
 
-class HttpMapping:
-
-    HTTP_MAPPING_ATTR = "__rest_http_client_mapping__"
+class HttpMapping(StackableDecorator):
 
     def __init__(self, method: str, path: str, success_statuses: Iterable[int] = [200]):
         self.method = method
         self.path = path
         self.success_statuses = success_statuses
-
-    def __call__(self, func: DECORATED_FUNC) -> DECORATED_FUNC:
-        HttpMapping.register(func, self)
-        return func
-
-    @staticmethod
-    def register(funf: DECORATED_FUNC, instance: "HttpMapping") -> None:
-        setattr(funf, HttpMapping.HTTP_MAPPING_ATTR, instance)
-
-    @staticmethod
-    def get(funf: DECORATED_FUNC) -> "HttpMapping | None":
-        if hasattr(funf, HttpMapping.HTTP_MAPPING_ATTR):
-            return cast(HttpMapping, getattr(funf, HttpMapping.HTTP_MAPPING_ATTR))
-
-        return None
 
 
 class Post(HttpMapping):
@@ -86,27 +70,7 @@ class Delete(HttpMapping):
         super().__init__("DELETE", path)
 
 
-class RequestAttribute:
-
-    REQUEST_ATTRIBUTE_ATTRS = "__request_attributes__"
-
-    @staticmethod
-    def register(cls: DECORATED_FUNC, instance: "RequestAttribute") -> None:
-
-        if not hasattr(cls, RequestAttribute.REQUEST_ATTRIBUTE_ATTRS):
-            setattr(cls, RequestAttribute.REQUEST_ATTRIBUTE_ATTRS, [])
-
-        getattr(cls, RequestAttribute.REQUEST_ATTRIBUTE_ATTRS).append(instance)
-
-    @staticmethod
-    def get(cls: DECORATED_FUNC) -> "list[RequestAttribute]":
-        if hasattr(cls, RequestAttribute.REQUEST_ATTRIBUTE_ATTRS):
-            return cast(
-                list[RequestAttribute],
-                getattr(cls, RequestAttribute.REQUEST_ATTRIBUTE_ATTRS),
-            )
-
-        return []
+class RequestAttribute(StackableDecorator):
 
     def __init__(
         self,
@@ -115,10 +79,6 @@ class RequestAttribute:
     ):
         self.attribute_type = attribute_type
         self.name = name
-
-    def __call__(self, cls: DECORATED_FUNC) -> DECORATED_FUNC:
-        RequestAttribute.register(cls, self)
-        return cls
 
 
 class Query(RequestAttribute):
@@ -246,29 +206,10 @@ class ResponseHook(Protocol):
     ) -> "HttpRPCResponse": ...
 
 
-class RestClient:
-
-    REST_CLIENT_ATTR = "__rest_client__"
+class RestClient(StackableDecorator):
 
     def __init__(self, base_path: str) -> None:
         self.base_path = base_path
-
-    @staticmethod
-    def register(cls: type, instance: "RestClient") -> None:
-        setattr(cls, RestClient.REST_CLIENT_ATTR, instance)
-
-    @staticmethod
-    def get(cls: type) -> "RestClient | None":
-        if hasattr(cls, RestClient.REST_CLIENT_ATTR):
-            return cast(RestClient, getattr(cls, RestClient.REST_CLIENT_ATTR))
-
-        return None
-
-    def __call__(self, cls: Type[DECORATED_CLASS]) -> Type[DECORATED_CLASS]:
-
-        RestClient.register(cls, self)
-
-        return cls
 
 
 @dataclass
@@ -315,66 +256,18 @@ class HandleHttpErrorCallback(Protocol):
     def __call__(self, request: HttpRPCRequest, response: HttpRPCResponse) -> Any: ...
 
 
-class GlobalHttpErrorHandler:
-
-    HTTP_ERROR_ATTR = "__global_http_error__"
+class GlobalHttpErrorHandler(StackableDecorator):
 
     def __init__(self, status_code: int, callback: HandleHttpErrorCallback):
         self.status_code = status_code
         self.callback = callback
 
-    def __call__(self, cls: Type[DECORATED_CLASS]) -> Type[DECORATED_CLASS]:
-        GlobalHttpErrorHandler.register(cls, self)
-        return cls
 
-    @staticmethod
-    def register(
-        cls: Type[DECORATED_CLASS], instance: "GlobalHttpErrorHandler"
-    ) -> None:
-        if not hasattr(cls, GlobalHttpErrorHandler.HTTP_ERROR_ATTR):
-            setattr(cls, GlobalHttpErrorHandler.HTTP_ERROR_ATTR, [])
-
-        getattr(cls, GlobalHttpErrorHandler.HTTP_ERROR_ATTR).append(instance)
-
-    @staticmethod
-    def get(cls: Type[DECORATED_CLASS]) -> "list[GlobalHttpErrorHandler]":
-        if hasattr(cls, GlobalHttpErrorHandler.HTTP_ERROR_ATTR):
-            return cast(
-                list[GlobalHttpErrorHandler],
-                getattr(cls, GlobalHttpErrorHandler.HTTP_ERROR_ATTR),
-            )
-
-        return []
-
-
-class RouteHttpErrorHandler:
-
-    ATTR = "__route_http_errors__"
+class RouteHttpErrorHandler(StackableDecorator):
 
     def __init__(self, status_code: int, callback: HandleHttpErrorCallback):
         self.status_code = status_code
         self.callback = callback
-
-    def __call__(self, cls: DECORATED_FUNC) -> DECORATED_FUNC:
-        RouteHttpErrorHandler.register(cls, self)
-        return cls
-
-    @staticmethod
-    def register(cls: DECORATED_FUNC, instance: "RouteHttpErrorHandler") -> None:
-        if not hasattr(cls, RouteHttpErrorHandler.ATTR):
-            setattr(cls, RouteHttpErrorHandler.ATTR, [])
-
-        getattr(cls, RouteHttpErrorHandler.ATTR).append(instance)
-
-    @staticmethod
-    def get(cls: DECORATED_FUNC) -> "list[RouteHttpErrorHandler]":
-        if hasattr(cls, RouteHttpErrorHandler.ATTR):
-            return cast(
-                list[RouteHttpErrorHandler],
-                getattr(cls, RouteHttpErrorHandler.ATTR),
-            )
-
-        return []
 
 
 class HttpRPCAsyncBackend(Protocol):
@@ -519,7 +412,7 @@ class HttpRpcClientBuilder:
         raise last_exception or Exception("Retry failed")
 
     def build(self, cls: type[T]) -> T:
-        rest_client = RestClient.get(cls)
+        rest_client = RestClient.get_last(cls)
 
         global_error_handlers = GlobalHttpErrorHandler.get(cls)
 
@@ -667,7 +560,7 @@ class HttpRpcClientBuilder:
         for attr_name, method_call in inspect.getmembers(
             cls, predicate=inspect.isfunction
         ):
-            if (mapping := HttpMapping.get(method_call)) is not None:
+            if (mapping := HttpMapping.get_last(method_call)) is not None:
                 route_error_handlers = RouteHttpErrorHandler.get(method_call)
                 setattr(
                     dummy,

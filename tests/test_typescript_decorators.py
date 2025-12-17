@@ -22,8 +22,8 @@ class TestSplitInputOutputDecorator:
         class TestModel(BaseModel):
             field: str
 
-        assert hasattr(TestModel, SplitInputOutput.METADATA_KEY)
-        assert getattr(TestModel, SplitInputOutput.METADATA_KEY) is True
+        assert hasattr(TestModel, SplitInputOutput._ATTR_NAME)
+        assert SplitInputOutput.get_last(TestModel) is not None
 
     def test_is_split_model_returns_true_for_decorated_class(self) -> None:
         """Test that is_split_model returns True for decorated classes."""
@@ -65,7 +65,7 @@ class TestQueryEndpointDecorator:
         def test_func() -> None:
             pass
 
-        assert hasattr(test_func, QueryEndpoint.METADATA_KEY)
+        assert hasattr(test_func, QueryEndpoint._ATTR_NAME)
 
     def test_query_endpoint_with_infinite_query(self) -> None:
         """Test @QueryEndpoint with has_infinite_query parameter."""
@@ -108,7 +108,7 @@ class TestMutationEndpointDecorator:
         def test_func() -> None:
             pass
 
-        assert hasattr(test_func, MutationEndpoint.METADATA_KEY)
+        assert hasattr(test_func, MutationEndpoint._ATTR_NAME)
 
     def test_is_mutation_returns_true_for_decorated_function(self) -> None:
         """Test that is_mutation returns True for decorated functions."""

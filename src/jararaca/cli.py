@@ -261,7 +261,7 @@ async def declare_controller_queues(
     Declare all message handler and scheduled action queues for controllers.
     """
     for instance_type in app.controllers:
-        controller_spec = MessageBusController.get_messagebus(instance_type)
+        controller_spec = MessageBusController.get_last(instance_type)
         if controller_spec is None:
             continue
 
@@ -271,7 +271,7 @@ async def declare_controller_queues(
         for _, member in members.items():
             # Check if it's a message handler
             await declare_message_handler_queue(
-                connection, member, exchange, force, interactive_mode
+                connection, member, exchange, force, interactive_mode, controller_spec
             )
 
             # Check if it's a scheduled action
@@ -286,11 +286,12 @@ async def declare_message_handler_queue(
     exchange: str,
     force: bool,
     interactive_mode: bool,
+    controller_spec: MessageBusController,
 ) -> None:
     """
     Declare a queue for a message handler if the member is one.
     """
-    message_handler = MessageHandler.get_message_incoming(member.member_function)
+    message_handler = MessageHandler.get_last(member.member_function)
     if message_handler is not None:
         queue_name = f"{message_handler.message_type.MESSAGE_TOPIC}.{member.member_function.__module__}.{member.member_function.__qualname__}"
         routing_key = f"{message_handler.message_type.MESSAGE_TOPIC}.#"
@@ -316,7 +317,7 @@ async def declare_scheduled_action_queue(
     """
     Declare a queue for a scheduled action if the member is one.
     """
-    scheduled_action = ScheduledAction.get_scheduled_action(member.member_function)
+    scheduled_action = ScheduledAction.get_last(member.member_function)
     if scheduled_action is not None:
         queue_name = (
             f"{member.member_function.__module__}.{member.member_function.__qualname__}"

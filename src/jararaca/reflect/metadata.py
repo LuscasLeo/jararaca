@@ -5,7 +5,9 @@
 from contextlib import contextmanager, suppress
 from contextvars import ContextVar
 from dataclasses import dataclass
-from typing import Any, Awaitable, Callable, Generator, Mapping, TypeVar, Union, cast
+from typing import Any, Awaitable, Callable, Generator, Mapping, TypeVar, Union
+
+from jararaca.reflect.decorators import StackableDecorator
 
 DECORATED = TypeVar("DECORATED", bound=Union[Callable[..., Awaitable[Any]], type])
 
@@ -68,23 +70,7 @@ def start_providing_metadata(
         yield
 
 
-class SetMetadata:
+class SetMetadata(StackableDecorator):
     def __init__(self, key: str, value: Any) -> None:
         self.key = key
         self.value = value
-
-    METATADA_LIST = "__metadata_list__"
-
-    @staticmethod
-    def register_metadata(cls: DECORATED, value: "SetMetadata") -> None:
-        metadata_list = getattr(cls, SetMetadata.METATADA_LIST, [])
-        metadata_list.append(value)
-        setattr(cls, SetMetadata.METATADA_LIST, metadata_list)
-
-    @staticmethod
-    def get(cls: DECORATED) -> "list[SetMetadata]":
-        return cast(list[SetMetadata], getattr(cls, SetMetadata.METATADA_LIST, []))
-
-    def __call__(self, cls: DECORATED) -> DECORATED:
-        SetMetadata.register_metadata(cls, self)
-        return cls

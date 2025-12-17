@@ -60,7 +60,7 @@ class AppConfigurationInterceptor(AppInterceptor, AppInterceptorWithLifecycle):
             *[
                 (config.token, config.config)
                 for controller in app.controllers
-                if (config := RequiresConfig.get(controller))
+                if (config := RequiresConfig.get_last(controller))
             ],
         ]
 

@@ -39,6 +39,10 @@ from jararaca.presentation.websocket.decorators import RegisterWebSocketMessage
 from jararaca.presentation.websocket.websocket_interceptor import (
     WebSocketMessageWrapper,
 )
+from jararaca.reflect.decorators import (
+    resolve_bound_method_decorator,
+    resolve_method_decorators,
+)
 from jararaca.tools.typescript.decorators import (
     ExposeType,
     MutationEndpoint,
@@ -706,7 +710,7 @@ def write_microservice_to_typescript_interface(
     mapped_types_set.update(ExposeType.get_all_exposed_types())
 
     for controller in microservice.controllers:
-        rest_controller = RestController.get_controller(controller)
+        rest_controller = RestController.get_last(controller)
 
         if rest_controller is None:
             continue
@@ -723,7 +727,7 @@ def write_microservice_to_typescript_interface(
         if hooks_strio is not None:
             rest_controller_buffer.write(hooks_strio.getvalue())
 
-        registered = RegisterWebSocketMessage.get(controller)
+        registered = RegisterWebSocketMessage.get_last(controller)
 
         if registered is not None:
             for message_type in registered.message_types:
@@ -885,18 +889,30 @@ def write_rest_controller_to_typescript_interface(
         key=lambda x: x[0],
     )
 
-    class_usemiddlewares = UseMiddleware.get_middlewares(controller)
+    class_usemiddlewares = UseMiddleware.get_all_from_type(
+        controller, rest_controller.class_inherits_decorators
+    )
 
     for name, member in member_items:
-        if (mapping := HttpMapping.get_http_mapping(member)) is not None:
+        mapping = resolve_bound_method_decorator(
+            controller, name, HttpMapping, rest_controller.methods_inherit_decorators
+        )
+        effective_member = member
+
+        if mapping is not None:
             return_type = member.__annotations__.get("return")
 
             if return_type is None:
                 return_type = NoneType
 
-            if query_endpoint := QueryEndpoint.extract_query_endpoint(member):
+            if query_endpoint := resolve_bound_method_decorator(
+                controller,
+                name,
+                QueryEndpoint,
+                rest_controller.methods_inherit_decorators,
+            ):
                 decorated_queries.append((name, member, query_endpoint))
-            if MutationEndpoint.is_mutation(member):
+            if MutationEndpoint.is_mutation(effective_member):
                 decorated_mutations.append((name, member))
 
             mapped_types.update(extract_all_envolved_types(return_type))
@@ -935,16 +951,20 @@ def write_rest_controller_to_typescript_interface(
 
             # Extract parameters from method-level middlewares (UseMiddleware)
             # Get the method from the class to access its middleware decorators
-            class_method = getattr(controller, name, None)
-            if class_method:
-                for middleware_instance in UseMiddleware.get_middlewares(class_method):
-                    middleware_params, middleware_mapped_types = (
-                        extract_middleware_parameters(
-                            middleware_instance.middleware, rest_controller, mapping
-                        )
+            method_middlewares = resolve_method_decorators(
+                controller,
+                name,
+                UseMiddleware,
+                rest_controller.methods_inherit_decorators,
+            )
+            for middleware_instance in method_middlewares:
+                middleware_params, middleware_mapped_types = (
+                    extract_middleware_parameters(
+                        middleware_instance.middleware, rest_controller, mapping
                     )
-                    middleware_params_list.extend(middleware_params)
-                    parametes_mapped_types.update(middleware_mapped_types)
+                )
+                middleware_params_list.extend(middleware_params)
+                parametes_mapped_types.update(middleware_mapped_types)
 
             # Combine parameters: middleware params first, then controller params
             arg_params_spec = middleware_params_list + arg_params_spec

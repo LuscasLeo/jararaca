@@ -50,7 +50,7 @@ class HttpAppLifecycle:
             async with self.lifecycle():
 
                 for controller_t in self.lifecycle.app.controllers:
-                    controller = RestController.get_controller(controller_t)
+                    controller = RestController.get_last(controller_t)
 
                     if controller is None:
                         continue
