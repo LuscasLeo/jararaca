@@ -368,11 +368,6 @@ def wraps_with_member_data(
 
             return await func(*args, **kwargs)
 
-    # Copy metadata from the original function to the wrapper
-    # for attr in dir(func):
-    #     if not attr.startswith("__"):
-    #         setattr(wrapper, attr, getattr(func, attr))
-
     return wrapper
 
 
