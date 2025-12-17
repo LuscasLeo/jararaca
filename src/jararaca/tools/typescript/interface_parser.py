@@ -652,7 +652,7 @@ def parse_single_typescript_interface(
 
     ## Loop over computed fields - sort them for consistent output
     members = sorted(
-        inspect.getmembers(basemodel_type, lambda a: isinstance(a, property)),
+        inspect.getmembers_static(basemodel_type, lambda a: isinstance(a, property)),
         key=lambda x: x[0],
     )
     for field_name, field in members:
@@ -881,7 +881,8 @@ def write_rest_controller_to_typescript_interface(
 
     # Sort members for consistent output
     member_items = sorted(
-        inspect.getmembers(controller, predicate=inspect.isfunction), key=lambda x: x[0]
+        inspect.getmembers_static(controller, predicate=inspect.isfunction),
+        key=lambda x: x[0],
     )
 
     class_usemiddlewares = UseMiddleware.get_middlewares(controller)

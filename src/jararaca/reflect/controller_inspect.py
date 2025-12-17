@@ -73,7 +73,9 @@ def inspect_controller(
                 }
             ),
         )
-        for name, member in inspect.getmembers(controller, predicate=inspect.isfunction)
+        for name, member in inspect.getmembers_static(
+            controller, predicate=inspect.isfunction
+        )
     }
 
     return controller_reflect, members

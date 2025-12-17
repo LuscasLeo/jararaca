@@ -110,10 +110,7 @@ def get_type_scheduled_actions(
 
     members: list[tuple[str, MethodType]] = []
     for name in dir(instance):
-        try:
-            value = getattr(instance, name)
-        except Exception:
-            continue
+        value = inspect.getattr_static(instance, name)
 
         if inspect.ismethod(value):
             members.append((name, value))
