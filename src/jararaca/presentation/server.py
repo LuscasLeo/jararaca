@@ -25,6 +25,7 @@ from jararaca.microservice import (
     providing_app_type,
 )
 from jararaca.presentation.decorators import RestController
+from jararaca.presentation.exceptions import PresentationException
 from jararaca.presentation.http_microservice import HttpMicroservice
 from jararaca.reflect.controller_inspect import ControllerMemberReflect
 
@@ -151,23 +152,12 @@ class HttpUowContextProviderDependency:
                 except HTTPException:
                     raise
                 except Exception as e:
-                    logger.exception("Unhandled exception in request handling.")
-                    raise HTTPException(
-                        status_code=500,
-                        detail={
-                            "message": "Internal server error occurred.",
-                            "x-traceparentid": (
-                                response.headers.get("traceparent")
-                                if response
-                                else None
-                            ),
-                        },
-                        headers=(
-                            {k: str(v) for k, v in response.headers.items()}
-                            if response
-                            else {}
-                        ),
-                    ) from e
+                    raise PresentationException(
+                        original_exception=e,
+                        request=request,
+                        response=response,
+                        websocket=websocket,
+                    )
 
 
 def create_http_server(
