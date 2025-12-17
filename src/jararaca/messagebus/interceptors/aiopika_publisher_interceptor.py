@@ -131,7 +131,7 @@ class AIOPikaConnectionFactory(MessageBusConnectionFactory):
         if connection_pool_config:
 
             async def get_connection() -> AbstractConnection:
-                return await aio_pika.connect_robust(self.url)
+                return await aio_pika.connect(self.url)
 
             self.connection_pool = aio_pika.pool.Pool[AbstractConnection](
                 get_connection,
@@ -151,7 +151,7 @@ class AIOPikaConnectionFactory(MessageBusConnectionFactory):
     @asynccontextmanager
     async def acquire_connection(self) -> AsyncGenerator[AbstractConnection, Any]:
         if not self.connection_pool:
-            async with await aio_pika.connect_robust(self.url) as connection:
+            async with await aio_pika.connect(self.url) as connection:
                 yield connection
         else:
 
