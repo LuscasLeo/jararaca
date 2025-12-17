@@ -664,8 +664,9 @@ class HttpRpcClientBuilder:
 
         dummy = Dummy()
 
-        for attr_name in dir(cls):
-            method_call = inspect.getattr_static(cls, attr_name)
+        for attr_name, method_call in inspect.getmembers(
+            cls, predicate=inspect.isfunction
+        ):
             if (mapping := HttpMapping.get(method_call)) is not None:
                 route_error_handlers = RouteHttpErrorHandler.get(method_call)
                 setattr(
