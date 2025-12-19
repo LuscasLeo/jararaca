@@ -2,6 +2,7 @@
 #
 # SPDX-License-Identifier: GPL-3.0-or-later
 
+import asyncio
 import logging
 import os
 import signal
@@ -80,6 +81,7 @@ class HttpShutdownState(ShutdownState):
             SIGTERM: signal.getsignal(SIGTERM),
         }
         self.thread_lock = threading.Lock()
+        self.aevent = asyncio.Event()
 
     def request_shutdown(self) -> None:
         if not self._requested:
@@ -90,11 +92,12 @@ class HttpShutdownState(ShutdownState):
         return self._requested
 
     def handle_signal(self, signum: int, frame: Any) -> None:
-        print(f"Received signal {signum}, initiating shutdown...")
+        logger.warning(f"Received signal {signum}, initiating shutdown...")
+        self.aevent.set()
         if self._requested:
-            print("Shutdown already requested, ignoring signal.")
+            logger.warning("Shutdown already requested, ignoring signal.")
             return
-        print("Requesting shutdown...")
+        logger.warning("Requesting shutdown...")
         self._requested = True
 
         # remove the signal handler to prevent recursion
@@ -103,6 +106,9 @@ class HttpShutdownState(ShutdownState):
                 signal.signal(sig, self.old_signal_handlers[sig])
 
         signal.raise_signal(signum)
+
+    async def wait_for_shutdown(self) -> None:
+        await self.aevent.wait()
 
     def setup_signal_handlers(self) -> None:
         signal.signal(SIGINT, self.handle_signal)
