@@ -371,10 +371,11 @@ async def wait_for_shutdown() -> None:
     await shutdown_state_ctx.get().wait_for_shutdown()
 
 
-async def shutdown_race(*concurrent_tasks: Coroutine[Any, Any, Any]) -> None:
+async def shutdown_race(*concurrent_tasks: Coroutine[Any, Any, Any]) -> bool:
     """
     Wait for either a shutdown request or any of the provided tasks to complete.
     This function will return as soon as a shutdown is requested or any task finishes.
+    Returns True if shutdown was requested, False if a task completed first.
     """
 
     tasks = [asyncio.create_task(t) for t in concurrent_tasks + (wait_for_shutdown(),)]
@@ -386,6 +387,8 @@ async def shutdown_race(*concurrent_tasks: Coroutine[Any, Any, Any]) -> None:
 
     for task in pending:
         task.cancel()
+
+    return is_shutting_down()
 
 
 @contextmanager
