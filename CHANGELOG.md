@@ -1,5 +1,15 @@
 # Changelog
 
+## [Unreleased] - 2025-12-19
+
+### Added
+- Graceful shutdown handling system for async applications
+  - Added `shutdown_race()` utility function for racing coroutines against shutdown signals
+  - Added `wait_for_shutdown()` to await shutdown events
+  - Added `is_shutting_down()` to check shutdown state
+  - Added `request_shutdown()` to programmatically trigger shutdown
+  - Integrated shutdown handling across worker, scheduler, and server modules
+
 ## [Unreleased] - 2025-12-17
 
 ### Changed
