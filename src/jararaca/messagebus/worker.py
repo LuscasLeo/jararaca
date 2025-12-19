@@ -157,6 +157,9 @@ class _WorkerShutdownState(ShutdownState):
     def is_shutdown_requested(self) -> bool:
         return self.shutdown_event.is_set()
 
+    async def wait_for_shutdown(self) -> None:
+        await self.shutdown_event.wait()
+
 
 class AioPikaMicroserviceConsumer(MessageBusConsumer):
     def __init__(

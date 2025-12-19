@@ -2,6 +2,7 @@
 #
 # SPDX-License-Identifier: GPL-3.0-or-later
 
+import asyncio
 import inspect
 import logging
 from contextlib import contextmanager, suppress
@@ -14,6 +15,7 @@ from typing import (
     Any,
     AsyncContextManager,
     Callable,
+    Coroutine,
     Generator,
     Literal,
     Protocol,
@@ -340,6 +342,8 @@ class ShutdownState(Protocol):
 
     def is_shutdown_requested(self) -> bool: ...
 
+    async def wait_for_shutdown(self) -> None: ...
+
 
 shutdown_state_ctx = ContextVar[ShutdownState]("shutdown_state")
 
@@ -357,6 +361,31 @@ def request_shutdown() -> None:
     This will set the shutdown event, allowing the application to gracefully shut down.
     """
     shutdown_state_ctx.get().request_shutdown()
+
+
+async def wait_for_shutdown() -> None:
+    """
+    Wait for the shutdown event to be set.
+    This function will block until a shutdown is requested.
+    """
+    await shutdown_state_ctx.get().wait_for_shutdown()
+
+
+async def shutdown_race(*concurrent_tasks: Coroutine[Any, Any, Any]) -> None:
+    """
+    Wait for either a shutdown request or any of the provided tasks to complete.
+    This function will return as soon as a shutdown is requested or any task finishes.
+    """
+
+    tasks = [asyncio.create_task(t) for t in concurrent_tasks + (wait_for_shutdown(),)]
+
+    _, pending = await asyncio.wait(
+        tasks,
+        return_when=asyncio.FIRST_COMPLETED,
+    )
+
+    for task in pending:
+        task.cancel()
 
 
 @contextmanager
