@@ -370,3 +370,91 @@ This system ensures that:
 - Resources are properly managed and cleaned up
 - The same utilities can be used consistently across different runtime contexts
 - Dependencies are properly injected and managed
+
+## Graceful Shutdown Handling
+
+Jararaca provides a unified shutdown handling system that works across all runtime types (HTTP server, worker, scheduler). This allows applications to gracefully handle shutdown signals and clean up resources properly.
+
+### Shutdown Utilities
+
+1. **`shutdown_race(*coroutines)`** - Race coroutines against shutdown signals
+
+   ```python
+   from jararaca import shutdown_race
+
+   async def long_running_task():
+       # Your long-running logic
+       await asyncio.sleep(60)
+
+   # Returns True if shutdown was requested, False if the task completed
+   was_shutdown = await shutdown_race(long_running_task())
+   if was_shutdown:
+       print("Task was interrupted by shutdown")
+   else:
+       print("Task completed normally")
+   ```
+
+2. **`wait_for_shutdown()`** - Block until shutdown is requested
+
+   ```python
+   from jararaca import wait_for_shutdown
+
+   async def background_service():
+       while True:
+           # Do some work
+           await do_work()
+           # Wait for next iteration or shutdown
+           if await shutdown_race(asyncio.sleep(5)):
+               break
+   ```
+
+3. **`is_shutting_down()`** - Check if shutdown has been requested
+
+   ```python
+   from jararaca import is_shutting_down
+
+   async def processing_loop():
+       while not is_shutting_down():
+           await process_next_item()
+   ```
+
+4. **`request_shutdown()`** - Programmatically trigger shutdown
+
+   ```python
+   from jararaca import request_shutdown
+
+   async def critical_error_handler():
+       # Something went wrong, request graceful shutdown
+       request_shutdown()
+   ```
+
+### Usage Patterns
+
+**Long-running background tasks:**
+
+```python
+@MessageBusController()
+class BackgroundWorker:
+    @MessageHandler(ProcessBatchTask)
+    async def process_batch(self, message: MessageOf[ProcessBatchTask]) -> None:
+        for item in message.items:
+            if is_shutting_down():
+                # Save progress and exit gracefully
+                await self.save_checkpoint(item)
+                return
+            await self.process_item(item)
+```
+
+**Waiting with timeout or shutdown:**
+
+```python
+async def wait_for_resource_with_shutdown(resource_id: str):
+    was_shutdown = await shutdown_race(
+        wait_for_resource(resource_id),
+        asyncio.sleep(30)  # timeout
+    )
+    if was_shutdown:
+        raise ShutdownInterrupt("Operation cancelled due to shutdown")
+```
+
+The shutdown system is automatically integrated into Jararaca's CLI commands (`jararaca server`, `jararaca worker`, `jararaca beat`), handling SIGINT and SIGTERM signals gracefully.
