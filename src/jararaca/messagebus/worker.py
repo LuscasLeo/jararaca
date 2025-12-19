@@ -479,7 +479,8 @@ class AioPikaMicroserviceConsumer(MessageBusConsumer):
             return
 
         logger.warning(
-            "Waiting for %s in-flight tasks to complete",
+            "Waiting for (%d) in-flight tasks to complete: %s",
+            len(self.tasks),
             ", ".join((task.get_name()) for task in self.tasks),
         )
         # async with self.lock:
@@ -493,7 +494,7 @@ class AioPikaMicroserviceConsumer(MessageBusConsumer):
             await asyncio.wait(pending_tasks, return_when=asyncio.FIRST_COMPLETED)
             finished_tasks = [task for task in pending_tasks if task.done()]
             logger.warning(
-                "Waiting for %s in-flight tasks to complete",
+                "Waiting for (%d) in-flight tasks to complete: %s",
                 ", ".join((task.get_name()) for task in finished_tasks),
             )
             pending_tasks = [task for task in pending_tasks if not task.done()]
