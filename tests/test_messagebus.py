@@ -56,7 +56,7 @@ class TestMessageHandlerDecorator:
 
         handler = MessageHandler.get_last(TestController.handle_tests)
         assert handler is not None
-        assert handler.requeue_on_exception is True
+        assert handler.nack_on_exception is True
 
     def test_message_handler_with_custom_name(self) -> None:
         """Test @MessageHandler with custom name."""

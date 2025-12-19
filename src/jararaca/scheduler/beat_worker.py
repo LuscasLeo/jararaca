@@ -618,20 +618,23 @@ class BeatWorker:
                                 continue
 
                         try:
+                            start_time = time.perf_counter()
                             await self.broker.dispatch_scheduled_action(
                                 ScheduledAction.get_function_id(func),
                                 now,
                             )
+                            elapsed_time = time.perf_counter() - start_time
 
                             await self.backend.set_last_dispatch_time(
                                 ScheduledAction.get_function_id(func), now
                             )
 
                             logger.debug(
-                                "Scheduled %s.%s at %s",
+                                "Scheduled %s.%s at %s in %.4fs",
                                 func.__module__,
                                 func.__qualname__,
                                 now,
+                                elapsed_time,
                             )
                         except ChannelInvalidStateError as e:
                             logger.error(
@@ -668,7 +671,14 @@ class BeatWorker:
                 delayed_messages = await self.backend.dequeue_next_delayed_messages(now)
                 for delayed_message_data in delayed_messages:
                     try:
+                        start_time = time.perf_counter()
                         await self.broker.dispatch_delayed_message(delayed_message_data)
+                        elapsed_time = time.perf_counter() - start_time
+                        logger.debug(
+                            "Dispatched delayed message for topic %s in %.4fs",
+                            delayed_message_data.message_topic,
+                            elapsed_time,
+                        )
                     except Exception as e:
                         logger.error("Failed to dispatch delayed message: %s", e)
                         # Continue with other delayed messages even if one fails

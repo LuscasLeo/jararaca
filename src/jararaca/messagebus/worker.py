@@ -224,7 +224,7 @@ class AioPikaMicroserviceConsumer(MessageBusConsumer):
         async def setup_consumer() -> None:
             # Create a channel using the context manager
             async with self.create_channel(queue_name) as channel:
-                queue = await RabbitmqUtils.get_queue(
+                queue: aio_pika.abc.AbstractQueue = await RabbitmqUtils.get_queue(
                     channel=channel, queue_name=queue_name
                 )
 
@@ -236,15 +236,22 @@ class AioPikaMicroserviceConsumer(MessageBusConsumer):
                         routing_key=routing_key,
                         message_handler=handler,
                     ),
-                    no_ack=handler.spec.auto_ack,
+                    # no_ack=handler.spec.auto_ack,
                 )
 
                 # Store consumer tag for cleanup
                 self.consumer_tags[queue_name] = consumer_tag
 
-                logger.debug(
+                logger.info(
                     "Consuming message handler %s on dedicated channel", queue_name
                 )
+
+                await self.shutdown_event.wait()
+
+                logger.warning(
+                    "Shutdown event received, stopping consumer for %s", queue_name
+                )
+                await queue.cancel(consumer_tag)
 
         try:
             # Setup with retry
@@ -300,6 +307,13 @@ class AioPikaMicroserviceConsumer(MessageBusConsumer):
 
                 logger.debug("Consuming scheduler %s on dedicated channel", queue_name)
 
+                await self.shutdown_event.wait()
+
+                logger.warning(
+                    "Shutdown event received, stopping consumer for %s", queue_name
+                )
+                await queue.cancel(consumer_tag)
+
         try:
             # Setup with retry
             await retry_with_backoff(
@@ -332,7 +346,7 @@ class AioPikaMicroserviceConsumer(MessageBusConsumer):
 
                 # Start connection health monitoring
                 self.health_check_task = asyncio.create_task(
-                    self._monitor_connection_health()
+                    self._monitor_connection_health(), name="ConnectionHealthMonitor"
                 )
 
                 # Verify infrastructure with retry
@@ -367,7 +381,8 @@ class AioPikaMicroserviceConsumer(MessageBusConsumer):
                                 "message_handler",
                                 queue_name,
                                 self._setup_message_handler_consumer(handler),
-                            )
+                            ),
+                            name=f"MessageHandler-{queue_name}-setup-consumer",
                         )
                     )
 
@@ -380,7 +395,8 @@ class AioPikaMicroserviceConsumer(MessageBusConsumer):
                                 "scheduled_action",
                                 queue_name,
                                 self._setup_scheduled_action_consumer(scheduled_action),
-                            )
+                            ),
+                            name=f"ScheduledAction-{queue_name}-setup-consumer",
                         )
                     )
 
@@ -398,11 +414,15 @@ class AioPikaMicroserviceConsumer(MessageBusConsumer):
                                 name,
                             )
 
-                handle_task_results_task = asyncio.create_task(handle_task_results())
+                handle_task_results_task = asyncio.create_task(
+                    handle_task_results(), name="HandleSetupTaskResults"
+                )
 
                 # Wait for shutdown signal
                 await self.shutdown_event.wait()
                 logger.debug("Shutdown event received, stopping consumers")
+
+                await self.cancel_queue_consumers()
 
                 # Cancel health monitoring
                 if self.health_check_task:
@@ -419,31 +439,69 @@ class AioPikaMicroserviceConsumer(MessageBusConsumer):
                         with suppress(asyncio.CancelledError):
                             await task
                 logger.debug("Worker shutting down")
-
                 # Wait for all tasks to complete
                 await self.wait_all_tasks_done()
 
                 # Close all channels and the connection
                 await self.close_channels_and_connection()
+
         except Exception as e:
             logger.critical("Failed to establish initial connection to RabbitMQ: %s", e)
             # Re-raise the exception so it can be caught by the caller
             raise
 
+    async def cancel_queue_consumers(self) -> None:
+        """
+        Cancel all active queue consumers.
+        """
+        logger.debug("Cancelling all active queue consumers...")
+        for queue_name, channel in self.channels.items():
+            try:
+                if not channel.is_closed:
+                    # Cancel consumer if we have its tag
+                    if queue_name in self.consumer_tags:
+                        try:
+                            queue = await channel.get_queue(queue_name, ensure=False)
+                            if queue:
+                                await queue.cancel(self.consumer_tags[queue_name])
+                        except Exception as cancel_error:
+                            logger.warning(
+                                "Error cancelling consumer for %s: %s",
+                                queue_name,
+                                cancel_error,
+                            )
+                        del self.consumer_tags[queue_name]
+            except Exception as e:
+                logger.warning("Error cancelling consumer for %s: %s", queue_name, e)
+
     async def wait_all_tasks_done(self) -> None:
         if not self.tasks:
             return
 
-        logger.warning("Waiting for %s in-flight tasks to complete", len(self.tasks))
-        async with self.lock:
-            # Use gather with return_exceptions=True to ensure all tasks are awaited
-            # even if some raise exceptions
-            results = await asyncio.gather(*self.tasks, return_exceptions=True)
+        logger.warning(
+            "Waiting for %s in-flight tasks to complete",
+            ", ".join((task.get_name()) for task in self.tasks),
+        )
+        # async with self.lock:
+        # Use gather with return_exceptions=True to ensure all tasks are awaited
+        # even if some raise exceptions
+        # results = await asyncio.gather(*self.tasks, return_exceptions=True)
+        pending_tasks = [task for task in self.tasks if not task.done()]
+        while len(pending_tasks) > 0:
+            if not pending_tasks:
+                break
+            await asyncio.wait(pending_tasks, return_when=asyncio.FIRST_COMPLETED)
+            finished_tasks = [task for task in pending_tasks if task.done()]
+            logger.warning(
+                "Waiting for %s in-flight tasks to complete",
+                ", ".join((task.get_name()) for task in finished_tasks),
+            )
+            pending_tasks = [task for task in pending_tasks if not task.done()]
 
             # Log any exceptions that occurred
-            for result in results:
-                if isinstance(result, Exception):
-                    logger.error("Task raised an exception during shutdown: %s", result)
+            # for result in results:
+            #     if isinstance(result, Exception):
+            #         logger.error("Task raised an exception during shutdown: %s", result)
 
     async def close_channels_and_connection(self) -> None:
         """Close all channels and then the connection"""
@@ -964,8 +1022,7 @@ class ScheduledMessageHandlerCallback:
             )
             try:
                 # Use channel context for requeuing
-                async with self.consumer.get_channel_ctx(self.queue_name):
-                    await aio_pika_message.reject(requeue=True)
+                await aio_pika_message.reject(requeue=True)
             except RuntimeError:
                 logger.warning(
                     "Could not requeue scheduled message during shutdown - channel not available"
@@ -996,7 +1053,10 @@ class ScheduledMessageHandlerCallback:
                 return
 
         async with self.consumer.lock:
-            task = asyncio.create_task(self.handle_message(aio_pika_message))
+            task = asyncio.create_task(
+                self.handle_message(aio_pika_message),
+                name=f"ScheduledAction-{self.queue_name}-handle-message-{aio_pika_message.message_id}",
+            )
             self.consumer.tasks.add(task)
             task.add_done_callback(self.handle_message_consume_done)
 
@@ -1057,7 +1117,8 @@ class ScheduledMessageHandlerCallback:
                     self.scheduled_action,
                     (ScheduleDispatchData(int(aio_pika_message.body.decode("utf-8"))),),
                     {},
-                )
+                ),
+                name=f"ScheduledAction-{self.queue_name}-handle-message-{aio_pika_message.message_id}",
             )
 
         elif len(sig.parameters) == 0:
@@ -1066,7 +1127,8 @@ class ScheduledMessageHandlerCallback:
                     self.scheduled_action,
                     (),
                     {},
-                )
+                ),
+                name=f"ScheduledAction-{self.queue_name}-handle-message-{aio_pika_message.message_id}",
             )
         else:
             logger.warning(
@@ -1092,6 +1154,7 @@ class ScheduledMessageHandlerCallback:
         args: tuple[Any, ...],
         kwargs: dict[str, Any],
     ) -> None:
+
         with provide_shutdown_state(self.consumer.shutdown_state):
             async with self.consumer.uow_context_provider(
                 AppTransactionContext(
@@ -1161,7 +1224,10 @@ class MessageHandlerCallback:
                 return
 
         async with self.consumer.lock:
-            task = asyncio.create_task(self.handle_message(aio_pika_message))
+            task = asyncio.create_task(
+                self.handle_message(aio_pika_message),
+                name=f"MessageHandler-{self.queue_name}-handle-message-{aio_pika_message.message_id}",
+            )
             self.consumer.tasks.add(task)
             task.add_done_callback(self.handle_message_consume_done)
 
@@ -1199,21 +1265,11 @@ class MessageHandlerCallback:
         """
         message_id = aio_pika_message.message_id or str(uuid.uuid4())
 
-        # If auto_ack is enabled, we cannot retry the message through RabbitMQ reject mechanism
-        if self.message_handler.spec.auto_ack:
-            if requeue:
-                logger.warning(
-                    "Message %s (%s) cannot be requeued because auto_ack is enabled",
-                    message_id,
-                    self.queue_name,
-                )
-            return
-
         try:
             # Check if we should retry with backoff
             if (
                 not requeue
-                and self.message_handler.spec.requeue_on_exception
+                and self.message_handler.spec.nack_on_exception
                 and exception is not None
             ):
                 # Get retry config from consumer
@@ -1230,8 +1286,8 @@ class MessageHandlerCallback:
                     )
                     # Dead-letter the message after max retries
                     try:
-                        async with self.consumer.get_channel_ctx(self.queue_name):
-                            await aio_pika_message.reject(requeue=False)
+
+                        await aio_pika_message.reject(requeue=False)
                     except Exception as e:
                         logger.error(
                             "Failed to dead-letter message %s: %s", message_id, e
@@ -1272,13 +1328,13 @@ class MessageHandlerCallback:
                 asyncio.create_task(
                     self._delayed_retry(
                         aio_pika_message, delay, retry_count + 1, exception
-                    )
+                    ),
+                    name=f"MessageHandler-{self.queue_name}-delayed-retry-{message_id}",
                 )
 
                 # Acknowledge the current message since we'll handle retry ourselves
                 try:
-                    async with self.consumer.get_channel_ctx(self.queue_name):
-                        await aio_pika_message.ack()
+                    await aio_pika_message.ack()
                 except Exception as e:
                     logger.error(
                         "Failed to acknowledge message %s for retry: %s", message_id, e
@@ -1332,7 +1388,7 @@ class MessageHandlerCallback:
 
         try:
             # Wait for the backoff delay
-            await asyncio.sleep(delay)
+            await self._wait_delay_or_shutdown(delay)
 
             # Get message body and properties for republishing
             message_body = aio_pika_message.body
@@ -1413,6 +1469,24 @@ class MessageHandlerCallback:
             except Exception:
                 pass
 
+    async def _wait_delay_or_shutdown(self, delay: float) -> None:
+        """
+        Wait for the specified delay or exit early if shutdown is initiated.
+
+        Args:
+            delay: Delay in seconds to wait
+        """
+
+        wait_cor = asyncio.create_task(asyncio.sleep(delay), name="delayed-retry-wait")
+        wait_shutdown_cor = asyncio.create_task(
+            self.consumer.shutdown_event.wait(), name="delayed-retry-shutdown-wait"
+        )
+
+        await asyncio.wait(
+            [wait_cor, wait_shutdown_cor],
+            return_when=asyncio.FIRST_COMPLETED,
+        )
+
     async def handle_message(
         self, aio_pika_message: aio_pika.abc.AbstractIncomingMessage
     ) -> None:
@@ -1482,35 +1556,34 @@ class MessageHandlerCallback:
                     ),
                 )
             ):
-                ctx: AsyncContextManager[Any]
+                maybe_timeout_ctx: AsyncContextManager[Any]
                 if incoming_message_spec.timeout is not None:
-                    ctx = asyncio.timeout(incoming_message_spec.timeout)
+                    maybe_timeout_ctx = asyncio.timeout(incoming_message_spec.timeout)
                 else:
-                    ctx = none_context()
-                async with ctx:
+                    maybe_timeout_ctx = none_context()
+
+                start_time = time.perf_counter()
+                async with maybe_timeout_ctx:
                     try:
                         with provide_bus_message_controller(
                             AioPikaMessageBusController(aio_pika_message)
                         ):
                             await handler(builded_message)
-                        if not incoming_message_spec.auto_ack:
                             with suppress(aio_pika.MessageProcessError):
                                 # Use channel context for acknowledgement with retry
                                 try:
-                                    async with self.consumer.get_channel_ctx(
-                                        self.queue_name
-                                    ):
-                                        await aio_pika_message.ack()
+                                    await aio_pika_message.ack()
                                 except Exception as ack_error:
                                     logger.warning(
                                         "Failed to acknowledge message %s: %s",
                                         aio_pika_message.message_id or "unknown",
                                         ack_error,
                                     )
-                                    # Message will be redelivered if ack fails, which is acceptable
+                        successfully = True
                     except BaseException as base_exc:
+                        successfully = False
                         # Get message id for logging
-                        message_id = aio_pika_message.message_id or str(uuid.uuid4())
+                        message_id = aio_pika_message.message_id or "unknown"
 
                         # Extract retry count from headers if available
                         headers = aio_pika_message.headers or {}
@@ -1534,11 +1607,9 @@ class MessageHandlerCallback:
                                 routing_key,
                                 str(base_exc),
                             )
-                            raise
 
                         # Handle rejection with retry logic
-                        if incoming_message_spec.requeue_on_exception:
-                            # Use our retry with backoff mechanism
+                        if incoming_message_spec.nack_on_exception:
                             await self.handle_reject_message(
                                 aio_pika_message,
                                 requeue=False,  # Don't requeue directly, use our backoff mechanism
@@ -1551,28 +1622,41 @@ class MessageHandlerCallback:
                                 aio_pika_message, requeue=False, exception=base_exc
                             )
 
-                    else:
-                        # Message processed successfully, log and clean up any retry state
-                        message_id = aio_pika_message.message_id or str(uuid.uuid4())
-                        if message_id in self.retry_state:
-                            del self.retry_state[message_id]
+                    elapsed_time = time.perf_counter() - start_time
+                    # Message processed successfully, log and clean up any retry state
+                    message_id = aio_pika_message.message_id or str(uuid.uuid4())
+                    if message_id in self.retry_state:
+                        del self.retry_state[message_id]
 
-                        # Log success with retry information if applicable
-                        headers = aio_pika_message.headers or {}
-                        if "x-retry-count" in headers:
-                            retry_count = int(str(headers.get("x-retry-count", 0)))
-                            logger.debug(
-                                "Message %s#%s processed successfully after %s retries",
-                                message_id,
-                                self.queue_name,
-                                retry_count,
-                            )
-                        else:
-                            logger.debug(
-                                "Message %s#%s processed successfully",
-                                message_id,
-                                self.queue_name,
-                            )
+                    # Log success with retry information if applicable
+                    headers = aio_pika_message.headers or {}
+                    traceparent = headers.get("traceparent")
+                    trace_info = (
+                        f" [traceparent={str(traceparent)}]" if traceparent else ""
+                    )
+
+                    if "x-retry-count" in headers:
+                        retry_count = int(str(headers.get("x-retry-count", 0)))
+                        logger.debug(
+                            "Message %s#%s processed "
+                            + ("successfully" if successfully else "with errors")
+                            + " after %s retries in %.4fs%s",
+                            message_id,
+                            self.queue_name,
+                            retry_count,
+                            elapsed_time,
+                            trace_info,
+                        )
+                    else:
+                        logger.debug(
+                            "Message %s#%s processed "
+                            + ("successfully" if successfully else "with errors")
+                            + " in %.4fs%s",
+                            message_id,
+                            self.queue_name,
+                            elapsed_time,
+                            trace_info,
+                        )
 
 
 @asynccontextmanager
@@ -1675,7 +1759,9 @@ class MessageBusWorker:
         def on_shutdown(loop: asyncio.AbstractEventLoop) -> None:
             logger.warning("Shutting down - signal received")
             # Schedule the shutdown to run in the event loop
-            asyncio.create_task(self._graceful_shutdown())
+            asyncio.create_task(
+                self._graceful_shutdown(), name="Worker-Graceful-Shutdown"
+            )
             # wait until the shutdown is complete
 
         with asyncio.Runner(loop_factory=uvloop.new_event_loop) as runner:
@@ -1777,7 +1863,8 @@ class AioPikaMessageBusController(BusMessageController):
                     float(delay),
                     retry_count + 1,
                     None,  # No specific exception
-                )
+                ),
+                name=f"MessageHandler-{callback.queue_name}-delayed-retry-{self.aio_pika_message.message_id or 'unknown'}-{int(time.time())}",
             )
 
             # Acknowledge the current message since we'll republish
