@@ -24,14 +24,14 @@ class MessageHandler(StackableDecorator):
         timeout: int | None = None,
         exception_handler: Callable[[BaseException], None] | None = None,
         nack_on_exception: bool = False,
-        auto_ack: bool = True,
+        auto_ack: bool = False,
         name: str | None = None,
     ) -> None:
         self.message_type = message
 
         self.timeout = timeout
         self.exception_handler = exception_handler
-        self.requeue_on_exception = nack_on_exception
+        self.nack_on_exception = nack_on_exception
         self.auto_ack = auto_ack
         self.name = name
 

@@ -10,9 +10,10 @@ import os
 import sys
 import time
 import traceback
+import typing
 from codecs import StreamWriter
 from pathlib import Path
-from typing import Any, Callable
+from typing import TYPE_CHECKING, Any, Callable
 from urllib.parse import parse_qs, urlparse
 
 import aio_pika
@@ -35,6 +36,9 @@ from jararaca.tools.typescript.interface_parser import (
     write_microservice_to_typescript_interface,
 )
 from jararaca.utils.rabbitmq_utils import RabbitmqUtils
+
+if TYPE_CHECKING:
+    from watchdog.observers.api import BaseObserver
 
 LIBRARY_FILES_PATH = importlib.resources.files("jararaca.files")
 ENTITY_TEMPLATE_PATH = LIBRARY_FILES_PATH / "entity.py.mako"
@@ -443,6 +447,13 @@ def cli() -> None:
     envvar="SRC_DIR",
     help="The source directory to watch for changes when --reload is enabled.",
 )
+@click.option(
+    "--gracious-shutdown-seconds",
+    type=int,
+    default=20,
+    envvar="GRACIOUS_SHUTDOWN_SECONDS",
+    help="Number of seconds to wait for graceful shutdown on reload",
+)
 def worker(
     app_path: str,
     broker_url: str,
@@ -450,6 +461,7 @@ def worker(
     handlers: str | None,
     reload: bool,
     src_dir: str,
+    gracious_shutdown_seconds: int,
 ) -> None:
     """Start a message bus worker that processes asynchronous messages from a message queue."""
 
@@ -460,7 +472,9 @@ def worker(
             "backend_url": backend_url,
             "handlers": handlers,
         }
-        run_with_reload_watcher(process_args, run_worker_process, src_dir)
+        run_with_reload_watcher(
+            process_args, run_worker_process, src_dir, gracious_shutdown_seconds
+        )
     else:
         run_worker_process(app_path, broker_url, backend_url, handlers)
 
@@ -548,6 +562,13 @@ def server(app_path: str, host: str, port: int) -> None:
     envvar="SRC_DIR",
     help="The source directory to watch for changes when --reload is enabled.",
 )
+@click.option(
+    "--gracious-shutdown-seconds",
+    type=int,
+    default=20,
+    envvar="GRACIOUS_SHUTDOWN_SECONDS",
+    help="Number of seconds to wait for graceful shutdown on reload",
+)
 def beat(
     interval: int,
     broker_url: str,
@@ -556,6 +577,7 @@ def beat(
     actions: str | None = None,
     reload: bool = False,
     src_dir: str = "src",
+    gracious_shutdown_seconds: int = 20,
 ) -> None:
     """Start a scheduler that dispatches scheduled actions to workers."""
 
@@ -567,7 +589,9 @@ def beat(
             "backend_url": backend_url,
             "actions": actions,
         }
-        run_with_reload_watcher(process_args, run_beat_process, src_dir)
+        run_with_reload_watcher(
+            process_args, run_beat_process, src_dir, gracious_shutdown_seconds
+        )
     else:
         run_beat_process(app_path, interval, broker_url, backend_url, actions)
 
@@ -749,19 +773,23 @@ def gen_tsi(
 
             # subprocess.run(cmd, check=False)
 
-    # Set up observer
-    observer = Observer()
-    observer.schedule(PyFileChangeHandler(), src_dir, recursive=True)  # type: ignore
-    observer.start()  # type: ignore
+    @typing.no_type_check
+    def start_watchdog() -> None:
 
-    click.echo(f"Watching for changes in {os.path.abspath(src_dir)}...")
-    try:
-        while True:
-            time.sleep(1)
-    except KeyboardInterrupt:
-        observer.stop()  # type: ignore
-        click.echo("Watch mode stopped")
-    observer.join()
+        observer: "BaseObserver" = Observer()
+        observer.schedule(PyFileChangeHandler(), src_dir, recursive=True)
+        observer.start()
+
+        click.echo(f"Watching for changes in {os.path.abspath(src_dir)}...")
+        try:
+            while True:
+                time.sleep(1)
+        except KeyboardInterrupt:
+            observer.stop()
+            click.echo("Watch mode stopped")
+        observer.join()
+
+    start_watchdog()
 
 
 def camel_case_to_snake_case(name: str) -> str:
@@ -933,6 +961,7 @@ def run_with_reload_watcher(
     process_args: dict[str, Any],
     process_target: Callable[..., Any],
     src_dir: str = "src",
+    max_graceful_shutdown_seconds: int = 20,
 ) -> None:
     """
     Run a process with a file watcher that will restart it when Python files change.
@@ -989,7 +1018,7 @@ def run_with_reload_watcher(
             # Terminate the current process
             if self.active_process and self.active_process.is_alive():
                 self.active_process.terminate()
-                self.active_process.join(timeout=5)
+                self.active_process.join(timeout=max_graceful_shutdown_seconds)
 
                 # If process doesn't terminate, kill it
                 if self.active_process.is_alive():
@@ -998,6 +1027,7 @@ def run_with_reload_watcher(
                     self.active_process.join()
 
             # Create a new process
+
             self.active_process = multiprocessing.get_context("spawn").Process(
                 target=process_target,
                 kwargs=process_args,
@@ -1005,23 +1035,28 @@ def run_with_reload_watcher(
             )
             self.active_process.start()
 
-    # Set up observer
-    observer = Observer()
-    observer.schedule(PyFileChangeHandler(), src_dir, recursive=True)  # type: ignore[no-untyped-call]
-    observer.start()  # type: ignore[no-untyped-call]
+    @typing.no_type_check
+    def start_watchdog() -> None:
 
-    click.echo(f"Watching for changes in {os.path.abspath(src_dir)}...")
-    try:
-        while True:
-            time.sleep(1)
-    except KeyboardInterrupt:
-        observer.stop()  # type: ignore[no-untyped-call]
-        if process.is_alive():
-            click.echo("Stopping process...")
-            process.terminate()
-            process.join(timeout=5)
+        # Set up observer
+        observer = Observer()
+        observer.schedule(PyFileChangeHandler(), src_dir, recursive=True)
+        observer.start()
+
+        click.echo(f"Watching for changes in {os.path.abspath(src_dir)}...")
+        try:
+            while True:
+                time.sleep(1)
+        except KeyboardInterrupt:
+            observer.stop()
             if process.is_alive():
-                process.kill()
-                process.join()
-        click.echo("Reload mode stopped")
-    observer.join()
+                click.echo("Stopping process...")
+                process.terminate()
+                process.join(timeout=max_graceful_shutdown_seconds)
+                if process.is_alive():
+                    process.kill()
+                    process.join()
+            click.echo("Reload mode stopped")
+        observer.join()
+
+    start_watchdog()

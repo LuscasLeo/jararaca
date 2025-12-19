@@ -5,6 +5,7 @@
 import asyncio
 import inspect
 import json
+import logging
 import time
 from dataclasses import dataclass
 from typing import (
@@ -24,6 +25,8 @@ from pydantic import BaseModel
 
 from jararaca.reflect.decorators import StackableDecorator
 
+logger = logging.getLogger(__name__)
+
 DECORATED_FUNC = TypeVar("DECORATED_FUNC", bound=Callable[..., Awaitable[Any]])
 DECORATED_CLASS = TypeVar("DECORATED_CLASS", bound=Any)
 
@@ -38,6 +41,10 @@ class HttpMapping(StackableDecorator):
         self.method = method
         self.path = path
         self.success_statuses = success_statuses
+
+    @classmethod
+    def decorator_key(cls) -> Any:
+        return HttpMapping
 
 
 class Post(HttpMapping):
@@ -79,6 +86,10 @@ class RequestAttribute(StackableDecorator):
     ):
         self.attribute_type = attribute_type
         self.name = name
+
+    @classmethod
+    def decorator_key(cls) -> Any:
+        return RequestAttribute
 
 
 class Query(RequestAttribute):
@@ -383,8 +394,19 @@ class HttpRpcClientBuilder:
     ) -> HttpRPCResponse:
         """Execute request with retry logic"""
         if not retry_config:
+            logger.debug(
+                "Executing request without retry config: %s %s",
+                request.method,
+                request.url,
+            )
             return await self._backend.request(request)
 
+        logger.debug(
+            "Executing request with retry config: %s %s (max_attempts=%s)",
+            request.method,
+            request.url,
+            retry_config.max_attempts,
+        )
         last_exception = None
         for attempt in range(retry_config.max_attempts):
             try:
@@ -392,6 +414,12 @@ class HttpRpcClientBuilder:
 
                 # Check if we should retry based on status code
                 if response.status_code in retry_config.retry_on_status_codes:
+                    logger.warning(
+                        "Request failed with status %s, retrying (attempt %s/%s)",
+                        response.status_code,
+                        attempt + 1,
+                        retry_config.max_attempts,
+                    )
                     if attempt < retry_config.max_attempts - 1:
                         wait_time = retry_config.backoff_factor * (2**attempt)
                         await asyncio.sleep(wait_time)
@@ -401,11 +429,22 @@ class HttpRpcClientBuilder:
 
             except Exception as e:
                 last_exception = e
+                logger.warning(
+                    "Request failed with exception: %s, retrying (attempt %s/%s)",
+                    e,
+                    attempt + 1,
+                    retry_config.max_attempts,
+                )
                 if attempt < retry_config.max_attempts - 1:
                     wait_time = retry_config.backoff_factor * (2**attempt)
                     await asyncio.sleep(wait_time)
                     continue
                 else:
+                    logger.error(
+                        "Request failed after %s attempts: %s",
+                        retry_config.max_attempts,
+                        e,
+                    )
                     raise
 
         # This should never be reached, but just in case
@@ -430,6 +469,12 @@ class HttpRpcClientBuilder:
             call_parameters = [*call_signature.parameters.keys()][1:]
 
             async def rpc_method(*args: Any, **kwargs: Any) -> Any:
+                logger.debug(
+                    "Calling RPC method %s with args=%s kwargs=%s",
+                    method_call.__name__,
+                    args,
+                    kwargs,
+                )
 
                 args_as_kwargs = dict(zip(call_parameters, args))
 
@@ -501,6 +546,15 @@ class HttpRpcClientBuilder:
                     files=files if files else None,
                 )
 
+                logger.debug(
+                    "Prepared request: %s %s\nHeaders: %s\nQuery Params: %s\nBody: %s",
+                    request.method,
+                    request.url,
+                    request.headers,
+                    request.query_params,
+                    request.body,
+                )
+
                 # Apply request hooks
                 for hook in self._request_hooks:
                     request = hook.before_request(request)
@@ -510,12 +564,15 @@ class HttpRpcClientBuilder:
 
                 # Check for cached response
                 if hasattr(request, "_cached_response"):
+                    logger.debug("Using cached response")
                     response = getattr(request, "_cached_response")
                 else:
                     # Execute request with retry if configured
+                    logger.debug("Executing request...")
                     response = await self._execute_with_retry(
                         request, retry_config.config if retry_config else None
                     )
+                    logger.debug("Received response: status=%s", response.status_code)
 
                 # Apply response middleware
                 for response_middleware in self._response_middlewares:
@@ -535,10 +592,24 @@ class HttpRpcClientBuilder:
                 return_type = inspect.signature(method_call).return_annotation
 
                 if response.status_code not in mapping.success_statuses:
+                    logger.warning(
+                        "Response status %s not in success statuses %s",
+                        response.status_code,
+                        mapping.success_statuses,
+                    )
                     for error_handler in route_error_handlers + global_error_handlers:
                         if error_handler.status_code == response.status_code:
+                            logger.debug(
+                                "Handling error with handler for status %s",
+                                response.status_code,
+                            )
                             return error_handler.callback(request, response)
 
+                    logger.error(
+                        "Unhandled RPC error: %s %s",
+                        response.status_code,
+                        response.data,
+                    )
                     raise RPCUnhandleError(request, response, None)
 
                 if return_type is not inspect.Signature.empty:
