@@ -495,6 +495,7 @@ class AioPikaMicroserviceConsumer(MessageBusConsumer):
             finished_tasks = [task for task in pending_tasks if task.done()]
             logger.warning(
                 "Waiting for (%s) in-flight tasks to complete: %s",
+                len(pending_tasks),
                 ", ".join((task.get_name()) for task in finished_tasks),
             )
             pending_tasks = [task for task in pending_tasks if not task.done()]
