@@ -492,14 +492,16 @@ class AioPikaMicroserviceConsumer(MessageBusConsumer):
             if not pending_tasks:
                 break
             await asyncio.wait(pending_tasks, return_when=asyncio.FIRST_COMPLETED)
-            finished_tasks = [task for task in pending_tasks if task.done()]
-            logger.warning(
-                "Waiting for (%s) in-flight tasks to complete: %s",
-                len(pending_tasks),
-                ", ".join((task.get_name()) for task in finished_tasks),
-            )
-            pending_tasks = [task for task in pending_tasks if not task.done()]
 
+            pending_tasks = [task for task in pending_tasks if not task.done()]
+            if len(pending_tasks) > 0:
+                logger.warning(
+                    "Waiting for (%s) in-flight tasks to complete: %s",
+                    len(pending_tasks),
+                    ", ".join((task.get_name()) for task in pending_tasks),
+                )
+            else:
+                logger.warning("All in-flight tasks have completed.")
             # Log any exceptions that occurred
             # for result in results:
             #     if isinstance(result, Exception):
