@@ -59,6 +59,7 @@ class MessageBusTransactionData:
     topic: str
     message: MessageOf[Message]
     message_type: Type[Message]
+    message_id: str | None = field(default=None)
     context_type: Literal["message_bus"] = "message_bus"
 
 

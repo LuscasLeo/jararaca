@@ -147,7 +147,7 @@ class Timeout:
         return getattr(func, Timeout.TIMEOUT_ATTR, None)
 
 
-class RetryConfig:
+class RPCRetryPolicy:
     """Configuration for retry behavior"""
 
     def __init__(
@@ -166,7 +166,7 @@ class Retry:
 
     RETRY_ATTR = "__request_retry__"
 
-    def __init__(self, config: RetryConfig):
+    def __init__(self, config: RPCRetryPolicy):
         self.config = config
 
     def __call__(self, func: DECORATED_FUNC) -> DECORATED_FUNC:
@@ -390,7 +390,7 @@ class HttpRpcClientBuilder:
         self._response_hooks = response_hooks
 
     async def _execute_with_retry(
-        self, request: HttpRPCRequest, retry_config: Optional[RetryConfig]
+        self, request: HttpRPCRequest, retry_config: Optional[RPCRetryPolicy]
     ) -> HttpRPCResponse:
         """Execute request with retry logic"""
         if not retry_config:
@@ -660,7 +660,7 @@ __all__ = [
     "FormData",
     "File",
     "Timeout",
-    "RetryConfig",
+    "RPCRetryPolicy",
     "Retry",
     "ContentType",
     "RestClient",
