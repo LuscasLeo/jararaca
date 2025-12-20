@@ -1249,18 +1249,22 @@ class MessageHandlerCallback:
                 name=f"MessageHandler-{self.queue_name}-handle-message-{aio_pika_message.message_id}",
             )
             self.consumer.tasks.add(task)
-            task.add_done_callback(self.handle_message_consume_done)
 
-    def handle_message_consume_done(self, task: asyncio.Task[Any]) -> None:
-        self.consumer.tasks.discard(task)
-        if task.cancelled():
-            logger.warning("Task for queue %s was cancelled", self.queue_name)
-            return
+            def handle_message_consume_done(task: asyncio.Task[Any]) -> None:
+                self.consumer.tasks.discard(task)
+                if task.cancelled():
+                    logger.warning("Task for queue %s was cancelled", self.queue_name)
+                    return
 
-        if (error := task.exception()) is not None:
-            logger.exception(
-                "Error processing message for queue %s", self.queue_name, exc_info=error
-            )
+                if (error := task.exception()) is not None:
+                    logger.exception(
+                        "Error processing message id %s for queue %s",
+                        aio_pika_message.message_id,
+                        self.queue_name,
+                        exc_info=error,
+                    )
+
+            task.add_done_callback(handle_message_consume_done)
 
     async def __call__(
         self, aio_pika_message: aio_pika.abc.AbstractIncomingMessage
