@@ -14,6 +14,7 @@ from jararaca.reflect.controller_inspect import (
 )
 from jararaca.reflect.decorators import DECORATED_T, StackableDecorator
 from jararaca.scheduler.decorators import ScheduledAction, ScheduledActionData
+from jararaca.utils.retry import RetryPolicy
 
 
 class MessageHandler(StackableDecorator):
@@ -23,9 +24,10 @@ class MessageHandler(StackableDecorator):
         message: type[INHERITS_MESSAGE_CO],
         timeout: int | None = None,
         exception_handler: Callable[[BaseException], None] | None = None,
-        nack_on_exception: bool = False,
+        nack_on_exception: bool = True,
         auto_ack: bool = False,
         name: str | None = None,
+        retry_config: RetryPolicy | None = None,
     ) -> None:
         self.message_type = message
 
@@ -34,6 +36,7 @@ class MessageHandler(StackableDecorator):
         self.nack_on_exception = nack_on_exception
         self.auto_ack = auto_ack
         self.name = name
+        self.retry_config = retry_config
 
 
 @dataclass(frozen=True)

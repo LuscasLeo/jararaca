@@ -108,13 +108,14 @@ if TYPE_CHECKING:
         ResponseMiddleware,
         RestClient,
         Retry,
-        RetryConfig,
         RouteHttpErrorHandler,
         RPCRequestNetworkError,
+        RPCRetryPolicy,
         RPCUnhandleError,
         Timeout,
         TimeoutException,
     )
+    from jararaca.utils.retry import RetryPolicy
 
     from .core.providers import ProviderSpec, Token
     from .di import Container
@@ -211,6 +212,7 @@ if TYPE_CHECKING:
         "get_all_metadata",
         "get_metadata_value",
         "RedisMessageBrokerBackend",
+        "RetryPolicy",
         "FilterRuleApplier",
         "SortRuleApplier",
         "use_bus_message_controller",
@@ -355,7 +357,7 @@ if TYPE_CHECKING:
         "RequestHook",
         "ResponseHook",
         # Configuration classes
-        "RetryConfig",
+        "RPCRetryPolicy",
         # Exception classes
         "TimeoutException",
         "AppTransactionContext",
@@ -377,6 +379,7 @@ _dynamic_imports: "dict[str, tuple[str, str, str | None]]" = {
     "get_metadata": (__SPEC_PARENT__, "reflect.metadata", None),
     "get_all_metadata": (__SPEC_PARENT__, "reflect.metadata", None),
     "get_metadata_value": (__SPEC_PARENT__, "reflect.metadata", None),
+    "RetryPolicy": (__SPEC_PARENT__, "utils.retry", None),
     "RedisMessageBrokerBackend": (
         __SPEC_PARENT__,
         "broker_backend.redis_broker_backend",
@@ -609,7 +612,7 @@ _dynamic_imports: "dict[str, tuple[str, str, str | None]]" = {
     "ResponseMiddleware": (__SPEC_PARENT__, "rpc.http.decorators", None),
     "RequestHook": (__SPEC_PARENT__, "rpc.http.decorators", None),
     "ResponseHook": (__SPEC_PARENT__, "rpc.http.decorators", None),
-    "RetryConfig": (__SPEC_PARENT__, "rpc.http.decorators", None),
+    "RPCRetryPolicy": (__SPEC_PARENT__, "rpc.http.decorators", None),
     "TimeoutException": (__SPEC_PARENT__, "rpc.http.decorators", None),
     "use_app_context": (__SPEC_PARENT__, "microservice", None),
     "use_app_transaction_context": (__SPEC_PARENT__, "microservice", None),

@@ -43,7 +43,7 @@ from jararaca.scheduler.decorators import (
 )
 from jararaca.scheduler.types import DelayedMessageData
 from jararaca.utils.rabbitmq_utils import RabbitmqUtils
-from jararaca.utils.retry import RetryConfig, retry_with_backoff
+from jararaca.utils.retry import RetryPolicy, retry_with_backoff
 
 logger = logging.getLogger(__name__)
 
@@ -447,8 +447,8 @@ def _get_message_broker_dispatcher_from_url(
 class BeatWorkerConfig:
     """Configuration for beat worker connection resilience"""
 
-    connection_retry_config: RetryConfig = field(
-        default_factory=lambda: RetryConfig(
+    connection_retry_config: RetryPolicy = field(
+        default_factory=lambda: RetryPolicy(
             max_retries=10,
             initial_delay=2.0,
             max_delay=60.0,
@@ -456,8 +456,8 @@ class BeatWorkerConfig:
             jitter=True,
         )
     )
-    dispatch_retry_config: RetryConfig = field(
-        default_factory=lambda: RetryConfig(
+    dispatch_retry_config: RetryPolicy = field(
+        default_factory=lambda: RetryPolicy(
             max_retries=3,
             initial_delay=1.0,
             max_delay=10.0,

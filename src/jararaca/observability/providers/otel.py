@@ -82,6 +82,7 @@ def extract_context_attributes(ctx: AppTransactionContext) -> dict[str, Any]:
         }
     elif tx_data.context_type == "message_bus":
         extra_attributes = {
+            "bus.message.id": tx_data.message_id,
             "bus.message.name": tx_data.message_type.__qualname__,
             "bus.message.module": tx_data.message_type.__module__,
             "bus.message.category": tx_data.message_type.MESSAGE_CATEGORY,

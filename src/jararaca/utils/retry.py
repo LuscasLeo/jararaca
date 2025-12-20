@@ -14,7 +14,7 @@ P = ParamSpec("P")
 T = TypeVar("T")
 
 
-class RetryConfig:
+class RetryPolicy:
     """Configuration for the retry mechanism."""
 
     def __init__(
@@ -49,7 +49,7 @@ async def retry_with_backoff(
     fn: Callable[[], Awaitable[T]],
     # args: P.args,
     # kwargs: P.kwargs,
-    retry_config: Optional[RetryConfig] = None,
+    retry_config: Optional[RetryPolicy] = None,
     on_retry_callback: Optional[Callable[[int, E, float], None]] = None,
     retry_exceptions: tuple[type[E], ...] = (),
 ) -> T:
@@ -71,7 +71,7 @@ async def retry_with_backoff(
         The last exception encountered if all retries fail
     """
     if retry_config is None:
-        retry_config = RetryConfig()
+        retry_config = RetryPolicy()
 
     last_exception = None
     delay = retry_config.initial_delay
@@ -120,7 +120,7 @@ async def retry_with_backoff(
 
 
 def with_retry(
-    retry_config: Optional[RetryConfig] = None,
+    retry_config: Optional[RetryPolicy] = None,
     retry_exceptions: tuple[type[Exception], ...] = (Exception,),
 ) -> Callable[[Callable[P, Awaitable[T]]], Callable[P, Awaitable[T]]]:
     """
