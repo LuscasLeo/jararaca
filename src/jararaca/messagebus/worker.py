@@ -1062,8 +1062,8 @@ class ScheduledMessageHandlerCallback:
             try:
                 if not self.consumer.connection_healthy:
                     # Still not healthy, requeue the message
-                    async with self.consumer.get_channel_ctx(self.queue_name):
-                        await aio_pika_message.reject(requeue=True)
+
+                    await aio_pika_message.reject(requeue=True)
                     return
             except Exception as e:
                 logger.error(
@@ -1101,8 +1101,8 @@ class ScheduledMessageHandlerCallback:
             )
             try:
                 # Use channel context for requeuing
-                async with self.consumer.get_channel_ctx(self.queue_name):
-                    await aio_pika_message.reject(requeue=True)
+
+                await aio_pika_message.reject(requeue=True)
                 return
             except RuntimeError:
                 logger.warning(
@@ -1119,8 +1119,8 @@ class ScheduledMessageHandlerCallback:
                 self.queue_name,
             )
             try:
-                async with self.consumer.get_channel_ctx(self.queue_name):
-                    await aio_pika_message.reject(requeue=True)
+
+                await aio_pika_message.reject(requeue=True)
                 return
             except Exception as e:
                 logger.error(
@@ -1216,8 +1216,8 @@ class MessageHandlerCallback:
             )
             try:
                 # Use channel context for requeuing
-                async with self.consumer.get_channel_ctx(self.queue_name):
-                    await aio_pika_message.reject(requeue=True)
+
+                await aio_pika_message.reject(requeue=True)
             except RuntimeError:
                 logger.warning(
                     "Could not requeue message during shutdown - channel not available"
@@ -1234,8 +1234,8 @@ class MessageHandlerCallback:
             try:
                 if not self.consumer.connection_healthy:
                     # Still not healthy, requeue the message
-                    async with self.consumer.get_channel_ctx(self.queue_name):
-                        await aio_pika_message.reject(requeue=True)
+
+                    await aio_pika_message.reject(requeue=True)
                     return
             except Exception as e:
                 logger.error(
@@ -1270,6 +1270,8 @@ class MessageHandlerCallback:
     async def handle_reject_message(
         self,
         aio_pika_message: aio_pika.abc.AbstractIncomingMessage,
+        *,
+        requeue_timeout: float,
         requeue: bool = False,
         retry_count: int = 0,
         exception: Optional[BaseException] = None,
@@ -1366,20 +1368,22 @@ class MessageHandlerCallback:
 
             # Standard reject without retry or with immediate requeue
             try:
-                async with self.consumer.get_channel_ctx(self.queue_name):
-                    await aio_pika_message.reject(requeue=requeue)
-                    if requeue:
-                        logger.warning(
-                            "Message %s (%s) requeued for immediate retry",
-                            message_id,
-                            self.queue_name,
-                        )
-                    else:
-                        logger.warning(
-                            "Message %s (%s) rejected without requeue",
-                            message_id,
-                            self.queue_name,
-                        )
+                await self._wait_delay_or_shutdown(
+                    requeue_timeout
+                )  # Optional delay before requeueing
+                await aio_pika_message.reject(requeue=requeue)
+                if requeue:
+                    logger.warning(
+                        "Message %s (%s) requeued for immediate retry",
+                        message_id,
+                        self.queue_name,
+                    )
+                else:
+                    logger.warning(
+                        "Message %s (%s) rejected without requeue",
+                        message_id,
+                        self.queue_name,
+                    )
             except Exception as e:
                 logger.error("Failed to reject message %s: %s", message_id, e)
 
@@ -1663,6 +1667,7 @@ class MessageHandlerCallback:
                                 if incoming_message_spec.nack_on_exception:
                                     await self.handle_reject_message(
                                         aio_pika_message,
+                                        requeue_timeout=incoming_message_spec.nack_delay_on_exception,
                                         requeue=False,  # Don't requeue directly, use our backoff mechanism
                                         retry_count=retry_count,
                                         exception=base_exc,
@@ -1672,6 +1677,7 @@ class MessageHandlerCallback:
                                     await self.handle_reject_message(
                                         aio_pika_message,
                                         requeue=False,
+                                        requeue_timeout=incoming_message_spec.nack_delay_on_exception,
                                         exception=base_exc,
                                     )
 
@@ -1905,13 +1911,15 @@ class AioPikaMessageBusController(BusMessageController):
     async def reject(self) -> None:
         await self.aio_pika_message.reject()
 
-    async def retry(self) -> None:
+    async def retry(self, delay: float = 5) -> None:
         """
         Retry the message immediately by rejecting with requeue flag.
         This doesn't use the exponential backoff mechanism.
         """
         callback = self._get_callback()
-        await callback.handle_reject_message(self.aio_pika_message, requeue=True)
+        await callback.handle_reject_message(
+            self.aio_pika_message, requeue=True, requeue_timeout=delay
+        )
 
     async def retry_later(self, delay: int) -> None:
         """

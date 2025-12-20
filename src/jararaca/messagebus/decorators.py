@@ -19,6 +19,7 @@ from jararaca.reflect.decorators import (
 )
 from jararaca.reflect.helpers import is_generic_alias
 from jararaca.scheduler.decorators import ScheduledAction, ScheduledActionData
+from jararaca.utils.env_parse_utils import get_env_float, get_env_int, is_env_truffy
 from jararaca.utils.retry import RetryPolicy
 
 AcceptableHandler = (
@@ -27,16 +28,25 @@ AcceptableHandler = (
 )
 MessageHandlerT = TypeVar("MessageHandlerT", bound=AcceptableHandler)
 
+DEFAULT_TIMEOUT = get_env_int("JARARACA_MESSAGEBUS_HANDLER_TIMEOUT", 30) or None
+DEFAULT_NACK_ON_EXCEPTION = is_env_truffy("JARARACA_MESSAGEBUS_NACK_ON_EXCEPTION")
+DEFAULT_AUTO_ACK = is_env_truffy("JARARACA_MESSAGEBUS_AUTO_ACK")
+DEFAULT_NACK_DELAY_ON_EXCEPTION = (
+    get_env_float("JARARACA_MESSAGEBUS_NACK_DELAY_ON_EXCEPTION", 0) or 5.0
+)
+
 
 class MessageHandler(GenericStackableDecorator[AcceptableHandler]):
 
     def __init__(
         self,
         message: type[INHERITS_MESSAGE_CO],
-        timeout: int | None = None,
+        *,
+        timeout: int | None = DEFAULT_TIMEOUT,
         exception_handler: Callable[[BaseException], None] | None = None,
-        nack_on_exception: bool = True,
-        auto_ack: bool = False,
+        nack_on_exception: bool = DEFAULT_NACK_ON_EXCEPTION,
+        nack_delay_on_exception: float = DEFAULT_NACK_DELAY_ON_EXCEPTION,
+        auto_ack: bool = DEFAULT_AUTO_ACK,
         name: str | None = None,
         retry_config: RetryPolicy | None = None,
     ) -> None:
@@ -45,6 +55,8 @@ class MessageHandler(GenericStackableDecorator[AcceptableHandler]):
         self.timeout = timeout
         self.exception_handler = exception_handler
         self.nack_on_exception = nack_on_exception
+        self.nack_delay_on_exception = nack_delay_on_exception
+
         self.auto_ack = auto_ack
         self.name = name
         self.retry_config = retry_config

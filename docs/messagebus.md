@@ -482,6 +482,61 @@ export RELOAD="true"
 jararaca worker
 ```
 
+## Environment Variable Configuration
+
+Jararaca allows you to configure default values for message handlers through environment variables. This is useful for setting global defaults across your application without modifying code.
+
+### Message Handler Default Values
+
+The following environment variables control the default behavior of `@MessageHandler` decorated functions:
+
+| Environment Variable | Type | Default | Description |
+|---------------------|------|---------|-------------|
+| `JARARACA_MESSAGEBUS_HANDLER_TIMEOUT` | `int` | `30` | Default timeout in seconds for message handler execution. Set to `0` or empty to disable timeout (returns `None`). |
+| `JARARACA_MESSAGEBUS_NACK_ON_EXCEPTION` | `bool` | `false` | Whether to send a negative acknowledgment (NACK) when an exception occurs during message processing. Truthy values: `1`, `true`, `yes`, `on`. |
+| `JARARACA_MESSAGEBUS_AUTO_ACK` | `bool` | `false` | Whether to automatically acknowledge messages after successful processing. Truthy values: `1`, `true`, `yes`, `on`. |
+| `JARARACA_MESSAGEBUS_NACK_DELAY_ON_EXCEPTION` | `float` | `5.0` | Delay in seconds before sending a NACK when an exception occurs. Set to `0` or empty to use default of `5.0`. |
+
+### Usage Example
+
+```bash
+# Set global defaults for all message handlers
+export JARARACA_MESSAGEBUS_HANDLER_TIMEOUT=60
+export JARARACA_MESSAGEBUS_NACK_ON_EXCEPTION=true
+export JARARACA_MESSAGEBUS_AUTO_ACK=true
+export JARARACA_MESSAGEBUS_NACK_DELAY_ON_EXCEPTION=10.0
+
+# Start the worker
+jararaca worker myapp.main:app --broker-url "amqp://..." --backend-url "redis://..."
+```
+
+### Per-Handler Override
+
+Environment variable defaults can be overridden on a per-handler basis by explicitly setting the parameters in the `@MessageHandler` decorator:
+
+```python
+from jararaca import MessageBusController, MessageHandler, MessageOf
+
+
+@MessageBusController()
+class MyController:
+    # Uses environment variable defaults
+    @MessageHandler(MyMessage)
+    async def handler_with_defaults(self, message: MessageOf[MyMessage]):
+        ...
+
+    # Overrides environment variable defaults
+    @MessageHandler(
+        MyMessage,
+        timeout=120,
+        nack_on_exception=False,
+        auto_ack=True,
+        nack_delay_on_exception=2.0
+    )
+    async def handler_with_custom_config(self, message: MessageOf[MyMessage]):
+        ...
+```
+
 ## Conclusion
 
 The Jararaca message bus system provides a powerful, type-safe way to implement asynchronous processing in your applications. With its integration with other Jararaca components, it enables building distributed systems with unified context and utilities across different runtime environments.
