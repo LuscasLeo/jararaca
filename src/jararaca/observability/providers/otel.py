@@ -88,6 +88,7 @@ def extract_context_attributes(ctx: AppTransactionContext) -> dict[str, Any]:
             "bus.message.category": tx_data.message_type.MESSAGE_CATEGORY,
             "bus.message.type": tx_data.message_type.MESSAGE_TYPE,
             "bus.message.topic": tx_data.message_type.MESSAGE_TOPIC,
+            "bus.message.processing_attempt": tx_data.processing_attempt,
         }
     elif tx_data.context_type == "websocket":
         extra_attributes = {
@@ -207,7 +208,7 @@ class OtelTracingContextProviderFactory(TracingContextProviderFactory):
             ].decode(errors="ignore")
 
         elif tx_data.context_type == "message_bus":
-            title = f"Message Bus {tx_data.topic}"
+            title = f"Att#{tx_data.processing_attempt} Message Bus {tx_data.topic}"
             headers = use_implicit_headers() or {}
 
         elif tx_data.context_type == "websocket":

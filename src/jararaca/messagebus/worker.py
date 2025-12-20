@@ -13,15 +13,7 @@ from abc import ABC
 from contextlib import asynccontextmanager, suppress
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
-from typing import (
-    Any,
-    AsyncContextManager,
-    AsyncGenerator,
-    Awaitable,
-    Optional,
-    Type,
-    get_origin,
-)
+from typing import Any, AsyncContextManager, AsyncGenerator, Awaitable, Optional, Type
 from urllib.parse import parse_qs, urlparse
 
 import aio_pika
@@ -35,7 +27,7 @@ from aio_pika.exceptions import (
     ChannelNotFoundEntity,
     ConnectionClosed,
 )
-from pydantic import BaseModel
+from pydantic import ValidationError
 
 from jararaca.broker_backend import MessageBrokerBackend
 from jararaca.broker_backend.mapper import get_message_broker_backend_from_url
@@ -86,7 +78,7 @@ class AioPikaWorkerConfig:
             backoff_factor=2.0,
         )
     )
-    consumer_retry_config: RetryPolicy = field(
+    consumer_retry_policy: RetryPolicy = field(
         default_factory=lambda: RetryPolicy(
             max_retries=15,
             initial_delay=0.5,
@@ -261,7 +253,7 @@ class AioPikaMicroserviceConsumer(MessageBusConsumer):
             # Setup with retry
             await retry_with_backoff(
                 setup_consumer,
-                retry_config=self.config.consumer_retry_config,
+                retry_policy=self.config.consumer_retry_policy,
                 retry_exceptions=(
                     ChannelNotFoundEntity,
                     ChannelClosed,
@@ -322,7 +314,7 @@ class AioPikaMicroserviceConsumer(MessageBusConsumer):
             # Setup with retry
             await retry_with_backoff(
                 setup_consumer,
-                retry_config=self.config.consumer_retry_config,
+                retry_policy=self.config.consumer_retry_policy,
                 retry_exceptions=(
                     ChannelNotFoundEntity,
                     ChannelClosed,
@@ -356,7 +348,7 @@ class AioPikaMicroserviceConsumer(MessageBusConsumer):
                 # Verify infrastructure with retry
                 infra_check_success = await retry_with_backoff(
                     self._verify_infrastructure,
-                    retry_config=self.config.connection_retry_config,
+                    retry_policy=self.config.connection_retry_config,
                     retry_exceptions=(Exception,),
                 )
 
@@ -504,12 +496,12 @@ class AioPikaMicroserviceConsumer(MessageBusConsumer):
                     len(pending_tasks),
                     ", ".join((task.get_name()) for task in pending_tasks),
                 )
-            else:
-                logger.warning("All in-flight tasks have completed.")
-            # Log any exceptions that occurred
-            # for result in results:
-            #     if isinstance(result, Exception):
-            #         logger.error("Task raised an exception during shutdown: %s", result)
+
+        logger.warning("All in-flight tasks have completed.")
+        # Log any exceptions that occurred
+        # for result in results:
+        #     if isinstance(result, Exception):
+        #         logger.error("Task raised an exception during shutdown: %s", result)
 
     async def close_channels_and_connection(self) -> None:
         """Close all channels and then the connection"""
@@ -610,7 +602,7 @@ class AioPikaMicroserviceConsumer(MessageBusConsumer):
             # Create a new channel with retry
             channel = await retry_with_backoff(
                 fn=lambda: self._establish_channel(queue_name),
-                retry_config=self.config.consumer_retry_config,
+                retry_policy=self.config.consumer_retry_policy,
                 retry_exceptions=(
                     AMQPConnectionError,
                     AMQPChannelError,
@@ -668,7 +660,7 @@ class AioPikaMicroserviceConsumer(MessageBusConsumer):
             # Create a new connection with retry
             self.connection = await retry_with_backoff(
                 self._establish_connection,
-                retry_config=self.config.connection_retry_config,
+                retry_policy=self.config.connection_retry_config,
                 retry_exceptions=(
                     AMQPConnectionError,
                     ConnectionError,
@@ -745,7 +737,7 @@ class AioPikaMicroserviceConsumer(MessageBusConsumer):
                     logger.warning(
                         "Error getting channel for %s, retrying: %s", queue_name, e
                     )
-                    await asyncio.sleep(retry_delay)
+                    await self._wait_delay_or_shutdown(retry_delay)
                     retry_delay *= 2
                 else:
                     logger.error(
@@ -756,6 +748,24 @@ class AioPikaMicroserviceConsumer(MessageBusConsumer):
                     )
                     raise
 
+    async def _wait_delay_or_shutdown(self, delay: float) -> None:
+        """
+        Wait for the specified delay or exit early if shutdown is initiated.
+
+        Args:
+            delay: Delay in seconds to wait
+        """
+
+        wait_cor = asyncio.create_task(asyncio.sleep(delay), name="delayed-retry-wait")
+        wait_shutdown_cor = asyncio.create_task(
+            self.shutdown_event.wait(), name="delayed-retry-shutdown-wait"
+        )
+
+        await asyncio.wait(
+            [wait_cor, wait_shutdown_cor],
+            return_when=asyncio.FIRST_COMPLETED,
+        )
+
     async def _monitor_connection_health(self) -> None:
         """
         Monitor connection health and trigger shutdown if connection is lost.
@@ -763,7 +773,9 @@ class AioPikaMicroserviceConsumer(MessageBusConsumer):
         """
         while not self.shutdown_event.is_set():
             try:
-                await asyncio.sleep(self.config.connection_health_check_interval)
+                await self._wait_delay_or_shutdown(
+                    self.config.connection_health_check_interval
+                )
 
                 if self.shutdown_event.is_set():
                     break
@@ -781,7 +793,7 @@ class AioPikaMicroserviceConsumer(MessageBusConsumer):
                 break
             except Exception as e:
                 logger.error("Error in connection health monitoring: %s", e)
-                await asyncio.sleep(5)  # Wait before retrying
+                await self._wait_delay_or_shutdown(5)  # Wait before retrying
 
     async def _is_connection_healthy(self) -> bool:
         """
@@ -893,7 +905,7 @@ def create_message_bus(
         # Parse optional retry configuration parameters
         connection_retry_config = RetryPolicy()
         consumer_retry_config = RetryPolicy(
-            max_retries=30, initial_delay=5, max_delay=60.0, backoff_factor=3.0
+            max_retries=5, initial_delay=5, max_delay=60.0, backoff_factor=3.0
         )
 
         # Parse heartbeat and health check intervals
@@ -988,7 +1000,7 @@ def create_message_bus(
             exchange=exchange,
             prefetch_count=prefetch_count,
             connection_retry_config=connection_retry_config,
-            consumer_retry_config=consumer_retry_config,
+            consumer_retry_policy=consumer_retry_config,
             connection_heartbeat_interval=connection_heartbeat_interval,
             connection_health_check_interval=connection_health_check_interval,
         )
@@ -1283,7 +1295,7 @@ class MessageHandlerCallback:
                 # Get retry config from consumer
                 retry_config = (
                     self.message_handler.spec.retry_config
-                    or self.consumer.config.consumer_retry_config
+                    or self.consumer.config.consumer_retry_policy
                 )
 
                 # Check if we reached max retries
@@ -1456,7 +1468,9 @@ class MessageHandlerCallback:
                             attempt + 1,
                             e,
                         )
-                        await asyncio.sleep(1.0 * (attempt + 1))  # Exponential backoff
+                        await self._wait_delay_or_shutdown(
+                            (1.0 * (attempt + 1))
+                        )  # Exponential backoff
                     else:
                         logger.error(
                             "Failed to republish message %s after %s attempts: %s",
@@ -1481,22 +1495,7 @@ class MessageHandlerCallback:
                 pass
 
     async def _wait_delay_or_shutdown(self, delay: float) -> None:
-        """
-        Wait for the specified delay or exit early if shutdown is initiated.
-
-        Args:
-            delay: Delay in seconds to wait
-        """
-
-        wait_cor = asyncio.create_task(asyncio.sleep(delay), name="delayed-retry-wait")
-        wait_shutdown_cor = asyncio.create_task(
-            self.consumer.shutdown_event.wait(), name="delayed-retry-shutdown-wait"
-        )
-
-        await asyncio.wait(
-            [wait_cor, wait_shutdown_cor],
-            return_when=asyncio.FIRST_COMPLETED,
-        )
+        await self.consumer._wait_delay_or_shutdown(delay)
 
     async def handle_message(
         self, aio_pika_message: aio_pika.abc.AbstractIncomingMessage
@@ -1512,47 +1511,53 @@ class MessageHandlerCallback:
         handler_data = self.message_handler
 
         handler = handler_data.instance_callable
+        handler_method = handler_data.controller_member.member_function
 
-        sig = inspect.signature(handler)
+        # sig = inspect.signature(handler)
 
-        if len(sig.parameters) != 1:
-            logger.warning(
-                "Handler for topic '%s' must have exactly one parameter which is MessageOf[T extends Message]"
-                % routing_key
-            )
-            return
+        # if len(sig.parameters) != 1:
+        #     logger.warning(
+        #         "Handler for topic '%s' must have exactly one parameter which is MessageOf[T extends Message]"
+        #         % routing_key
+        #     )
+        #     return
 
-        parameter = list(sig.parameters.values())[0]
+        # parameter = list(sig.parameters.values())[0]
 
-        param_origin = get_origin(parameter.annotation)
+        # param_origin = get_origin(parameter.annotation)
 
-        if param_origin is not MessageOf:
-            logger.warning(
-                "Handler for topic '%s' must have exactly one parameter of type Message"
-                % routing_key
-            )
-            return
+        # if param_origin is not MessageOf:
+        #     logger.warning(
+        #         "Handler for topic '%s' must have exactly one parameter of type Message"
+        #         % routing_key
+        #     )
+        #     return
 
-        if len(parameter.annotation.__args__) != 1:
-            logger.warning(
-                "Handler for topic '%s' must have exactly one parameter of type Message"
-                % routing_key
-            )
-            return
+        # if len(parameter.annotation.__args__) != 1:
+        #     logger.warning(
+        #         "Handler for topic '%s' must have exactly one parameter of type Message"
+        #         % routing_key
+        #     )
+        #     return
 
-        message_type = parameter.annotation.__args__[0]
+        # message_type = parameter.annotation.__args__[0]
 
-        if not issubclass(message_type, BaseModel):
-            logger.warning(
-                "Handler for topic '%s' must have exactly one parameter of type MessageOf[BaseModel]"
-                % routing_key
-            )
-            return
+        # if not issubclass(message_type, BaseModel):
+        #     logger.warning(
+        #         "Handler for topic '%s' must have exactly one parameter of type MessageOf[BaseModel]"
+        #         % routing_key
+        #     )
+        #     return
 
-        builded_message = AioPikaMessage(aio_pika_message, message_type)
+        mode, message_type = MessageHandler.validate_decorated_fn(handler_method)
+
+        built_message = AioPikaMessage(aio_pika_message, message_type)
 
         incoming_message_spec = MessageHandler.get_last(handler)
-        assert incoming_message_spec is not None
+        assert incoming_message_spec is not None, "Incoming message spec must be set"
+        # Extract retry count from headers if available
+        headers = aio_pika_message.headers or {}
+        retry_count = int(str(headers.get("x-retry-count", 0)))
 
         with provide_implicit_headers(aio_pika_message.headers), provide_shutdown_state(
             self.consumer.shutdown_state
@@ -1562,8 +1567,9 @@ class MessageHandlerCallback:
                     controller_member_reflect=handler_data.controller_member,
                     transaction_data=MessageBusTransactionData(
                         message_id=aio_pika_message.message_id,
+                        processing_attempt=retry_count + 1,
                         message_type=message_type,
-                        message=builded_message,
+                        message=built_message,
                         topic=routing_key,
                     ),
                 )
@@ -1581,12 +1587,36 @@ class MessageHandlerCallback:
                             AioPikaMessageBusController(aio_pika_message)
                         ):
                             try:
+                                if mode == "WRAPPED":
+                                    future = handler(built_message)
+                                else:
+                                    try:
 
-                                await handler(builded_message)
+                                        payload = built_message.payload()
+                                    except ValidationError as exc:
+                                        logger.exception(
+                                            "Validation error parsing message %s on topic %s",
+                                            aio_pika_message.message_id or "unknown",
+                                            routing_key,
+                                        )
+                                        aio_pika_message.headers["x-last-error"] = (
+                                            "Validation error parsing message payload"
+                                        )
+                                        await aio_pika_message.reject(requeue=False)
+                                        record_exception(
+                                            exc,
+                                        )
+                                        set_span_status("ERROR")
+                                        return
+                                    future = handler(payload)
+
+                                await future
+
                                 with suppress(aio_pika.MessageProcessError):
                                     # Use channel context for acknowledgement with retry
                                     try:
                                         await aio_pika_message.ack()
+                                        set_span_status("OK")
                                     except Exception as ack_error:
                                         logger.warning(
                                             "Failed to acknowledge message %s: %s",
@@ -1607,10 +1637,6 @@ class MessageHandlerCallback:
                                 successfully = False
                                 # Get message id for logging
                                 message_id = aio_pika_message.message_id or "unknown"
-
-                                # Extract retry count from headers if available
-                                headers = aio_pika_message.headers or {}
-                                retry_count = int(str(headers.get("x-retry-count", 0)))
 
                                 # Process exception handler if configured
                                 if incoming_message_spec.exception_handler is not None:

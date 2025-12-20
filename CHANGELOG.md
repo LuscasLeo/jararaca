@@ -86,7 +86,7 @@
 
 ### Added
 - Retry mechanism with exponential backoff
-  - Introduced RetryConfig for customizing retry behavior
+  - Introduced RPCRetryPolicy for customizing retry behavior
   - Added retry_with_backoff utility function
   - Implemented retry decorators
 - Enhanced CLI documentation

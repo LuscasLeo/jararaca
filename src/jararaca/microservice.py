@@ -60,6 +60,7 @@ class MessageBusTransactionData:
     message: MessageOf[Message]
     message_type: Type[Message]
     message_id: str | None = field(default=None)
+    processing_attempt: int = field(default=0)
     context_type: Literal["message_bus"] = "message_bus"
 
 

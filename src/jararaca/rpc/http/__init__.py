@@ -43,9 +43,9 @@ from .decorators import (  # HTTP Method decorators; Request parameter decorator
     ResponseMiddleware,
     RestClient,
     Retry,
-    RetryConfig,
     RouteHttpErrorHandler,
     RPCRequestNetworkError,
+    RPCRetryPolicy,
     RPCUnhandleError,
     Timeout,
     TimeoutException,
@@ -85,7 +85,7 @@ __all__ = [
     "RequestHook",
     "ResponseHook",
     # Configuration classes
-    "RetryConfig",
+    "RPCRetryPolicy",
     # Data structures
     "HttpRPCRequest",
     "HttpRPCResponse",

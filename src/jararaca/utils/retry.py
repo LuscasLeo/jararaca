@@ -49,7 +49,7 @@ async def retry_with_backoff(
     fn: Callable[[], Awaitable[T]],
     # args: P.args,
     # kwargs: P.kwargs,
-    retry_config: Optional[RetryPolicy] = None,
+    retry_policy: RetryPolicy,
     on_retry_callback: Optional[Callable[[int, E, float], None]] = None,
     retry_exceptions: tuple[type[E], ...] = (),
 ) -> T:
@@ -70,30 +70,28 @@ async def retry_with_backoff(
     Raises:
         The last exception encountered if all retries fail
     """
-    if retry_config is None:
-        retry_config = RetryPolicy()
 
     last_exception = None
-    delay = retry_config.initial_delay
+    delay = retry_policy.initial_delay
 
-    for retry_count in range(retry_config.max_retries + 1):
+    for retry_count in range(retry_policy.max_retries + 1):
         try:
             return await fn()
         except retry_exceptions as e:
             last_exception = e
 
-            if retry_count >= retry_config.max_retries:
+            if retry_count >= retry_policy.max_retries:
                 logger.error(
-                    "Max retries (%s) exceeded: %s", retry_config.max_retries, e
+                    "Max retries (%s) exceeded: %s", retry_policy.max_retries, e
                 )
                 raise
 
             # Calculate next delay with exponential backoff
             if retry_count > 0:  # Don't increase delay on the first failure
-                delay = min(delay * retry_config.backoff_factor, retry_config.max_delay)
+                delay = min(delay * retry_policy.backoff_factor, retry_policy.max_delay)
 
             # Apply jitter if configured (±25% randomness)
-            if retry_config.jitter:
+            if retry_policy.jitter:
                 jitter_amount = delay * 0.25
                 delay = delay + random.uniform(-jitter_amount, jitter_amount)
                 # Ensure delay doesn't go negative due to jitter
@@ -102,7 +100,7 @@ async def retry_with_backoff(
             logger.warning(
                 "Retry %s/%s after error: %s. Retrying in %.2fs",
                 retry_count + 1,
-                retry_config.max_retries,
+                retry_policy.max_retries,
                 e,
                 delay,
             )
@@ -120,7 +118,7 @@ async def retry_with_backoff(
 
 
 def with_retry(
-    retry_config: Optional[RetryPolicy] = None,
+    retry_policy: RetryPolicy,
     retry_exceptions: tuple[type[Exception], ...] = (Exception,),
 ) -> Callable[[Callable[P, Awaitable[T]]], Callable[P, Awaitable[T]]]:
     """
@@ -139,7 +137,7 @@ def with_retry(
         async def wrapper(*args: P.args, **kwargs: P.kwargs) -> T:
             return await retry_with_backoff(
                 lambda: fn(*args, **kwargs),
-                retry_config=retry_config,
+                retry_policy=retry_policy,
                 retry_exceptions=retry_exceptions,
             )
 
