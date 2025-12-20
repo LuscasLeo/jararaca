@@ -2,23 +2,23 @@
 #
 # SPDX-License-Identifier: GPL-3.0-or-later
 
-from typing import Any, Callable, Self, TypedDict, TypeVar, cast
+from typing import Any, Callable, Generic, Self, TypedDict, TypeVar, cast
 
 DECORATED_T = TypeVar("DECORATED_T", bound="Callable[..., Any] | type")
 
 
-S = TypeVar("S", bound="StackableDecorator")
+S = TypeVar("S", bound="BaseStackableDecorator")
 
 
 class DecoratorMetadata(TypedDict):
-    decorators: "list[StackableDecorator]"
-    decorators_by_type: "dict[Any, list[StackableDecorator]]"
+    decorators: "list[BaseStackableDecorator]"
+    decorators_by_type: "dict[Any, list[BaseStackableDecorator]]"
 
 
-class StackableDecorator:
+class BaseStackableDecorator:
     _ATTR_NAME: str = "__jararaca_stackable_decorator__"
 
-    def __call__(self, subject: DECORATED_T) -> DECORATED_T:
+    def __call__(self, subject: Any) -> Any:
         self.pre_decorated(subject)
         self.register(subject, self)
         self.post_decorated(subject)
@@ -45,7 +45,7 @@ class StackableDecorator:
         return None
 
     @classmethod
-    def register(cls, subject: Any, decorator: "StackableDecorator") -> None:
+    def register(cls, subject: Any, decorator: "BaseStackableDecorator") -> None:
         if not cls._ATTR_NAME:
             raise NotImplementedError("Subclasses must define _ATTR_NAME")
 
@@ -146,6 +146,18 @@ class StackableDecorator:
         return resolve_bound_method_decorator(
             cls_subject_type, method_name, cls, inherit, last=last
         )
+
+
+class StackableDecorator(BaseStackableDecorator):
+
+    def __call__(self, subject: DECORATED_T) -> DECORATED_T:
+        return cast(DECORATED_T, super().__call__(subject))
+
+
+class GenericStackableDecorator(BaseStackableDecorator, Generic[DECORATED_T]):
+
+    def __call__(self, subject: DECORATED_T) -> DECORATED_T:
+        return cast(DECORATED_T, super().__call__(subject))
 
 
 def resolve_class_decorators(

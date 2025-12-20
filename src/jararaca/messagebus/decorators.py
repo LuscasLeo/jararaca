@@ -5,19 +5,30 @@
 
 import inspect
 from dataclasses import dataclass
-from typing import Any, Awaitable, Callable
+from typing import Any, Awaitable, Callable, Literal, TypeVar, cast, get_args
 
-from jararaca.messagebus.message import INHERITS_MESSAGE_CO
+from jararaca.messagebus.message import INHERITS_MESSAGE_CO, Message, MessageOf
 from jararaca.reflect.controller_inspect import (
     ControllerMemberReflect,
     inspect_controller,
 )
-from jararaca.reflect.decorators import DECORATED_T, StackableDecorator
+from jararaca.reflect.decorators import (
+    DECORATED_T,
+    GenericStackableDecorator,
+    StackableDecorator,
+)
+from jararaca.reflect.helpers import is_generic_alias
 from jararaca.scheduler.decorators import ScheduledAction, ScheduledActionData
 from jararaca.utils.retry import RetryPolicy
 
+AcceptableHandler = (
+    Callable[[Any, MessageOf[Any]], Awaitable[None]]
+    | Callable[[Any, Any], Awaitable[None]]
+)
+MessageHandlerT = TypeVar("MessageHandlerT", bound=AcceptableHandler)
 
-class MessageHandler(StackableDecorator):
+
+class MessageHandler(GenericStackableDecorator[AcceptableHandler]):
 
     def __init__(
         self,
@@ -37,6 +48,74 @@ class MessageHandler(StackableDecorator):
         self.auto_ack = auto_ack
         self.name = name
         self.retry_config = retry_config
+
+    def __call__(self, subject: MessageHandlerT) -> MessageHandlerT:
+        return cast(MessageHandlerT, super().__call__(subject))
+
+    def pre_decorated(self, subject: DECORATED_T) -> None:
+        MessageHandler.validate_decorated_fn(subject)
+
+    @staticmethod
+    def validate_decorated_fn(
+        subject: DECORATED_T,
+    ) -> tuple[Literal["WRAPPED", "DIRECT"], type[Message]]:
+        """Validates that the decorated function has the correct signature
+        the decorated must follow one of the patterns:
+
+        async def handler(self, message: MessageOf[YourMessageType]) -> None:
+            ...
+
+        async def handler(self, message: YourMessageType) -> None:
+            ...
+
+        """
+
+        if not inspect.iscoroutinefunction(subject):
+            raise RuntimeError(
+                "Message handler '%s' must be a coroutine function"
+                % (subject.__qualname__)
+            )
+
+        signature = inspect.signature(subject)
+
+        parameters = list(signature.parameters.values())
+
+        if len(parameters) != 2:
+            raise RuntimeError(
+                "Message handler '%s' must have exactly two parameters (self, message)"
+                % (subject.__qualname__)
+            )
+
+        message_param = parameters[1]
+
+        if message_param.annotation is inspect.Parameter.empty:
+            raise RuntimeError(
+                "Message handler '%s' must have type annotation for the message parameter"
+                % (subject.__qualname__)
+            )
+
+        annotation_type = message_param.annotation
+        mode: Literal["WRAPPED", "DIRECT"]
+        if is_generic_alias(annotation_type):
+
+            message_model_type = get_args(annotation_type)[0]
+
+            mode = "WRAPPED"
+
+        else:
+            message_model_type = annotation_type
+
+            mode = "DIRECT"
+
+        if not inspect.isclass(message_model_type) or not issubclass(
+            message_model_type, Message
+        ):
+            raise RuntimeError(
+                "Message handler '%s' message parameter must be of type 'MessageOf[YourMessageType]' or 'YourMessageType' where 'YourMessageType' is a subclass of 'Message'"
+                % (subject.__qualname__)
+            )
+
+        return mode, message_model_type
 
 
 @dataclass(frozen=True)

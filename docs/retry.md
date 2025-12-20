@@ -6,16 +6,16 @@ Jararaca implements a robust retry mechanism with exponential backoff for handli
 
 The retry system consists of these main components:
 
-1. `RetryConfig` - Configuration class for customizing retry behavior
+1. `RPCRetryPolicy` - Configuration class for customizing retry behavior
 2. `retry_with_backoff` - Utility function to execute operations with retry
 3. `with_retry` - Decorator for applying retry logic to functions
 
 ## Retry Configuration
 
-The `RetryConfig` class allows customization of various retry parameters:
+The `RPCRetryPolicy` class allows customization of various retry parameters:
 
 ```python
-class RetryConfig:
+class RPCRetryPolicy:
     def __init__(
         self,
         max_retries: int = 5,         # Maximum number of retry attempts
@@ -59,9 +59,9 @@ Retry behavior can be customized through URL parameters when configuring the Rab
 broker_url = "amqp://guest:guest@localhost:5672/?exchange=jararaca&prefetch_count=10&connection_retry_max=10&connection_retry_delay=2.0"
 
 # Use custom retry configuration in code:
-from jararaca import RetryConfig, retry
+from jararaca import RPCRetryPolicy, retry
 
-config = RetryConfig(max_retries=3, initial_delay=1.0, max_delay=30.0)
+config = RPCRetryPolicy(max_retries=3, initial_delay=1.0, max_delay=30.0)
 
 async def connect_with_retry():
     return await retry(

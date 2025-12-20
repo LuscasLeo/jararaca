@@ -20,7 +20,7 @@ from jararaca.rpc.http import (
     Query,
     RestClient,
     Retry,
-    RetryConfig,
+    RPCRetryPolicy,
 )
 
 
@@ -194,11 +194,11 @@ async def slow_request(self) -> dict:
 ### Retry Configuration
 
 ```python
-from jararaca.rpc.http import Retry, RetryConfig
+from jararaca.rpc.http import Retry, RPCRetryPolicy
 
 
 @Get("/unreliable-endpoint")
-@Retry(RetryConfig(
+@Retry(RPCRetryPolicy(
     max_attempts=3,
     backoff_factor=2.0,
     retry_on_status_codes=[500, 502, 503, 504]
@@ -398,8 +398,8 @@ from jararaca.rpc.http import (
     ResponseMiddleware,
     RestClient,
     Retry,
-    RetryConfig,
     RouteHttpErrorHandler,
+    RPCRetryPolicy,
     Timeout,
 )
 
@@ -436,7 +436,7 @@ class AdvancedApiClient:
     @Post("/users")
     @Body("user_data")
     @ContentType("application/json")
-    @Retry(RetryConfig(max_attempts=3, backoff_factor=1.5))
+    @Retry(RPCRetryPolicy(max_attempts=3, backoff_factor=1.5))
     @RouteHttpErrorHandler(400)
     def handle_validation_error(request, response):
         return {"error": "Validation failed", "details": response.data}
@@ -458,7 +458,7 @@ class AdvancedApiClient:
 
     @Delete("/users/{user_id}")
     @PathParam("user_id")
-    @Retry(RetryConfig(max_attempts=2))
+    @Retry(RPCRetryPolicy(max_attempts=2))
     async def delete_user(self, user_id: int) -> bool:
         pass
 

@@ -168,7 +168,7 @@ class _RabbitMQBrokerDispatcher(_MessageBrokerDispatcher):
 
         return await retry_with_backoff(
             _establish_connection,
-            retry_config=self.config.connection_retry_config,
+            retry_policy=self.config.connection_retry_config,
             retry_exceptions=(
                 AMQPConnectionError,
                 ConnectionError,
@@ -189,7 +189,7 @@ class _RabbitMQBrokerDispatcher(_MessageBrokerDispatcher):
 
         return await retry_with_backoff(
             _establish_channel,
-            retry_config=self.config.connection_retry_config,
+            retry_policy=self.config.connection_retry_config,
             retry_exceptions=(
                 AMQPConnectionError,
                 AMQPChannelError,
@@ -219,7 +219,7 @@ class _RabbitMQBrokerDispatcher(_MessageBrokerDispatcher):
         try:
             await retry_with_backoff(
                 _dispatch,
-                retry_config=self.config.dispatch_retry_config,
+                retry_policy=self.config.dispatch_retry_config,
                 retry_exceptions=(
                     AMQPConnectionError,
                     AMQPChannelError,
@@ -267,7 +267,7 @@ class _RabbitMQBrokerDispatcher(_MessageBrokerDispatcher):
         try:
             await retry_with_backoff(
                 _dispatch,
-                retry_config=self.config.dispatch_retry_config,
+                retry_policy=self.config.dispatch_retry_config,
                 retry_exceptions=(
                     AMQPConnectionError,
                     AMQPChannelError,
@@ -306,7 +306,7 @@ class _RabbitMQBrokerDispatcher(_MessageBrokerDispatcher):
             logger.debug("Initializing RabbitMQ connection...")
             await retry_with_backoff(
                 _initialize,
-                retry_config=self.config.connection_retry_config,
+                retry_policy=self.config.connection_retry_config,
                 retry_exceptions=(
                     AMQPConnectionError,
                     AMQPChannelError,
