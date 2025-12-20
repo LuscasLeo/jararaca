@@ -24,7 +24,9 @@ def get_env_bool(var_name: str, default: bool) -> bool | Literal["invalid"]:
         return "invalid"
 
 
-def get_env_int(var_name: str, default: int) -> None | int | Literal[False]:
+def get_env_int(
+    var_name: str, default: int | None | Literal[False] = False
+) -> None | int | Literal[False]:
     value = os.getenv(var_name)
     if value is None:
         return default
@@ -34,7 +36,9 @@ def get_env_int(var_name: str, default: int) -> None | int | Literal[False]:
         return False
 
 
-def get_env_float(var_name: str, default: float) -> None | float | Literal[False]:
+def get_env_float(
+    var_name: str, default: float | None | Literal[False] = False
+) -> None | float | Literal[False]:
     value = os.getenv(var_name)
     if value is None:
         return default
