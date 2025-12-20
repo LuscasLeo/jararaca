@@ -370,3 +370,50 @@ class RabbitmqUtils:
             )
         except AMQPError as e:
             logger.warning("AMQP error while deleting queue '%s': %s", queue_name, e)
+
+    @classmethod
+    async def get_dl_queue_message_count(cls, channel: AbstractChannel) -> int:
+        """
+        Get the message count in the Dead Letter Queue.
+        Returns 0 if the queue doesn't exist.
+        """
+        try:
+            await channel.get_queue(cls.DEAD_LETTER_QUEUE)
+            # The declaration property contains the message count
+            queue_info = await channel.declare_queue(
+                cls.DEAD_LETTER_QUEUE, passive=True
+            )
+            return queue_info.declaration_result.message_count or 0
+        except ChannelNotFoundEntity:
+            logger.debug("Dead Letter Queue does not exist.")
+            return 0
+        except ChannelClosed as e:
+            logger.error("Channel closed while getting DLQ message count: %s", e)
+            raise
+        except AMQPError as e:
+            logger.error("AMQP error while getting DLQ message count: %s", e)
+            raise
+
+    @classmethod
+    async def purge_dl_queue(cls, channel: AbstractChannel) -> int:
+        """
+        Purge all messages from the Dead Letter Queue.
+        Returns the number of messages purged.
+        """
+        try:
+            queue = await channel.get_queue(cls.DEAD_LETTER_QUEUE)
+            result = await queue.purge()
+            return result.message_count or 0
+        except ChannelNotFoundEntity as e:
+            logger.error(
+                "Dead Letter Queue '%s' does not exist. Error: %s",
+                cls.DEAD_LETTER_QUEUE,
+                e,
+            )
+            raise
+        except ChannelClosed as e:
+            logger.error("Channel closed while purging Dead Letter Queue: %s", e)
+            raise
+        except AMQPError as e:
+            logger.error("AMQP error while purging Dead Letter Queue: %s", e)
+            raise

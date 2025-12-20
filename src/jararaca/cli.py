@@ -12,6 +12,7 @@ import time
 import traceback
 import typing
 from codecs import StreamWriter
+from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Callable
 from urllib.parse import parse_qs, urlparse
@@ -1060,3 +1061,639 @@ def run_with_reload_watcher(
         observer.join()
 
     start_watchdog()
+
+
+# =============================================================================
+# Dead Letter Queue (DLQ) Commands
+# =============================================================================
+
+
+@dataclass
+class DLQMessage:
+    """Represents a message in the Dead Letter Queue."""
+
+    body: bytes
+    routing_key: str
+    original_queue: str
+    death_reason: str
+    death_count: int
+    first_death_time: str
+    message_id: str | None
+    content_type: str | None
+
+
+async def fetch_dlq_messages(
+    connection: aio_pika.abc.AbstractConnection,
+    limit: int | None = None,
+    consume: bool = False,
+) -> list[tuple[DLQMessage, aio_pika.abc.AbstractIncomingMessage]]:
+    """
+    Fetch messages from the Dead Letter Queue.
+
+    Args:
+        connection: The AMQP connection
+        limit: Maximum number of messages to fetch (None for all)
+        consume: If True, messages are consumed (acked), otherwise they are requeued
+
+    Returns:
+        List of DLQMessage objects with their raw messages
+    """
+    messages: list[tuple[DLQMessage, aio_pika.abc.AbstractIncomingMessage]] = []
+
+    async with connection.channel() as channel:
+        try:
+            queue = await RabbitmqUtils.get_dl_queue(channel)
+
+            count = 0
+            while True:
+                if limit is not None and count >= limit:
+                    break
+
+                try:
+                    raw_message = await asyncio.wait_for(
+                        queue.get(no_ack=False), timeout=1.0
+                    )
+                except asyncio.TimeoutError:
+                    break
+
+                if raw_message is None:
+                    break
+
+                # Extract x-death header information
+                headers = raw_message.headers or {}
+                x_death_raw = headers.get("x-death")
+
+                original_queue = ""
+                death_reason = ""
+                death_count = 0
+                first_death_time = ""
+
+                # x-death is a list of dicts when messages are dead-lettered
+                if isinstance(x_death_raw, list) and len(x_death_raw) > 0:
+                    death_info = x_death_raw[0]
+                    if isinstance(death_info, dict):
+                        original_queue = str(death_info.get("queue", "unknown"))
+                        death_reason = str(death_info.get("reason", "unknown"))
+                        count_val = death_info.get("count", 1)
+                        if isinstance(count_val, (int, float)):
+                            death_count = int(count_val)
+                        else:
+                            death_count = 0
+                        first_death_time_raw = death_info.get("time")
+                        if first_death_time_raw:
+                            first_death_time = str(first_death_time_raw)
+
+                dlq_message = DLQMessage(
+                    body=raw_message.body,
+                    routing_key=raw_message.routing_key or "",
+                    original_queue=original_queue,
+                    death_reason=death_reason,
+                    death_count=death_count,
+                    first_death_time=first_death_time,
+                    message_id=raw_message.message_id,
+                    content_type=raw_message.content_type,
+                )
+
+                messages.append((dlq_message, raw_message))
+
+                if not consume:
+                    # Requeue the message so it stays in the DLQ
+                    await raw_message.nack(requeue=True)
+                count += 1
+
+        except Exception as e:
+            click.echo(f"Error fetching DLQ messages: {e}", err=True)
+            raise
+
+    return messages
+
+
+async def get_dlq_stats_by_queue(
+    connection: aio_pika.abc.AbstractConnection,
+) -> dict[str, dict[str, Any]]:
+    """
+    Get DLQ statistics grouped by original queue.
+
+    Returns:
+        Dictionary with queue names as keys and stats as values
+    """
+    messages = await fetch_dlq_messages(connection, consume=False)
+
+    stats: dict[str, dict[str, Any]] = {}
+
+    for dlq_message, _ in messages:
+        queue_name = dlq_message.original_queue or "unknown"
+
+        if queue_name not in stats:
+            stats[queue_name] = {
+                "count": 0,
+                "reasons": {},
+                "oldest_death": None,
+                "newest_death": None,
+            }
+
+        stats[queue_name]["count"] += 1
+
+        # Track death reasons
+        reason = dlq_message.death_reason or "unknown"
+        if reason not in stats[queue_name]["reasons"]:
+            stats[queue_name]["reasons"][reason] = 0
+        stats[queue_name]["reasons"][reason] += 1
+
+        # Track oldest/newest death times
+        if dlq_message.first_death_time:
+            death_time = dlq_message.first_death_time
+            if (
+                stats[queue_name]["oldest_death"] is None
+                or death_time < stats[queue_name]["oldest_death"]
+            ):
+                stats[queue_name]["oldest_death"] = death_time
+            if (
+                stats[queue_name]["newest_death"] is None
+                or death_time > stats[queue_name]["newest_death"]
+            ):
+                stats[queue_name]["newest_death"] = death_time
+
+    return stats
+
+
+@cli.group()
+def dlq() -> None:
+    """Dead Letter Queue (DLQ) management commands.
+
+    Commands for inspecting, managing, and recovering messages from the
+    Dead Letter Queue.
+    """
+
+
+@dlq.command("stats")
+@click.option(
+    "--broker-url",
+    type=str,
+    envvar="BROKER_URL",
+    required=True,
+    help="The URL for the message broker",
+)
+@click.option(
+    "--json",
+    "output_json",
+    is_flag=True,
+    default=False,
+    help="Output statistics in JSON format",
+)
+def dlq_stats(broker_url: str, output_json: bool) -> None:
+    """Show statistics about the Dead Letter Queue.
+
+    Displays the total message count and a breakdown by original queue,
+    including death reasons and timestamps.
+
+    Examples:
+
+    \b
+    # Show DLQ stats
+    jararaca dlq stats --broker-url amqp://guest:guest@localhost/
+
+    \b
+    # Output as JSON
+    jararaca dlq stats --broker-url amqp://guest:guest@localhost/ --json
+    """
+
+    async def run_stats() -> None:
+        connection = await aio_pika.connect(broker_url)
+        try:
+            # Get total message count
+            async with connection.channel() as channel:
+                try:
+                    queue_info = await channel.declare_queue(
+                        RabbitmqUtils.DEAD_LETTER_QUEUE, passive=True
+                    )
+                    total_count = queue_info.declaration_result.message_count or 0
+                except Exception:
+                    click.echo("Dead Letter Queue does not exist or is not accessible.")
+                    return
+
+            if total_count == 0:
+                if output_json:
+                    import json
+
+                    click.echo(
+                        json.dumps({"total_messages": 0, "queues": {}}, indent=2)
+                    )
+                else:
+                    click.echo("✓ Dead Letter Queue is empty!")
+                return
+
+            # Get detailed stats by queue
+            stats = await get_dlq_stats_by_queue(connection)
+
+            if output_json:
+                import json
+
+                result = {"total_messages": total_count, "queues": stats}
+                click.echo(json.dumps(result, indent=2, default=str))
+            else:
+                click.echo(f"\n{'='*60}")
+                click.echo("Dead Letter Queue Statistics")
+                click.echo(f"{'='*60}")
+                click.echo(f"\nTotal Messages: {total_count}")
+                click.echo("\nBreakdown by Original Queue:")
+                click.echo(f"{'-'*60}")
+
+                for queue_name, queue_stats in sorted(
+                    stats.items(), key=lambda x: x[1]["count"], reverse=True
+                ):
+                    click.echo(f"\n  📦 {queue_name}")
+                    click.echo(f"     Messages: {queue_stats['count']}")
+                    click.echo("     Reasons: ")
+                    for reason, count in queue_stats["reasons"].items():
+                        click.echo(f"       - {reason}: {count}")
+                    if queue_stats["oldest_death"]:
+                        click.echo(f"     Oldest: {queue_stats['oldest_death']}")
+                    if queue_stats["newest_death"]:
+                        click.echo(f"     Newest: {queue_stats['newest_death']}")
+
+                click.echo(f"\n{'='*60}")
+
+        finally:
+            await connection.close()
+
+    asyncio.run(run_stats())
+
+
+@dlq.command("list")
+@click.option(
+    "--broker-url",
+    type=str,
+    envvar="BROKER_URL",
+    required=True,
+    help="The URL for the message broker",
+)
+@click.option(
+    "--limit",
+    type=int,
+    default=10,
+    help="Maximum number of messages to display (default: 10)",
+)
+@click.option(
+    "--queue",
+    "queue_filter",
+    type=str,
+    default=None,
+    help="Filter messages by original queue name (supports partial match)",
+)
+@click.option(
+    "--show-body",
+    is_flag=True,
+    default=False,
+    help="Show message body content",
+)
+@click.option(
+    "--json",
+    "output_json",
+    is_flag=True,
+    default=False,
+    help="Output messages in JSON format",
+)
+def dlq_list(
+    broker_url: str,
+    limit: int,
+    queue_filter: str | None,
+    show_body: bool,
+    output_json: bool,
+) -> None:
+    """List messages in the Dead Letter Queue.
+
+    Shows details about each message including the original queue,
+    death reason, and timestamps.
+
+    Examples:
+
+    \b
+    # List first 10 messages
+    jararaca dlq list --broker-url amqp://guest:guest@localhost/
+
+    \b
+    # List messages from a specific queue
+    jararaca dlq list --broker-url amqp://guest:guest@localhost/ --queue user.events
+
+    \b
+    # Show message bodies
+    jararaca dlq list --broker-url amqp://guest:guest@localhost/ --show-body
+    """
+
+    async def run_list() -> None:
+        connection = await aio_pika.connect(broker_url)
+        try:
+            messages = await fetch_dlq_messages(connection, limit=limit, consume=False)
+
+            if not messages:
+                click.echo("No messages in the Dead Letter Queue.")
+                return
+
+            # Filter by queue if specified
+            if queue_filter:
+                messages = [
+                    (msg, raw)
+                    for msg, raw in messages
+                    if queue_filter.lower() in msg.original_queue.lower()
+                ]
+
+            if not messages:
+                click.echo(f"No messages found matching queue filter: '{queue_filter}'")
+                return
+
+            if output_json:
+                import json
+
+                result = []
+                for dlq_msg, _ in messages:
+                    msg_dict: dict[str, Any] = {
+                        "message_id": dlq_msg.message_id,
+                        "original_queue": dlq_msg.original_queue,
+                        "routing_key": dlq_msg.routing_key,
+                        "death_reason": dlq_msg.death_reason,
+                        "death_count": dlq_msg.death_count,
+                        "first_death_time": dlq_msg.first_death_time,
+                        "content_type": dlq_msg.content_type,
+                    }
+                    if show_body:
+                        try:
+                            msg_dict["body"] = dlq_msg.body.decode("utf-8")
+                        except Exception:
+                            msg_dict["body"] = dlq_msg.body.hex()
+                    result.append(msg_dict)
+                click.echo(json.dumps(result, indent=2, default=str))
+            else:
+                click.echo(f"\n{'='*70}")
+                click.echo(f"Dead Letter Queue Messages (showing {len(messages)})")
+                click.echo(f"{'='*70}")
+
+                for i, (dlq_msg, _) in enumerate(messages, 1):
+                    click.echo(f"\n[{i}] Message ID: {dlq_msg.message_id or 'N/A'}")
+                    click.echo(f"    Original Queue: {dlq_msg.original_queue}")
+                    click.echo(f"    Routing Key: {dlq_msg.routing_key}")
+                    click.echo(f"    Death Reason: {dlq_msg.death_reason}")
+                    click.echo(f"    Death Count: {dlq_msg.death_count}")
+                    click.echo(f"    First Death: {dlq_msg.first_death_time or 'N/A'}")
+                    click.echo(f"    Content-Type: {dlq_msg.content_type or 'N/A'}")
+
+                    if show_body:
+                        try:
+                            body_str = dlq_msg.body.decode("utf-8")
+                            # Truncate if too long
+                            if len(body_str) > 500:
+                                body_str = body_str[:500] + "... (truncated)"
+                            click.echo(f"    Body: {body_str}")
+                        except Exception:
+                            click.echo(f"    Body (hex): {dlq_msg.body[:100].hex()}...")
+
+                click.echo(f"\n{'='*70}")
+
+        finally:
+            await connection.close()
+
+    asyncio.run(run_list())
+
+
+@dlq.command("purge")
+@click.option(
+    "--broker-url",
+    type=str,
+    envvar="BROKER_URL",
+    required=True,
+    help="The URL for the message broker",
+)
+@click.option(
+    "--force",
+    "-f",
+    is_flag=True,
+    default=False,
+    help="Skip confirmation prompt",
+)
+def dlq_purge(broker_url: str, force: bool) -> None:
+    """Purge all messages from the Dead Letter Queue.
+
+    WARNING: This action is irreversible. All messages will be permanently deleted.
+
+    Examples:
+
+    \b
+    # Purge with confirmation
+    jararaca dlq purge --broker-url amqp://guest:guest@localhost/
+
+    \b
+    # Purge without confirmation
+    jararaca dlq purge --broker-url amqp://guest:guest@localhost/ --force
+    """
+
+    async def run_purge() -> None:
+        connection = await aio_pika.connect(broker_url)
+        try:
+            async with connection.channel() as channel:
+                # First check how many messages are in the queue
+                try:
+                    queue_info = await channel.declare_queue(
+                        RabbitmqUtils.DEAD_LETTER_QUEUE, passive=True
+                    )
+                    message_count = queue_info.declaration_result.message_count or 0
+                except Exception:
+                    click.echo("Dead Letter Queue does not exist or is not accessible.")
+                    return
+
+                if message_count == 0:
+                    click.echo("Dead Letter Queue is already empty.")
+                    return
+
+                if not force:
+                    if not click.confirm(
+                        f"Are you sure you want to purge {message_count} messages from the DLQ? This cannot be undone."
+                    ):
+                        click.echo("Purge cancelled.")
+                        return
+
+                # Purge the queue
+                purged = await RabbitmqUtils.purge_dl_queue(channel)
+                click.echo(f"✓ Successfully purged {purged} messages from the DLQ.")
+
+        finally:
+            await connection.close()
+
+    asyncio.run(run_purge())
+
+
+@dlq.command("requeue")
+@click.option(
+    "--broker-url",
+    type=str,
+    envvar="BROKER_URL",
+    required=True,
+    help="The URL for the message broker",
+)
+@click.option(
+    "--queue",
+    "queue_filter",
+    type=str,
+    default=None,
+    help="Only requeue messages from a specific original queue (supports partial match)",
+)
+@click.option(
+    "--limit",
+    type=int,
+    default=None,
+    help="Maximum number of messages to requeue",
+)
+@click.option(
+    "--force",
+    "-f",
+    is_flag=True,
+    default=False,
+    help="Skip confirmation prompt",
+)
+def dlq_requeue(
+    broker_url: str,
+    queue_filter: str | None,
+    limit: int | None,
+    force: bool,
+) -> None:
+    """Requeue messages from the Dead Letter Queue back to their original queues.
+
+    This command retrieves messages from the DLQ and publishes them back to their
+    original queues for reprocessing.
+
+    Examples:
+
+    \b
+    # Requeue all messages
+    jararaca dlq requeue --broker-url amqp://guest:guest@localhost/
+
+    \b
+    # Requeue messages from a specific queue
+    jararaca dlq requeue --broker-url amqp://guest:guest@localhost/ --queue user.events
+
+    \b
+    # Requeue only 5 messages
+    jararaca dlq requeue --broker-url amqp://guest:guest@localhost/ --limit 5
+    """
+
+    async def run_requeue() -> None:
+        parsed_url = urlparse(broker_url)
+        query_params = parse_qs(parsed_url.query)
+
+        if "exchange" not in query_params or not query_params["exchange"]:
+            click.echo(
+                "ERROR: Exchange must be set in the broker URL query string", err=True
+            )
+            return
+
+        exchange_name = query_params["exchange"][0]
+
+        connection = await aio_pika.connect(broker_url)
+        try:
+            # Fetch messages (will be consumed for requeuing)
+            async with connection.channel() as channel:
+                try:
+                    queue_info = await channel.declare_queue(
+                        RabbitmqUtils.DEAD_LETTER_QUEUE, passive=True
+                    )
+                    total_count = queue_info.declaration_result.message_count or 0
+                except Exception:
+                    click.echo("Dead Letter Queue does not exist or is not accessible.")
+                    return
+
+                if total_count == 0:
+                    click.echo("Dead Letter Queue is empty.")
+                    return
+
+                # Get messages without consuming first to show count
+                messages_preview = await fetch_dlq_messages(
+                    connection, limit=limit, consume=False
+                )
+
+                if queue_filter:
+                    messages_preview = [
+                        (msg, raw)
+                        for msg, raw in messages_preview
+                        if queue_filter.lower() in msg.original_queue.lower()
+                    ]
+
+                if not messages_preview:
+                    click.echo(
+                        f"No messages found matching queue filter: '{queue_filter}'"
+                    )
+                    return
+
+                requeue_count = len(messages_preview)
+
+                if not force:
+                    if not click.confirm(
+                        f"Are you sure you want to requeue {requeue_count} messages?"
+                    ):
+                        click.echo("Requeue cancelled.")
+                        return
+
+            # Now actually consume and requeue messages
+            async with connection.channel() as channel:
+                queue = await RabbitmqUtils.get_dl_queue(channel)
+                exchange = await RabbitmqUtils.get_main_exchange(channel, exchange_name)
+
+                requeued = 0
+                errors = 0
+
+                count = 0
+                while limit is None or count < limit:
+                    try:
+                        raw_message = await asyncio.wait_for(
+                            queue.get(no_ack=False), timeout=1.0
+                        )
+                    except asyncio.TimeoutError:
+                        break
+
+                    if raw_message is None:
+                        break
+
+                    # Apply queue filter
+                    headers = raw_message.headers or {}
+                    x_death_raw = headers.get("x-death")
+                    original_queue = ""
+                    if isinstance(x_death_raw, list) and len(x_death_raw) > 0:
+                        death_info = x_death_raw[0]
+                        if isinstance(death_info, dict):
+                            original_queue = str(death_info.get("queue", ""))
+
+                    if (
+                        queue_filter
+                        and queue_filter.lower() not in original_queue.lower()
+                    ):
+                        # Requeue back to DLQ (don't process this one)
+                        await raw_message.nack(requeue=True)
+                        continue
+
+                    try:
+                        # Publish to the original routing key
+                        routing_key = raw_message.routing_key or original_queue
+                        await exchange.publish(
+                            aio_pika.Message(
+                                body=raw_message.body,
+                                content_type=raw_message.content_type,
+                                headers={"x-requeued-from-dlq": True},
+                            ),
+                            routing_key=routing_key,
+                        )
+                        await raw_message.ack()
+                        requeued += 1
+                    except Exception as e:
+                        click.echo(f"Error requeuing message: {e}", err=True)
+                        await raw_message.nack(requeue=True)
+                        errors += 1
+
+                    count += 1
+
+                click.echo("\n✓ Requeue complete:")
+                click.echo(f"  - Requeued: {requeued}")
+                if errors:
+                    click.echo(f"  - Errors: {errors}")
+
+        finally:
+            await connection.close()
+
+    asyncio.run(run_requeue())
