@@ -23,6 +23,7 @@ from typing import (
     Literal,
     Type,
     TypeVar,
+    cast,
     get_origin,
 )
 from uuid import UUID
@@ -554,7 +555,8 @@ def parse_single_typescript_interface(
     mapped_types.update(inherited_classes)
 
     if Enum in inherited_classes:
-        enum_values = sorted([(x._name_, x.value) for x in basemodel_type])
+        enum_casted = cast(Type[Enum], basemodel_type)
+        enum_values = sorted([(x._name_, x.value) for x in enum_casted])
         return (
             set(),
             f"export enum {basemodel_type.__name__}{interface_suffix} {{\n"

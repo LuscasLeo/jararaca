@@ -3,7 +3,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 
 import os
-from typing import Literal
+from typing import Literal, Optional, TypeVar, overload
 
 
 def is_env_truffy(var_name: str) -> bool:
@@ -11,7 +11,24 @@ def is_env_truffy(var_name: str) -> bool:
     return value in ("1", "true", "yes", "on")
 
 
-def get_env_bool(var_name: str, default: bool) -> bool | Literal["invalid"]:
+DF_BOOL_T = TypeVar("DF_BOOL_T", bound="bool")
+
+
+@overload
+def get_env_bool(
+    var_name: str, default: DF_BOOL_T
+) -> DF_BOOL_T | bool | Literal["invalid"]: ...
+
+
+@overload
+def get_env_bool(
+    var_name: str, default: None = None
+) -> bool | None | Literal["invalid"]: ...
+
+
+def get_env_bool(
+    var_name: str, default: DF_BOOL_T | None = None
+) -> DF_BOOL_T | bool | Literal["invalid"] | None:
     value = os.getenv(var_name)
     if value is None:
         return default
@@ -24,9 +41,22 @@ def get_env_bool(var_name: str, default: bool) -> bool | Literal["invalid"]:
         return "invalid"
 
 
+DF_INT_T = TypeVar("DF_INT_T", bound="int | None | Literal[False]")
+
+
+@overload
+def get_env_int(var_name: str, default: None = None) -> int | None | Literal[False]: ...
+
+
+@overload
 def get_env_int(
-    var_name: str, default: int | None | Literal[False] = False
-) -> None | int | Literal[False]:
+    var_name: str, default: DF_INT_T
+) -> DF_INT_T | int | Literal[False]: ...
+
+
+def get_env_int(
+    var_name: str, default: DF_INT_T = False  # type: ignore[assignment]
+) -> DF_INT_T | int | Literal[False]:
     value = os.getenv(var_name)
     if value is None:
         return default
@@ -36,9 +66,24 @@ def get_env_int(
         return False
 
 
+DF_FLOAT_T = TypeVar("DF_FLOAT_T", bound="float | None | Literal[False]")
+
+
+@overload
 def get_env_float(
-    var_name: str, default: float | None | Literal[False] = False
-) -> None | float | Literal[False]:
+    var_name: str, default: None = None
+) -> float | None | Literal[False]: ...
+
+
+@overload
+def get_env_float(
+    var_name: str, default: DF_FLOAT_T
+) -> DF_FLOAT_T | float | Literal[False]: ...
+
+
+def get_env_float(
+    var_name: str, default: DF_FLOAT_T = False  # type: ignore[assignment]
+) -> DF_FLOAT_T | float | Literal[False]:
     value = os.getenv(var_name)
     if value is None:
         return default
@@ -48,7 +93,18 @@ def get_env_float(
         return False
 
 
-def get_env_str(var_name: str, default: str) -> None | str:
+DF_STR_T = TypeVar("DF_STR_T", bound="Optional[str]")
+
+
+@overload
+def get_env_str(var_name: str, default: None = None) -> str | None: ...
+
+
+@overload
+def get_env_str(var_name: str, default: DF_STR_T) -> DF_STR_T | str: ...
+
+
+def get_env_str(var_name: str, default: DF_STR_T = None) -> DF_STR_T | str:  # type: ignore[assignment]
     value = os.getenv(var_name)
     if value is None:
         return default
