@@ -13,6 +13,10 @@ class Token(Generic[T]):
     type_: Type[T]
     name: str
 
+    @classmethod
+    def create(cls, type_: Type[T], name: str) -> "Token[T]":
+        return cls(type_=type_, name=name)
+
 
 @dataclass
 class ProviderSpec:
