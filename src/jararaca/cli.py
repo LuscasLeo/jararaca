@@ -821,10 +821,12 @@ def gen_entity(entity_name: str, file_path: StreamWriter) -> None:
     entity_kebab_case = camel_case_to_kebab_case(entity_name)
 
     file_path.write(
-        template.render(
-            entityNameSnakeCase=entity_snake_case,
-            entityNamePascalCase=entity_pascal_case,
-            entityNameKebabCase=entity_kebab_case,
+        str(
+            template.render(
+                entityNameSnakeCase=entity_snake_case,
+                entityNamePascalCase=entity_pascal_case,
+                entityNameKebabCase=entity_kebab_case,
+            )
         )
     )
 
