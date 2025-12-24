@@ -311,7 +311,7 @@ class Container:
         self.register(instance, bind_to)
         return cast(T, instance)
 
-    def register(self, instance: T, bind_to: Any) -> None:
+    def register(self, instance: Any, bind_to: Any) -> None:
         self.instances_map[bind_to] = instance
 
     def get_by_type(self, token: Type[T]) -> T:

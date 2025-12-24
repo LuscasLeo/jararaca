@@ -308,7 +308,6 @@ if TYPE_CHECKING:
         "use_session",
         "use_transaction",
         "providing_session",
-        "provide_session",
         "uses_persistence_session",
         "skip_persistence_session",
         "set_use_persistence_session",
@@ -520,11 +519,6 @@ _dynamic_imports: "dict[str, tuple[str, str, str | None]]" = {
         None,
     ),
     "providing_session": (
-        __SPEC_PARENT__,
-        "persistence.interceptors.aiosqa_interceptor",
-        None,
-    ),
-    "provide_session": (
         __SPEC_PARENT__,
         "persistence.interceptors.aiosqa_interceptor",
         None,

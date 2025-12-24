@@ -20,7 +20,7 @@ from jararaca.reflect.controller_inspect import (
     ControllerMemberReflect,
     inspect_controller,
 )
-from jararaca.reflect.decorators import DECORATED_T, StackableDecorator
+from jararaca.reflect.decorators import FUNC_OR_TYPE_T, StackableDecorator
 
 DECORATED_TYPE = TypeVar("DECORATED_TYPE", bound=Any)
 DECORATED_FUNC = TypeVar("DECORATED_FUNC", bound=Callable[..., Any])
@@ -61,11 +61,11 @@ class RestController(StackableDecorator):
             raise Exception("Router factory is not set")
         return self.router_factory
 
-    def post_decorated(self, subject: DECORATED_T) -> None:
+    def post_decorated(self, subject: FUNC_OR_TYPE_T) -> None:
 
         def router_factory(
             lifecycle: AppLifecycle,
-            instance: DECORATED_T,
+            instance: FUNC_OR_TYPE_T,
         ) -> APIRouter:
             assert inspect.isclass(
                 subject

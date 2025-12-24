@@ -4,7 +4,9 @@
 
 from typing import Any, Callable, Generic, Self, TypedDict, TypeVar, cast
 
-DECORATED_T = TypeVar("DECORATED_T", bound="Callable[..., Any] | type")
+FUNC_OR_TYPE_T = Callable[..., Any] | type
+
+DECORATED_T = TypeVar("DECORATED_T", bound="FUNC_OR_TYPE_T")
 
 
 S = TypeVar("S", bound="BaseStackableDecorator")
@@ -95,13 +97,13 @@ class BaseStackableDecorator:
             return decorators[-1]
         return None
 
-    def pre_decorated(self, subject: DECORATED_T) -> None:
+    def pre_decorated(self, subject: FUNC_OR_TYPE_T) -> None:
         """
         Hook method called before the subject is decorated.
         Can be overridden by subclasses to perform additional setup.
         """
 
-    def post_decorated(self, subject: DECORATED_T) -> None:
+    def post_decorated(self, subject: FUNC_OR_TYPE_T) -> None:
         """
         Hook method called after the subject has been decorated.
         Can be overridden by subclasses to perform additional setup.
