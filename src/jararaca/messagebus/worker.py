@@ -1275,7 +1275,7 @@ class MessageHandlerCallback:
         self,
         aio_pika_message: aio_pika.abc.AbstractIncomingMessage,
         *,
-        requeue_timeout: float,
+        requeue_timeout: float = 0,
         requeue: bool = False,
         retry_count: int = 0,
         exception: Optional[BaseException] = None,

@@ -561,7 +561,7 @@ class BeatWorker:
 
         # Ensure we have a healthy connection before starting the main loop
         if (
-            hasattr(self.broker, "connection_healthy")
+            isinstance(self.broker, _RabbitMQBrokerDispatcher)
             and not self.broker.connection_healthy
         ):
             logger.error("Connection not healthy at start of processing loop. Exiting.")
@@ -570,7 +570,7 @@ class BeatWorker:
         while not self.shutdown_event.is_set():
             # Check connection health before processing scheduled actions
             if (
-                hasattr(self.broker, "connection_healthy")
+                isinstance(self.broker, _RabbitMQBrokerDispatcher)
                 and not self.broker.connection_healthy
             ):
                 logger.error("Broker connection is not healthy. Exiting.")
@@ -729,7 +729,7 @@ class BeatWorker:
 
             # Check if broker connection is healthy
             if (
-                hasattr(self.broker, "connection_healthy")
+                isinstance(self.broker, _RabbitMQBrokerDispatcher)
                 and self.broker.connection_healthy
             ):
                 logger.debug("Broker connection is healthy")
