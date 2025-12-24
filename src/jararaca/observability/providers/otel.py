@@ -4,7 +4,7 @@
 
 import logging
 from contextlib import asynccontextmanager, contextmanager
-from typing import Any, AsyncGenerator, Generator, Literal, Protocol
+from typing import TYPE_CHECKING, Any, AsyncGenerator, Generator, Literal, Protocol
 
 from opentelemetry import metrics, trace
 from opentelemetry._logs import set_logger_provider
@@ -48,6 +48,10 @@ from jararaca.observability.decorators import (
     TracingSpanContext,
 )
 from jararaca.observability.interceptor import ObservabilityProvider
+
+if TYPE_CHECKING:
+    from opentelemetry.trace import Span as _Span
+    from typing_extensions import TypeIs
 
 tracer: trace.Tracer = trace.get_tracer(__name__)
 
@@ -192,13 +196,13 @@ class OtelTracingContextProviderFactory(TracingContextProviderFactory):
 
     @asynccontextmanager
     async def root_setup(
-        self, app_tx_ctx: AppTransactionContext
+        self, app_context: AppTransactionContext
     ) -> AsyncGenerator[None, None]:
 
         title: str = "Unmapped App Context Execution"
         headers: dict[str, Any] = {}
-        tx_data = app_tx_ctx.transaction_data
-        extra_attributes = extract_context_attributes(app_tx_ctx)
+        tx_data = app_context.transaction_data
+        extra_attributes = extract_context_attributes(app_context)
 
         if tx_data.context_type == "http":
             headers = dict(tx_data.request.headers)
@@ -244,12 +248,12 @@ class OtelTracingContextProviderFactory(TracingContextProviderFactory):
         ) as root_span:
             cx = root_span.get_span_context()
             span_traceparent_id = hex(cx.trace_id)[2:].rjust(32, "0")
-            if app_tx_ctx.transaction_data.context_type == "http":
-                app_tx_ctx.transaction_data.request.scope[TRACEPARENT_KEY] = (
+            if app_context.transaction_data.context_type == "http":
+                app_context.transaction_data.request.scope[TRACEPARENT_KEY] = (
                     span_traceparent_id
                 )
-            elif app_tx_ctx.transaction_data.context_type == "websocket":
-                app_tx_ctx.transaction_data.websocket.scope[TRACEPARENT_KEY] = (
+            elif app_context.transaction_data.context_type == "websocket":
+                app_context.transaction_data.websocket.scope[TRACEPARENT_KEY] = (
                     span_traceparent_id
                 )
             tracing_headers: ImplicitHeaders = {}
@@ -264,6 +268,16 @@ class LoggerHandlerCallback(Protocol):
     def __call__(self, logger_handler: logging.Handler) -> None: ...
 
 
+class SpanWithName(Protocol):
+
+    @property
+    def name(self) -> str: ...
+
+
+def is_span_with_name(span: Any) -> "TypeIs[SpanWithName]":
+    return hasattr(span, "name")
+
+
 class CustomLoggingHandler(LoggingHandler):
 
     def _translate(self, record: logging.LogRecord) -> dict[str, Any]:
@@ -272,14 +286,16 @@ class CustomLoggingHandler(LoggingHandler):
             data = super()._translate(record)
             extra_attributes = extract_context_attributes(ctx)
 
-            current_span = trace.get_current_span()
+            current_span: "_Span" = trace.get_current_span()
 
             data["attributes"] = {
                 **data.get("attributes", {}),
                 **extra_attributes,
                 **(
                     {
-                        "span_name": current_span.name,
+                        "span_name": (
+                            current_span.name if is_span_with_name(current_span) else ""
+                        ),
                     }
                     if hasattr(current_span, "name")
                     and current_span.is_recording() is False
@@ -300,7 +316,7 @@ class OtelObservabilityProvider(ObservabilityProvider):
         logs_exporter: LogExporter,
         span_exporter: SpanExporter,
         meter_exporter: MeterExporter,
-        logging_handler_callback: LoggerHandlerCallback = lambda _: None,
+        logging_handler_callback: LoggerHandlerCallback = lambda logger_handler: None,
         meter_export_interval: int = 5000,
     ) -> None:
         self.app_name = app_name
@@ -358,7 +374,7 @@ class OtelObservabilityProvider(ObservabilityProvider):
     def from_url(
         app_name: str,
         url: str,
-        logging_handler_callback: LoggerHandlerCallback = lambda _: None,
+        logging_handler_callback: LoggerHandlerCallback = lambda logger_handler: None,
         meter_export_interval: int = 5000,
     ) -> "OtelObservabilityProvider":
         """

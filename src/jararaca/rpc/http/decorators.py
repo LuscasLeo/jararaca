@@ -27,7 +27,8 @@ from jararaca.reflect.decorators import StackableDecorator
 
 logger = logging.getLogger(__name__)
 
-DECORATED_FUNC = TypeVar("DECORATED_FUNC", bound=Callable[..., Awaitable[Any]])
+FUNC_T = Callable[..., Awaitable[Any]]
+DECORATED_FUNC = TypeVar("DECORATED_FUNC", bound=FUNC_T)
 DECORATED_CLASS = TypeVar("DECORATED_CLASS", bound=Any)
 
 
@@ -143,7 +144,7 @@ class Timeout:
         return func
 
     @staticmethod
-    def get(func: DECORATED_FUNC) -> Optional["Timeout"]:
+    def get(func: FUNC_T) -> Optional["Timeout"]:
         return getattr(func, Timeout.TIMEOUT_ATTR, None)
 
 
@@ -174,7 +175,7 @@ class Retry:
         return func
 
     @staticmethod
-    def get(func: DECORATED_FUNC) -> Optional["Retry"]:
+    def get(func: FUNC_T) -> Optional["Retry"]:
         return getattr(func, Retry.RETRY_ATTR, None)
 
 
@@ -191,7 +192,7 @@ class ContentType:
         return func
 
     @staticmethod
-    def get(func: DECORATED_FUNC) -> Optional["ContentType"]:
+    def get(func: FUNC_T) -> Optional["ContentType"]:
         return getattr(func, ContentType.CONTENT_TYPE_ATTR, None)
 
 
@@ -679,7 +680,6 @@ __all__ = [
     "BasicAuth",
     "ApiKeyAuth",
     "CacheMiddleware",
-    "TracedRequestMiddleware",
     "GlobalHttpErrorHandler",
     "RouteHttpErrorHandler",
     "HandleHttpErrorCallback",

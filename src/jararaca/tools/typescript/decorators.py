@@ -67,11 +67,11 @@ class SplitInputOutput(StackableDecorator):
         pass
 
     @staticmethod
-    def is_split_model(cls: type) -> bool:
+    def is_split_model(cls_type: type) -> bool:
         """
         Check if the Pydantic model is marked for split interface generation.
         """
-        return SplitInputOutput.get_last(cls) is not None
+        return SplitInputOutput.get_last(cls_type) is not None
 
 
 class ExposeType:
@@ -106,11 +106,11 @@ class ExposeType:
         return cls
 
     @staticmethod
-    def is_exposed_type(cls: type) -> bool:
+    def is_exposed_type(cls_type: type) -> bool:
         """
         Check if the type is marked for explicit exposure.
         """
-        return getattr(cls, ExposeType.METADATA_KEY, False)
+        return getattr(cls_type, ExposeType.METADATA_KEY, False)
 
     @staticmethod
     def get_all_exposed_types() -> set[type]:

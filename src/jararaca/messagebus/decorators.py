@@ -13,7 +13,7 @@ from jararaca.reflect.controller_inspect import (
     inspect_controller,
 )
 from jararaca.reflect.decorators import (
-    DECORATED_T,
+    FUNC_OR_TYPE_T,
     GenericStackableDecorator,
     StackableDecorator,
 )
@@ -64,12 +64,12 @@ class MessageHandler(GenericStackableDecorator[AcceptableHandler]):
     def __call__(self, subject: MessageHandlerT) -> MessageHandlerT:
         return cast(MessageHandlerT, super().__call__(subject))
 
-    def pre_decorated(self, subject: DECORATED_T) -> None:
+    def pre_decorated(self, subject: FUNC_OR_TYPE_T) -> None:
         MessageHandler.validate_decorated_fn(subject)
 
     @staticmethod
     def validate_decorated_fn(
-        subject: DECORATED_T,
+        subject: FUNC_OR_TYPE_T,
     ) -> tuple[Literal["WRAPPED", "DIRECT"], type[Message]]:
         """Validates that the decorated function has the correct signature
         the decorated must follow one of the patterns:
@@ -167,16 +167,16 @@ class MessageBusController(StackableDecorator):
     def get_messagebus_factory(
         self,
     ) -> Callable[
-        [DECORATED_T], tuple[MESSAGE_HANDLER_DATA_SET, SCHEDULED_ACTION_DATA_SET]
+        [FUNC_OR_TYPE_T], tuple[MESSAGE_HANDLER_DATA_SET, SCHEDULED_ACTION_DATA_SET]
     ]:
         if self.messagebus_factory is None:
             raise Exception("MessageBus factory is not set")
         return self.messagebus_factory
 
-    def post_decorated(self, subject: DECORATED_T) -> None:
+    def post_decorated(self, subject: FUNC_OR_TYPE_T) -> None:
 
         def messagebus_factory(
-            instance: DECORATED_T,
+            instance: FUNC_OR_TYPE_T,
         ) -> tuple[MESSAGE_HANDLER_DATA_SET, SCHEDULED_ACTION_DATA_SET]:
             handlers: MESSAGE_HANDLER_DATA_SET = set()
 

@@ -43,7 +43,7 @@ BASED_BASE_ENTITY_T = TypeVar("BASED_BASE_ENTITY_T", bound="BaseEntity")
 class BaseEntity(AsyncAttrs, DeclarativeBase):
 
     @classmethod
-    def from_basemodel(cls, mutation: T_BASEMODEL) -> "Self":
+    def from_basemodel(cls, mutation: BaseModel) -> "Self":
         intersection = set(cls.__annotations__.keys()) & set(
             mutation.__class__.model_fields.keys()
         )
