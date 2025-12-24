@@ -333,9 +333,9 @@ class QueryOperations(Generic[QUERY_FILTER_T, QUERY_ENTITY_T]):
 
         initial_statement = self.base_statement or select(self.entity_type)
 
-        if base_statement and callable(base_statement):
+        if base_statement is not None and callable(base_statement):
             initial_statement = base_statement(initial_statement)
-        elif base_statement and isinstance(base_statement, Select):
+        elif base_statement is not None and isinstance(base_statement, Select):
             initial_statement = base_statement
 
         tier_one_filtered_query = self.generate_filtered_query(
