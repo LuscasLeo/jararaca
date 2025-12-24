@@ -9,6 +9,7 @@ from datetime import tzinfo as _TzInfo
 from typing import Any, AsyncGenerator
 
 import aio_pika
+import tenacity
 from aio_pika.abc import AbstractConnection
 from pydantic import BaseModel
 
@@ -71,7 +72,9 @@ class AIOPikaMessagePublisher(MessagePublisher):
             )
         )
 
-    async def schedule(self, message: IMessage, when: datetime, tz: _TzInfo) -> None:
+    async def schedule(
+        self, message: IMessage, when: datetime, timezone: _TzInfo
+    ) -> None:
         if not self.message_broker_backend:
             raise NotImplementedError(
                 "Schedule is not implemented for AIOPikaMessagePublisher"
@@ -110,6 +113,18 @@ class GenericPoolConfig(BaseModel):
     max_size: int
 
 
+default_retry = tenacity.retry(
+    wait=tenacity.wait_exponential_jitter(initial=1, max=60),
+    before_sleep=tenacity.before_sleep_log(logger, logging.WARNING),
+)
+
+default_retry_channel = tenacity.retry(
+    wait=tenacity.wait_exponential_jitter(initial=1, max=60),
+    before_sleep=tenacity.before_sleep_log(logger, logging.WARNING),
+    stop=tenacity.stop_after_attempt(5),
+)
+
+
 class AIOPikaConnectionFactory(MessageBusConnectionFactory):
 
     def __init__(
@@ -130,6 +145,7 @@ class AIOPikaConnectionFactory(MessageBusConnectionFactory):
 
         if connection_pool_config:
 
+            @default_retry
             async def get_connection() -> AbstractConnection:
                 return await aio_pika.connect(self.url)
 
@@ -140,6 +156,7 @@ class AIOPikaConnectionFactory(MessageBusConnectionFactory):
 
         if channel_pool_config:
 
+            @default_retry_channel
             async def get_channel() -> aio_pika.abc.AbstractChannel:
                 async with self.acquire_connection() as connection:
                     return await connection.channel(publisher_confirms=False)
@@ -148,10 +165,14 @@ class AIOPikaConnectionFactory(MessageBusConnectionFactory):
                 get_channel, max_size=channel_pool_config.max_size
             )
 
+    @default_retry
+    async def _connect(self) -> AbstractConnection:
+        return await aio_pika.connect(self.url)
+
     @asynccontextmanager
     async def acquire_connection(self) -> AsyncGenerator[AbstractConnection, Any]:
         if not self.connection_pool:
-            async with await aio_pika.connect(self.url) as connection:
+            async with await self._connect() as connection:
                 yield connection
         else:
 
