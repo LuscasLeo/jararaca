@@ -183,12 +183,31 @@ class AIOPikaConnectionFactory(MessageBusConnectionFactory):
     async def acquire_channel(
         self,
     ) -> AsyncGenerator[aio_pika.abc.AbstractChannel, Any]:
-        if not self.channel_pool:
-            async with self.acquire_connection() as connection:
-                yield await connection.channel(publisher_confirms=False)
-        else:
-            async with self.channel_pool.acquire() as channel:
-                yield channel
+
+        async for attempt in tenacity.AsyncRetrying(
+            wait=tenacity.wait_exponential_jitter(initial=1, max=10),
+            before_sleep=tenacity.before_sleep_log(logger, logging.WARNING),
+            # stop=tenacity.stop_after_attempt(9000),
+        ):
+            with attempt:
+
+                if not self.connection_pool or not self.channel_pool:
+                    async with self.acquire_connection() as connection:
+                        yield await connection.channel(publisher_confirms=False)
+                else:
+
+                    async with self.connection_pool.acquire() as connection:
+                        await connection.connect()
+
+                        async with connection.channel(
+                            publisher_confirms=False
+                        ) as channel:
+                            yield channel
+                if attempt.retry_state.attempt_number > 1:
+                    logger.warning(
+                        "Later successful connection attempt #%d",
+                        attempt.retry_state.attempt_number,
+                    )
 
     @asynccontextmanager
     async def provide_connection(self) -> AsyncGenerator[AIOPikaMessagePublisher, Any]:
