@@ -52,6 +52,7 @@ class MessageBusPublisherInterceptor(AppInterceptor):
             if collector.has_messages():
                 async with self.connection_factory.provide_connection() as connection:
                     await collector.fill(connection)
+                    await connection.flush()
                     return
         else:
 
