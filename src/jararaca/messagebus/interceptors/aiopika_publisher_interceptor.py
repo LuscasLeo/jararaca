@@ -197,12 +197,14 @@ class AIOPikaConnectionFactory(MessageBusConnectionFactory):
                 else:
 
                     async with self.connection_pool.acquire() as connection:
-                        await connection.connect()
+                        if not connection.connected.is_set():
+                            await connection.connect()
 
                         async with connection.channel(
                             publisher_confirms=False
                         ) as channel:
                             yield channel
+                        # await connection.close()
                 if attempt.retry_state.attempt_number > 1:
                     logger.warning(
                         "Later successful connection attempt #%d",
