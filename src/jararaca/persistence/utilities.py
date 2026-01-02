@@ -321,6 +321,7 @@ class QueryOperations(Generic[QUERY_FILTER_T, QUERY_ENTITY_T]):
             | Select[Tuple[QUERY_ENTITY_T]]
             | None
         ) = None,
+        total_type: Literal["total_over", "count_subquery"] = "total_over",
     ) -> "Paginated[QUERY_ENTITY_T]":
         """
         Executes a query with the provided filter and interceptors.
@@ -362,32 +363,41 @@ class QueryOperations(Generic[QUERY_FILTER_T, QUERY_ENTITY_T]):
                 )
             )
 
-        paginated_query = tier_two_filtered_query.add_columns(
-            func.count().over().label("total_count")
-        )
-        paginated_query = paginated_query.limit(filter.page_size).offset(
-            (filter.page) * filter.page_size
-        )
+        if total_type == "total_over":
+            # Use window function for total count (single query)
+            paginated_query = tier_two_filtered_query.add_columns(
+                func.count().over().label("total_count")
+            )
+            paginated_query = paginated_query.limit(filter.page_size).offset(
+                (filter.page) * filter.page_size
+            )
 
-        result = await self.session.execute(paginated_query)
-        result = self.judge_unique(result)
-        rows = result.all()
+            result = await self.session.execute(paginated_query)
+            result = self.judge_unique(result)
+            rows = result.all()
 
-        if rows:
-            unpaginated_total = rows[0].total_count
-            result_scalars = [row[0] for row in rows]
-        else:
-            result_scalars = []
-            if filter.page == 0:
-                unpaginated_total = 0
+            if rows:
+                unpaginated_total = rows[0].total_count
+                result_scalars = [row[0] for row in rows]
             else:
-                unpaginated_total = (
-                    await self.session.execute(
-                        select(func.count()).select_from(
-                            tier_two_filtered_query.subquery()
-                        )
-                    )
-                ).scalar_one()
+                result_scalars = []
+                unpaginated_total = 0
+        else:  # total_type == "count_subquery"
+            # Use separate count query (two queries)
+            paginated_query = tier_two_filtered_query.limit(filter.page_size).offset(
+                (filter.page) * filter.page_size
+            )
+
+            result = await self.session.execute(paginated_query)
+            result = self.judge_unique(result)
+            result_scalars = list(result.scalars())
+
+            # Always fetch total with separate query
+            unpaginated_total = (
+                await self.session.execute(
+                    select(func.count()).select_from(tier_two_filtered_query.subquery())
+                )
+            ).scalar_one()
 
         return Paginated(
             items=result_scalars,
