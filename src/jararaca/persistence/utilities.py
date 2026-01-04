@@ -395,7 +395,15 @@ class QueryOperations(Generic[QUERY_FILTER_T, QUERY_ENTITY_T]):
             # Always fetch total with separate query
             unpaginated_total = (
                 await self.session.execute(
-                    select(func.count()).select_from(tier_two_filtered_query.subquery())
+                    select(func.count()).select_from(
+                        (
+                            tier_two_filtered_query.with_only_columns(
+                                self.entity_type.id
+                            )
+                            if issubclass(self.entity_type, IdentifiableEntity)
+                            else tier_two_filtered_query
+                        ).subquery()
+                    )
                 )
             ).scalar_one()
 
