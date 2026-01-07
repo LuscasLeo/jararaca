@@ -261,7 +261,7 @@ class _RabbitMQBrokerDispatcher(_MessageBrokerDispatcher):
                     aio_pika.Message(
                         body=delayed_message.payload,
                     ),
-                    routing_key=f"{delayed_message.message_topic}.",
+                    routing_key=f"{delayed_message.message_topic}.#",
                 )
 
         try:
