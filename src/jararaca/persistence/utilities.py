@@ -406,9 +406,9 @@ class QueryOperations(Generic[QUERY_FILTER_T, QUERY_ENTITY_T]):
                         func.count(self.entity_type.id)
                     ).order_by(None)
                     if issubclass(self.entity_type, IdentifiableEntity)
-                    else select(func.count()).select_from(
-                        tier_two_filtered_query.subquery()
-                    )
+                    else select(func.count())
+                    .select_from(tier_two_filtered_query.subquery())
+                    .order_by(None)
                 )
             ).scalar_one()
 
