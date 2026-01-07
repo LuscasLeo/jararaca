@@ -321,6 +321,10 @@ class QueryOperations(Generic[QUERY_FILTER_T, QUERY_ENTITY_T]):
             | Select[Tuple[QUERY_ENTITY_T]]
             | None
         ) = None,
+        final_listing_statement: (
+            Callable[[Select[Tuple[QUERY_ENTITY_T]]], Select[Tuple[QUERY_ENTITY_T]]]
+            | None
+        ) = None,
         total_type: Literal["total_over", "count_subquery"] = "total_over",
     ) -> "Paginated[QUERY_ENTITY_T]":
         """
@@ -363,6 +367,9 @@ class QueryOperations(Generic[QUERY_FILTER_T, QUERY_ENTITY_T]):
                 )
             )
 
+        if final_listing_statement is not None:
+            tier_two_filtered_query = final_listing_statement(tier_two_filtered_query)
+
         if total_type == "total_over":
             # Use window function for total count (single query)
             paginated_query = tier_two_filtered_query.add_columns(
@@ -395,14 +402,12 @@ class QueryOperations(Generic[QUERY_FILTER_T, QUERY_ENTITY_T]):
             # Always fetch total with separate query
             unpaginated_total = (
                 await self.session.execute(
-                    select(func.count()).select_from(
-                        (
-                            tier_two_filtered_query.with_only_columns(
-                                self.entity_type.id
-                            )
-                            if issubclass(self.entity_type, IdentifiableEntity)
-                            else tier_two_filtered_query
-                        ).subquery()
+                    tier_two_filtered_query.with_only_columns(
+                        func.count(self.entity_type.id)
+                    ).order_by(None)
+                    if issubclass(self.entity_type, IdentifiableEntity)
+                    else select(func.count()).select_from(
+                        tier_two_filtered_query.subquery()
                     )
                 )
             ).scalar_one()
