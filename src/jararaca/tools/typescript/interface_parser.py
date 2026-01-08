@@ -395,7 +395,7 @@ def get_field_type_for_ts(
     if field_type == bool:
         return "boolean"
     if field_type == Decimal:
-        return "number"
+        return "string"
     if get_origin(field_type) == ClassVar:
         return get_field_type_for_ts(
             field_type.__args__[0], context_suffix, type_mapping
