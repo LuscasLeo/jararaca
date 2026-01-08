@@ -400,15 +400,16 @@ class QueryOperations(Generic[QUERY_FILTER_T, QUERY_ENTITY_T]):
             result_scalars = list(result.scalars())
 
             # Always fetch total with separate query
+            tier_two_filtered_query_for_count = tier_two_filtered_query.order_by(None)
             unpaginated_total = (
                 await self.session.execute(
-                    tier_two_filtered_query.with_only_columns(
+                    tier_two_filtered_query_for_count.with_only_columns(
                         func.count(self.entity_type.id)
-                    ).order_by(None)
+                    )
                     if issubclass(self.entity_type, IdentifiableEntity)
-                    else select(func.count())
-                    .select_from(tier_two_filtered_query.subquery())
-                    .order_by(None)
+                    else select(func.count()).select_from(
+                        tier_two_filtered_query_for_count.subquery()
+                    )
                 )
             ).scalar_one()
 
