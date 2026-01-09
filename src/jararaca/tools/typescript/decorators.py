@@ -30,7 +30,7 @@ class QueryEndpoint(StackableDecorator):
         self.has_infinite_query = has_infinite_query
 
     @staticmethod
-    def extract_query_endpoint(func: Any) -> "QueryEndpoint | None":
+    def get_last(func: Any) -> "QueryEndpoint | None":
         """
         Check if the function is marked as a query endpoint.
         """
