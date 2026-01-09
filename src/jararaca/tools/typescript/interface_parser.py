@@ -899,7 +899,6 @@ def write_rest_controller_to_typescript_interface(
         mapping = resolve_bound_method_decorator(
             controller, name, HttpMapping, rest_controller.methods_inherit_decorators
         )
-        effective_member = member
 
         if mapping is not None:
             return_type = member.__annotations__.get("return")
@@ -914,7 +913,12 @@ def write_rest_controller_to_typescript_interface(
                 rest_controller.methods_inherit_decorators,
             ):
                 decorated_queries.append((name, member, query_endpoint))
-            if MutationEndpoint.is_mutation(effective_member):
+            if resolve_bound_method_decorator(
+                controller,
+                name,
+                MutationEndpoint,
+                rest_controller.methods_inherit_decorators,
+            ):
                 decorated_mutations.append((name, member))
 
             mapped_types.update(extract_all_envolved_types(return_type))
@@ -1069,37 +1073,110 @@ def write_rest_controller_to_typescript_interface(
 
     if decorated_queries or decorated_mutations:
         controller_hooks_builder = StringIO()
+
+        # Build a map of methods that have both query and mutation decorators
+        method_names_with_query = {name for name, _, _ in decorated_queries}
+        method_names_with_mutation = {name for name, _ in decorated_mutations}
+        methods_with_both = method_names_with_query & method_names_with_mutation
+
+        # Create a dictionary for easier lookup
+        query_dict = {
+            name: (member, query) for name, member, query in decorated_queries
+        }
+
+        # Separate methods that have both decorators from those that have only one
+        query_only = [
+            (name, member, query)
+            for name, member, query in decorated_queries
+            if name not in methods_with_both
+        ]
+        mutation_only = [
+            (name, member)
+            for name, member in decorated_mutations
+            if name not in methods_with_both
+        ]
+        both_decorators = [
+            (name, query_dict[name][0], query_dict[name][1])
+            for name in sorted(methods_with_both)
+        ]
+
         controller_hooks_builder.write(
             f"export const {pascal_to_camel(class_name)} = {{\n"
         )
 
-        if decorated_queries:
+        # Generate hooks for methods with only query decorator
+        if query_only:
             controller_hooks_builder.write(
                 f"\t...createClassQueryHooks({class_name},\n"
             )
-            for name, member, _ in decorated_queries:
+            for name, member, _ in query_only:
                 controller_hooks_builder.write(f'\t\t"{snake_to_camel(name)}",\n')
             controller_hooks_builder.write("\t),\n")
 
-        if decorated_queries and any(
-            query.has_infinite_query for _, _, query in decorated_queries
-        ):
+        # Generate infinite query hooks for query-only methods
+        if query_only and any(query.has_infinite_query for _, _, query in query_only):
             controller_hooks_builder.write(
                 f"\t...createClassInfiniteQueryHooks({class_name}, {{\n"
             )
-            for name, member, query in decorated_queries:
+            for name, member, query in query_only:
                 if query.has_infinite_query:
                     controller_hooks_builder.write(
                         f'\t\t"{snake_to_camel(name)}": paginationModelByFirstArgPaginationFilter(),\n'
                     )
             controller_hooks_builder.write("\t}),\n")
-        if decorated_mutations:
+
+        # Generate hooks for methods with only mutation decorator
+        if mutation_only:
             controller_hooks_builder.write(
                 f"\t...createClassMutationHooks({class_name},\n"
             )
-            for name, member in decorated_mutations:
+            for name, member in mutation_only:
                 controller_hooks_builder.write(f'\t\t"{snake_to_camel(name)}",\n')
             controller_hooks_builder.write("\t),\n")
+
+        # Generate queries object for methods with both decorators
+        if both_decorators:
+            controller_hooks_builder.write("\tqueries: {\n")
+            controller_hooks_builder.write(
+                f"\t\t...createClassQueryHooks({class_name},\n"
+            )
+            for name, member, query in both_decorators:
+                camel_name = snake_to_camel(name)
+                controller_hooks_builder.write(f'\t\t\t"{camel_name}",\n')
+            controller_hooks_builder.write("\t\t),\n")
+            controller_hooks_builder.write("\t},\n")
+
+        # Generate mutations object for methods with both decorators
+        if both_decorators:
+            controller_hooks_builder.write("\tmutations: {\n")
+            controller_hooks_builder.write(
+                f"\t\t...createClassMutationHooks({class_name},\n"
+            )
+            for name, member, query in both_decorators:
+                camel_name = snake_to_camel(name)
+                controller_hooks_builder.write(f'\t\t\t"{camel_name}",\n')
+            controller_hooks_builder.write("\t\t),\n")
+            controller_hooks_builder.write("\t},\n")
+
+        # Generate infiniteQueries object for methods with both decorators that have infinite query enabled
+        both_with_infinite = [
+            (name, member, query)
+            for name, member, query in both_decorators
+            if query.has_infinite_query
+        ]
+        if both_with_infinite:
+            controller_hooks_builder.write("\tinfiniteQueries: {\n")
+            controller_hooks_builder.write(
+                f"\t\t...createClassInfiniteQueryHooks({class_name}, {{\n"
+            )
+            for name, member, query in both_with_infinite:
+                camel_name = snake_to_camel(name)
+                controller_hooks_builder.write(
+                    f'\t\t\t"{camel_name}": paginationModelByFirstArgPaginationFilter(),\n'
+                )
+            controller_hooks_builder.write("\t\t}),\n")
+            controller_hooks_builder.write("\t},\n")
+
         controller_hooks_builder.write("};\n")
 
     return class_buffer, mapped_types, controller_hooks_builder

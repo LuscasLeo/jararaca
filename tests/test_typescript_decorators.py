@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2025 Lucas S
+#
+# SPDX-License-Identifier: GPL-3.0-or-later
+
 """
 Tests for TypeScript interface generation decorators.
 """
@@ -74,7 +78,7 @@ class TestQueryEndpointDecorator:
         def test_func() -> None:
             pass
 
-        query_endpoint = QueryEndpoint.extract_query_endpoint(test_func)
+        query_endpoint = QueryEndpoint.get_last(test_func)
         assert query_endpoint is not None
         assert query_endpoint.has_infinite_query is True
 
@@ -85,7 +89,7 @@ class TestQueryEndpointDecorator:
         def test_func() -> None:
             pass
 
-        query_endpoint = QueryEndpoint.extract_query_endpoint(test_func)
+        query_endpoint = QueryEndpoint.get_last(test_func)
         assert query_endpoint is not None
         assert query_endpoint.has_infinite_query is False
 
@@ -95,7 +99,7 @@ class TestQueryEndpointDecorator:
         def test_func() -> None:
             pass
 
-        assert QueryEndpoint.extract_query_endpoint(test_func) is None
+        assert QueryEndpoint.get_last(test_func) is None
 
 
 class TestMutationEndpointDecorator:
