@@ -122,11 +122,12 @@ class TracedFunc:
 
     def __init__(
         self,
-        trace_name: str,
-        trace_mapper: Callable[..., dict[str, str]] = default_trace_mapper,
+        trace_name: str | None = None,
+        *,
+        trace_mapper: Callable[..., dict[str, str]] | None = None,
     ):
         self.trace_name = trace_name
-        self.trace_mapper = trace_mapper
+        self.trace_mapper = trace_mapper or default_trace_mapper
 
     def __call__(
         self,
@@ -141,7 +142,7 @@ class TracedFunc:
 
             if ctx_provider := get_tracing_ctx_provider():
                 with ctx_provider.start_span_context(
-                    self.trace_name,
+                    self.trace_name or decorated.__name__,
                     self.trace_mapper(*args, **kwargs),
                 ):
                     return await decorated(*args, **kwargs)
@@ -213,7 +214,9 @@ class TracedClass:
             # Only trace async methods
             if inspect.iscoroutinefunction(method):
                 trace_name = f"{trace_prefix}.{name}"
-                traced_method = TracedFunc(trace_name, self.trace_mapper)(method)
+                traced_method = TracedFunc(trace_name, trace_mapper=self.trace_mapper)(
+                    method
+                )
                 setattr(cls, name, traced_method)
 
         return cls
