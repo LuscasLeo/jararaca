@@ -22,7 +22,7 @@ from opentelemetry.sdk._logs import LoggerProvider, LoggingHandler
 from opentelemetry.sdk._logs.export import BatchLogRecordProcessor
 from opentelemetry.sdk.metrics import MeterProvider
 from opentelemetry.sdk.metrics.export import PeriodicExportingMetricReader
-from opentelemetry.sdk.resources import SERVICE_NAME, Resource
+from opentelemetry.sdk.resources import SERVICE_NAME, Attributes, Resource
 from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import BatchSpanProcessor
 from opentelemetry.trace.propagation.tracecontext import TraceContextTextMapPropagator
@@ -313,11 +313,13 @@ class OtelObservabilityProvider(ObservabilityProvider):
     def __init__(
         self,
         app_name: str,
+        *,
         logs_exporter: LogExporter,
         span_exporter: SpanExporter,
         meter_exporter: MeterExporter,
         logging_handler_callback: LoggerHandlerCallback = lambda logger_handler: None,
         meter_export_interval: int = 5000,
+        attributes: Attributes | None = None,
     ) -> None:
         self.app_name = app_name
         self.logs_exporter = logs_exporter
@@ -326,6 +328,7 @@ class OtelObservabilityProvider(ObservabilityProvider):
         self.tracing_provider = OtelTracingContextProviderFactory()
         self.meter_export_interval = meter_export_interval
         self.logging_handler_callback = logging_handler_callback
+        self.attributes = attributes or {}
 
     @asynccontextmanager
     async def setup(
@@ -333,7 +336,9 @@ class OtelObservabilityProvider(ObservabilityProvider):
     ) -> AsyncGenerator[None, None]:
         ### Setup Resource
 
-        resource = Resource(attributes={SERVICE_NAME: self.app_name})
+        resource = Resource(
+            attributes={**self.attributes} | {SERVICE_NAME: self.app_name}
+        )
 
         ### Setup Tracing
         provider = TracerProvider(resource=resource)
@@ -364,7 +369,9 @@ class OtelObservabilityProvider(ObservabilityProvider):
         metric_reader = PeriodicExportingMetricReader(
             self.meter_exporter, export_interval_millis=self.meter_export_interval
         )
-        meter_provider = MeterProvider(metric_readers=[metric_reader])
+        meter_provider = MeterProvider(
+            metric_readers=[metric_reader], resource=resource
+        )
 
         metrics.set_meter_provider(meter_provider)
 
@@ -373,9 +380,11 @@ class OtelObservabilityProvider(ObservabilityProvider):
     @staticmethod
     def from_url(
         app_name: str,
+        *,
         url: str,
         logging_handler_callback: LoggerHandlerCallback = lambda logger_handler: None,
         meter_export_interval: int = 5000,
+        attributes: AttributeMap | None = None,
     ) -> "OtelObservabilityProvider":
         """
         Create an instance of OtelObservabilityProvider with Http Exporters from a given URL
@@ -386,10 +395,11 @@ class OtelObservabilityProvider(ObservabilityProvider):
         metric_exporter = MeterExporter(endpoint=f"{url}/v1/metrics")
 
         return OtelObservabilityProvider(
-            app_name,
-            logs_exporter,
-            span_exporter,
-            metric_exporter,
-            logging_handler_callback,
-            meter_export_interval,
+            app_name=app_name,
+            logs_exporter=logs_exporter,
+            span_exporter=span_exporter,
+            meter_exporter=metric_exporter,
+            logging_handler_callback=logging_handler_callback,
+            meter_export_interval=meter_export_interval,
+            attributes=attributes,
         )
