@@ -62,6 +62,10 @@ class AppLifecycle:
 
         self.container.fill_providers(True)
 
+        if self.app.startup_complete_event is not None:
+            if not self.app.startup_complete_event.is_set():
+                self.app.startup_complete_event.set()
+
         yield
 
         logger.debug("Finalizing interceptors lifecycle")

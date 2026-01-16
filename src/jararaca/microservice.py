@@ -161,6 +161,7 @@ class Microservice:
         default_factory=list
     )
     shutdown_event: asyncio.Event | threading.Event | None = None
+    startup_complete_event: asyncio.Event | threading.Event | None = None
 
 
 @dataclass
