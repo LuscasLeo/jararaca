@@ -31,7 +31,10 @@ class AppLifecycle:
 
     @asynccontextmanager
     async def __call__(self) -> AsyncGenerator[None, None]:
-
+        if self.app.shutdown_event is not None:
+            if self.app.shutdown_event.is_set():
+                logger.info("Root application is shutting down, aborting startup.")
+                exit(0)
         self.__real_interceptors = []
 
         self.container.fill_providers(False)

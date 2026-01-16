@@ -6,7 +6,6 @@ import asyncio
 import logging
 import os
 import signal
-import threading
 from contextlib import asynccontextmanager
 from signal import SIGINT, SIGTERM
 from typing import Any, AsyncGenerator
@@ -47,6 +46,7 @@ class HttpAppLifecycle:
 
     @asynccontextmanager
     async def __call__(self, api: FastAPI) -> AsyncGenerator[None, None]:
+
         with providing_app_type("http"):
             async with self.lifecycle():
 
@@ -80,7 +80,6 @@ class HttpShutdownState(ShutdownState):
             SIGINT: signal.getsignal(SIGINT),
             SIGTERM: signal.getsignal(SIGTERM),
         }
-        self.thread_lock = threading.Lock()
         self.aevent = asyncio.Event()
 
     def request_shutdown(self) -> None:

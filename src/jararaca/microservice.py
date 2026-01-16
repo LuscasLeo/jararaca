@@ -5,6 +5,7 @@
 import asyncio
 import inspect
 import logging
+import threading
 from contextlib import contextmanager, suppress
 from contextvars import ContextVar
 from dataclasses import dataclass, field
@@ -159,6 +160,7 @@ class Microservice:
     interceptors: list[AppInterceptor | Callable[..., AppInterceptor]] = field(
         default_factory=list
     )
+    shutdown_event: asyncio.Event | threading.Event | None = None
 
 
 @dataclass
