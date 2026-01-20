@@ -240,6 +240,9 @@ TRANSFORM_T = TypeVar("TRANSFORM_T")
 PAGINATED_T = TypeVar("PAGINATED_T", bound=Any)
 
 
+PAGINATED_TRANSFORM = TypeVar("PAGINATED_TRANSFORM")
+
+
 class Paginated(BaseModel, Generic[PAGINATED_T]):
     items: list[PAGINATED_T]
     total: int
@@ -282,6 +285,17 @@ class Paginated(BaseModel, Generic[PAGINATED_T]):
             unpaginated_total=self.unpaginated_total,
             total_pages=self.total_pages,
         )
+
+    def __rshift__(
+        self, func: Callable[[PAGINATED_T], PAGINATED_TRANSFORM]
+    ) -> "Paginated[PAGINATED_TRANSFORM]":
+        return self.transform(func)
+
+    async def __rrshift__(
+        self, func: Callable[[PAGINATED_T], Awaitable[PAGINATED_TRANSFORM]]
+    ) -> "Paginated[PAGINATED_TRANSFORM]":
+
+        return await self.transform_async(func)
 
 
 class QueryOperations(Generic[QUERY_FILTER_T, QUERY_ENTITY_T]):
