@@ -418,8 +418,8 @@ class QueryOperations(Generic[QUERY_FILTER_T, QUERY_ENTITY_T]):
             unpaginated_total = (
                 await self.session.execute(
                     tier_two_filtered_query_for_count.with_only_columns(
-                        func.count(self.entity_type.id)
-                    )
+                        func.count()
+                    ).select_from(self.entity_type)
                     if issubclass(self.entity_type, IdentifiableEntity)
                     else select(func.count()).select_from(
                         tier_two_filtered_query_for_count.subquery()
