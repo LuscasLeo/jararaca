@@ -52,9 +52,12 @@ class AIOPikaMessagePublisher(MessagePublisher):
         implicit_headers_data = implicit_headers.use_implicit_headers()
         await exchange.publish(
             aio_pika.Message(
-                body=message.model_dump_json().encode(), headers=implicit_headers_data
+                body=message.model_dump_json().encode(),
+                headers=implicit_headers_data,
+                delivery_mode=aio_pika.DeliveryMode.PERSISTENT,
             ),
             routing_key=routing_key,
+            mandatory=False,
         )
 
     async def delay(self, message: IMessage, seconds: int) -> None:
