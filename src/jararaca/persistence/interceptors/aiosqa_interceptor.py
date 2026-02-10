@@ -16,6 +16,7 @@ from sqlalchemy.ext.asyncio import (
 from sqlalchemy.ext.asyncio.engine import AsyncEngine
 
 from jararaca.microservice import AppInterceptor, AppTransactionContext
+from jararaca.observability.hooks import start_span
 from jararaca.persistence.interceptors.constants import DEFAULT_CONNECTION_NAME
 from jararaca.persistence.interceptors.decorators import (
     INJECT_PERSISTENCE_SESSION_METADATA_TEMPLATE,
@@ -110,22 +111,29 @@ Alias for `providing_session` to maintain backward compatibility.
 async def providing_new_session(
     connection_name: str | None = None,
 ) -> AsyncGenerator[AsyncSession, None]:
+    with start_span(
+        name="Providing Session for connection {}".format(ensure_name(connection_name)),
+        attributes={
+            "connection_name": ensure_name(connection_name),
+            "name": "providing_new_session",
+            "is_loose": True,
+        },
+    ):
+        session_manager = use_session_manager()
+        current_session = session_manager.spawn_session(connection_name)
 
-    session_manager = use_session_manager()
-    current_session = session_manager.spawn_session(connection_name)
-
-    async with AsyncSession(
-        current_session.bind,
-    ) as new_session, new_session.begin() as new_tx:
-        with providing_session(new_session, new_tx, connection_name):
-            try:
-                yield new_session
-                if new_tx.is_active:
-                    await new_tx.commit()
-            except Exception:
-                if new_tx.is_active:
-                    await new_tx.rollback()
-                raise
+        async with AsyncSession(
+            current_session.bind,
+        ) as new_session, new_session.begin() as new_tx:
+            with providing_session(new_session, new_tx, connection_name):
+                try:
+                    yield new_session
+                    if new_tx.is_active:
+                        await new_tx.commit()
+                except Exception:
+                    if new_tx.is_active:
+                        await new_tx.rollback()
+                    raise
 
 
 def use_session(connection_name: str | None = None) -> AsyncSession:
@@ -208,19 +216,29 @@ class AIOSqlAlchemySessionInterceptor(AppInterceptor, SessionManager):
                 yield
                 return
 
-            async with self.sessionmaker() as session, session.begin() as tx:
-                token = ctx_default_connection_name.set(self.config.connection_name)
-                with providing_session(session, tx, self.config.connection_name):
-                    try:
-                        yield
-                        if tx.is_active:
-                            await tx.commit()
-                    except Exception as e:
-                        await tx.rollback()
-                        raise e
-                    finally:
-                        with suppress(ValueError):
-                            ctx_default_connection_name.reset(token)
+            with start_span(
+                name="Starting Persistence Session Interceptor for connection {}".format(
+                    self.config.connection_name
+                ),
+                attributes={
+                    "name": "persistence_session_interceptor",
+                    "connection_name": self.config.connection_name,
+                    "is_loose": False,
+                },
+            ):
+                async with self.sessionmaker() as session, session.begin() as tx:
+                    token = ctx_default_connection_name.set(self.config.connection_name)
+                    with providing_session(session, tx, self.config.connection_name):
+                        try:
+                            yield
+                            if tx.is_active:
+                                await tx.commit()
+                        except Exception as e:
+                            await tx.rollback()
+                            raise e
+                        finally:
+                            with suppress(ValueError):
+                                ctx_default_connection_name.reset(token)
 
     def spawn_session(self, connection_name: str | None = None) -> AsyncSession:
         connection_name = ensure_name(connection_name)
