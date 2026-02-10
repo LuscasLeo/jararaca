@@ -57,7 +57,7 @@ class AIOPikaMessagePublisher(MessagePublisher):
                 delivery_mode=aio_pika.DeliveryMode.PERSISTENT,
             ),
             routing_key=routing_key,
-            mandatory=False,
+            mandatory=message.MESSAGE_TYPE == "task",
         )
 
     async def delay(self, message: IMessage, seconds: int) -> None:
