@@ -99,7 +99,8 @@ class WebSocketConnectionManagerImpl(WebSocketConnectionManager):
             try:
                 if websocket.client_state == WebSocketState.CONNECTED:
                     await websocket.send_bytes(message)
-            except WebSocketDisconnect:
+            except (WebSocketDisconnect, RuntimeError):
+                # RuntimeError is raised when sending after close message
                 disconnected_websockets.append(websocket)
 
         # Clean up disconnected websockets in a single lock acquisition
@@ -131,7 +132,8 @@ class WebSocketConnectionManagerImpl(WebSocketConnectionManager):
                 try:
                     if websocket.client_state == WebSocketState.CONNECTED:
                         await websocket.send_bytes(message)
-                except WebSocketDisconnect:
+                except (WebSocketDisconnect, RuntimeError):
+                    # RuntimeError is raised when sending after close message
                     disconnected_by_room[room].append(websocket)
 
         # Clean up disconnected websockets in a single lock acquisition
