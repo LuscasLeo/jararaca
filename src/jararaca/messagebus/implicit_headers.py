@@ -2,47 +2,30 @@
 #
 # SPDX-License-Identifier: GPL-3.0-or-later
 
-import datetime
-import decimal
-import typing
 from contextlib import contextmanager
 from contextvars import ContextVar
-from typing import Any, Dict, Generator
+from typing import Any, Generator
 
-FieldArray = list["FieldValue"]
-"""A data structure for holding an array of field values."""
+FieldValue = bool | float | int | None | str
 
-FieldTable = typing.Dict[str, "FieldValue"]
-FieldValue = (
-    bool
-    | bytes
-    | bytearray
-    | decimal.Decimal
-    | FieldArray
-    | FieldTable
-    | float
-    | int
-    | None
-    | str
-    | datetime.datetime
-)
+ImplicitHeaders = dict[str, FieldValue]
 
-ImplicitHeaders = Dict[str, FieldValue]
-
-implicit_headers_ctx = ContextVar[ImplicitHeaders | None](
-    "implicit_headers_ctx", default=None
-)
+implicit_headers_ctx = ContextVar[ImplicitHeaders]("implicit_headers_ctx", default={})
 
 
-def use_implicit_headers() -> ImplicitHeaders | None:
+def use_implicit_headers() -> ImplicitHeaders:
     return implicit_headers_ctx.get()
 
 
 @contextmanager
 def provide_implicit_headers(
     implicit_headers: ImplicitHeaders,
+    *,
+    reset: bool = False,
 ) -> Generator[None, Any, None]:
-    token = implicit_headers_ctx.set(implicit_headers)
+    previous_implicit_headers = implicit_headers_ctx.get() if not reset else {}
+    new_implicit_headers = previous_implicit_headers | implicit_headers
+    token = implicit_headers_ctx.set(new_implicit_headers)
     try:
         yield
     finally:
