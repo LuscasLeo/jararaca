@@ -115,11 +115,20 @@ if TYPE_CHECKING:
         Timeout,
         TimeoutException,
     )
+    from jararaca.utils.logger_extra_interceptor import (
+        LoggerExtraInterceptor,
+        get_logger_extra_attributes,
+        providing_logger_extra_attributes,
+    )
     from jararaca.utils.retry import RetryPolicy
 
     from .core.providers import ProviderSpec, Token
     from .di import Container
     from .messagebus.decorators import MessageBusController, MessageHandler
+    from .messagebus.implicit_headers import (
+        provide_implicit_headers,
+        use_implicit_headers,
+    )
     from .messagebus.interceptors.aiopika_publisher_interceptor import (
         AIOPikaConnectionFactory,
         GenericPoolConfig,
@@ -204,6 +213,11 @@ if TYPE_CHECKING:
     )
 
     __all__ = [
+        "use_implicit_headers",
+        "provide_implicit_headers",
+        "get_logger_extra_attributes",
+        "providing_logger_extra_attributes",
+        "LoggerExtraInterceptor",
         "SetMetadata",
         "start_transaction_metadata_context",
         "start_providing_metadata",
@@ -371,6 +385,27 @@ if TYPE_CHECKING:
 __SPEC_PARENT__: str = __spec__.parent  # type: ignore
 # A mapping of {<member name>: (package, <module name>)} defining dynamic imports
 _dynamic_imports: "dict[str, tuple[str, str, str | None]]" = {
+    "use_implicit_headers": (
+        __SPEC_PARENT__,
+        "messagebus.implicit_headers",
+        None,
+    ),
+    "provide_implicit_headers": (
+        __SPEC_PARENT__,
+        "messagebus.implicit_headers",
+        None,
+    ),
+    "get_logger_extra_attributes": (
+        __SPEC_PARENT__,
+        "utils.logger_extra_interceptor",
+        None,
+    ),
+    "providing_logger_extra_attributes": (
+        __SPEC_PARENT__,
+        "utils.logger_extra_interceptor",
+        None,
+    ),
+    "LoggerExtraInterceptor": (__SPEC_PARENT__, "utils.logger_extra_interceptor", None),
     "SetMetadata": (__SPEC_PARENT__, "reflect.metadata", None),
     "TransactionMetadata": (__SPEC_PARENT__, "reflect.metadata", None),
     "start_transaction_metadata_context": (__SPEC_PARENT__, "reflect.metadata", None),

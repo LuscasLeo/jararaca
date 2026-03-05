@@ -57,7 +57,11 @@ from jararaca.microservice import (
     provide_shutdown_state,
     providing_app_type,
 )
-from jararaca.observability.hooks import record_exception, set_span_status
+from jararaca.observability.hooks import (
+    record_exception,
+    record_message_processed,
+    set_span_status,
+)
 from jararaca.scheduler.decorators import ScheduledActionData
 from jararaca.utils.rabbitmq_utils import RabbitmqUtils
 from jararaca.utils.retry import RetryPolicy, retry_with_backoff
@@ -1567,9 +1571,13 @@ class MessageHandlerCallback:
         headers = aio_pika_message.headers or {}
         retry_count = int(str(headers.get("x-retry-count", 0)))
 
-        with provide_implicit_headers(aio_pika_message.headers), provide_shutdown_state(
-            self.consumer.shutdown_state
-        ):
+        with provide_implicit_headers(
+            {
+                k: v
+                for k, v in aio_pika_message.headers.items()
+                if isinstance(v, (str, int, float, bool))
+            }
+        ), provide_shutdown_state(self.consumer.shutdown_state):
             async with self.consumer.uow_context_provider(
                 AppTransactionContext(
                     controller_member_reflect=handler_data.controller_member,
@@ -1632,6 +1640,14 @@ class MessageHandlerCallback:
                                             ack_error,
                                         )
                                 successfully = True
+
+                                # Record successful message processing metric
+                                record_message_processed(
+                                    topic=routing_key,
+                                    message_type=message_type.MESSAGE_TYPE,
+                                    message_category=message_type.MESSAGE_CATEGORY,
+                                    success=True,
+                                )
                             except Exception as base_exc:
                                 set_span_status("ERROR")
                                 record_exception(
@@ -1643,6 +1659,14 @@ class MessageHandlerCallback:
                                     },
                                 )
                                 successfully = False
+
+                                # Record failed message processing metric
+                                record_message_processed(
+                                    topic=routing_key,
+                                    message_type=message_type.MESSAGE_TYPE,
+                                    message_category=message_type.MESSAGE_CATEGORY,
+                                    success=False,
+                                )
                                 # Get message id for logging
                                 message_id = aio_pika_message.message_id or "unknown"
 

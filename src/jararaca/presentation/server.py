@@ -116,8 +116,15 @@ class HttpShutdownState(ShutdownState):
 
 class HttpUowContextProviderDependency:
 
-    def __init__(self, uow_provider: UnitOfWorkContextProvider) -> None:
+    def __init__(
+        self,
+        uow_provider: UnitOfWorkContextProvider,
+        raise_presentation_exception_if_unhandled: bool,
+    ) -> None:
         self.uow_provider = uow_provider
+        self.raise_presentation_exception_if_unhandled = (
+            raise_presentation_exception_if_unhandled
+        )
         self.shutdown_state = HttpShutdownState()
         self.shutdown_state.setup_signal_handlers()
 
@@ -156,17 +163,23 @@ class HttpUowContextProviderDependency:
                     yield
                 except HTTPException:
                     raise
+
                 except Exception as e:
-                    raise PresentationException(
-                        original_exception=e,
-                        request=request,
-                        response=response,
-                        websocket=websocket,
-                    )
+                    if self.raise_presentation_exception_if_unhandled:
+                        raise PresentationException(
+                            original_exception=e,
+                            request=request,
+                            response=response,
+                            websocket=websocket,
+                        )
+                    else:
+                        raise
 
 
 def create_http_server(
     http_app: HttpMicroservice,
+    *,
+    raise_presentation_exception_if_unhandled: bool = True,
 ) -> ASGIApp:
 
     app = http_app.app
@@ -175,7 +188,8 @@ def create_http_server(
 
     uow_provider = UnitOfWorkContextProvider(app, container)
     http_uow_context_provider_dependency = HttpUowContextProviderDependency(
-        uow_provider
+        uow_provider,
+        raise_presentation_exception_if_unhandled=raise_presentation_exception_if_unhandled,
     )
 
     lifespan = HttpAppLifecycle(
