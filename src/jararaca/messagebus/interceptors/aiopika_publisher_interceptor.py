@@ -19,6 +19,7 @@ from jararaca.messagebus.interceptors.publisher_interceptor import (
     MessageBusConnectionFactory,
 )
 from jararaca.messagebus.publisher import IMessage, MessagePublisher
+from jararaca.observability.hooks import record_message_sent
 from jararaca.scheduler.types import DelayedMessageData
 
 logger = logging.getLogger(__name__)
@@ -53,7 +54,7 @@ class AIOPikaMessagePublisher(MessagePublisher):
         await exchange.publish(
             aio_pika.Message(
                 body=message.model_dump_json().encode(),
-                headers=implicit_headers_data,
+                headers={**implicit_headers_data},
                 delivery_mode=aio_pika.DeliveryMode.PERSISTENT,
             ),
             routing_key=routing_key,
@@ -97,6 +98,13 @@ class AIOPikaMessagePublisher(MessagePublisher):
             )
             await self._publish(message, message.MESSAGE_TOPIC)
 
+            # Record metric for sent message
+            record_message_sent(
+                topic=message.MESSAGE_TOPIC,
+                message_type=message.MESSAGE_TYPE,
+                message_category=message.MESSAGE_CATEGORY,
+            )
+
         if len(self.staged_delayed_messages) > 0:
             if not self.message_broker_backend:
                 raise NotImplementedError(
@@ -110,6 +118,10 @@ class AIOPikaMessagePublisher(MessagePublisher):
                 await self.message_broker_backend.enqueue_delayed_message(
                     delayed_message
                 )
+
+                # Note: For delayed messages, we don't have the full message object,
+                # so we can't record complete metrics here. The metric will be recorded
+                # when the message is actually dispatched.
 
 
 class GenericPoolConfig(BaseModel):

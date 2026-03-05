@@ -3,7 +3,8 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 
 import logging
-from contextlib import asynccontextmanager, contextmanager
+from contextlib import asynccontextmanager, contextmanager, suppress
+from contextvars import ContextVar
 from typing import TYPE_CHECKING, Any, AsyncGenerator, Generator, Literal, Protocol
 
 from opentelemetry import metrics, trace
@@ -54,6 +55,49 @@ if TYPE_CHECKING:
     from typing_extensions import TypeIs
 
 tracer: trace.Tracer = trace.get_tracer(__name__)
+
+
+class MessageBusMetrics:
+    """Container for message bus related metrics"""
+
+    def __init__(self, meter: metrics.Meter) -> None:
+        self.messages_sent_counter = meter.create_counter(
+            name="messagebus.messages.sent",
+            description="Number of messages sent to the message bus",
+            unit="1",
+        )
+        self.messages_processed_counter = meter.create_counter(
+            name="messagebus.messages.processed",
+            description="Number of messages successfully processed from the message bus",
+            unit="1",
+        )
+        self.messages_failed_counter = meter.create_counter(
+            name="messagebus.messages.failed",
+            description="Number of messages that failed processing",
+            unit="1",
+        )
+
+
+_message_bus_metrics_ctx = ContextVar[MessageBusMetrics | None](
+    "message_bus_metrics_ctx", default=None
+)
+
+
+@contextmanager
+def provide_message_bus_metrics(
+    metrics_instance: MessageBusMetrics,
+) -> Generator[None, Any, None]:
+    token = _message_bus_metrics_ctx.set(metrics_instance)
+    try:
+        yield
+    finally:
+        with suppress(ValueError):
+            _message_bus_metrics_ctx.reset(token)
+
+
+def use_message_bus_metrics() -> MessageBusMetrics | None:
+    """Get the message bus metrics instance if available"""
+    return _message_bus_metrics_ctx.get()
 
 
 def extract_context_attributes(ctx: AppTransactionContext) -> dict[str, Any]:
@@ -375,7 +419,12 @@ class OtelObservabilityProvider(ObservabilityProvider):
 
         metrics.set_meter_provider(meter_provider)
 
-        yield
+        # Create message bus metrics
+        meter = metrics.get_meter(__name__)
+        message_bus_metrics = MessageBusMetrics(meter)
+
+        with provide_message_bus_metrics(message_bus_metrics):
+            yield
 
     @staticmethod
     def from_url(

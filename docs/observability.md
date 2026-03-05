@@ -172,3 +172,62 @@ set_span_status("ERROR")
 ## Exception Handling
 
 Jararaca automatically configures FastAPI exception handlers to include the trace ID in the response headers. If an error occurs, the response will contain a `traceparent` header (or the configured trace header name), allowing you to easily correlate client-side errors with backend traces.
+
+## Message Bus Metrics
+
+When using the `OtelObservabilityProvider`, Jararaca automatically collects metrics for message bus operations. These metrics help you monitor the health and performance of your message-driven architecture.
+
+### Available Metrics
+
+The following counters are automatically collected:
+
+- **`messagebus.messages.sent`**: Number of messages published to the message bus
+  - Attributes:
+    - `topic`: The message topic
+    - `message_type`: The message type (`task` or `event`)
+    - `message_category`: The message category
+
+- **`messagebus.messages.processed`**: Number of messages successfully processed
+  - Attributes:
+    - `topic`: The message topic
+    - `message_type`: The message type (`task` or `event`)
+    - `message_category`: The message category
+
+- **`messagebus.messages.failed`**: Number of messages that failed processing
+  - Attributes:
+    - `topic`: The message topic
+    - `message_type`: The message type (`task` or `event`)
+    - `message_category`: The message category
+
+### Example Queries
+
+With these metrics, you can create dashboards and alerts in your observability platform. For example:
+
+- **Success Rate**: `messagebus.messages.processed / (messagebus.messages.processed + messagebus.messages.failed)`
+- **Messages Per Topic**: Group by `topic` attribute
+- **Task vs Event Distribution**: Group by `message_type` attribute
+
+### Manual Metric Recording
+
+While metrics are collected automatically, you can also manually record message bus metrics using the provided hooks:
+
+```python
+from jararaca.observability.hooks import record_message_sent, record_message_processed
+
+# Record a sent message
+record_message_sent(
+    topic="user.created",
+    message_type="event",
+    message_category="user_management"
+)
+
+# Record a processed message
+record_message_processed(
+    topic="user.created",
+    message_type="event",
+    message_category="user_management",
+    success=True
+)
+```
+
+These hooks are safe to call even when observability is not configured—they will silently skip metric collection if the observability provider is not available.
