@@ -62,6 +62,7 @@ nav:
     - Generation: typescript-generation.md
     - Expose Type: expose-type.md
   - Features:
+    - Configuration: configuration.md
     - Interceptors: interceptors.md
     - Metadata: metadata.md
     - Retry: retry.md

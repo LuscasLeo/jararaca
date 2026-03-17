@@ -6,6 +6,7 @@ from importlib import import_module
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
+    from jararaca import const
     from jararaca.broker_backend.redis_broker_backend import RedisMessageBrokerBackend
     from jararaca.messagebus.bus_message_controller import (
         ack,
@@ -213,6 +214,7 @@ if TYPE_CHECKING:
     )
 
     __all__ = [
+        "const",
         "use_implicit_headers",
         "provide_implicit_headers",
         "get_logger_extra_attributes",
@@ -385,6 +387,7 @@ if TYPE_CHECKING:
 __SPEC_PARENT__: str = __spec__.parent  # type: ignore
 # A mapping of {<member name>: (package, <module name>)} defining dynamic imports
 _dynamic_imports: "dict[str, tuple[str, str, str | None]]" = {
+    "const": (__SPEC_PARENT__, "__module__", None),
     "use_implicit_headers": (
         __SPEC_PARENT__,
         "messagebus.implicit_headers",

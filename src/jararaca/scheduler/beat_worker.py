@@ -9,9 +9,10 @@ import signal
 import time
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
+from datetime import datetime
 from typing import Any
 from urllib.parse import parse_qs
+from zoneinfo import ZoneInfo
 
 import aio_pika
 import croniter
@@ -30,6 +31,7 @@ from aio_pika.exceptions import (
 from aio_pika.pool import Pool
 from aiormq.exceptions import ChannelInvalidStateError
 
+from jararaca import const
 from jararaca.broker_backend import MessageBrokerBackend
 from jararaca.broker_backend.mapper import get_message_broker_backend_from_url
 from jararaca.core.uow import UnitOfWorkContextProvider
@@ -596,10 +598,12 @@ class BeatWorker:
                             cron = croniter.croniter(
                                 scheduled_action.cron, last_dispatch_time
                             )
+                            # Use configured timezone for cron verification
+                            configured_tz = ZoneInfo(const.DEFAULT_TIMEZONE)
                             next_run: datetime = cron.get_next(datetime).replace(
-                                tzinfo=UTC
+                                tzinfo=configured_tz
                             )
-                            if next_run > datetime.now(UTC):
+                            if next_run > datetime.now(configured_tz):
                                 logger.debug(
                                     "Skipping %s.%s until %s",
                                     func.__module__,
