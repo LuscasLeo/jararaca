@@ -28,6 +28,7 @@ from sqlalchemy import DateTime, Result, Select, delete, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import Mapped, mapped_column
 
+from jararaca import const
 from jararaca.persistence.base import (
     IDENTIFIABLE_SCHEMA_T,
     T_BASEMODEL,
@@ -218,8 +219,10 @@ class CRUDOperations(Generic[IDENTIFIABLE_T]):
 
 # region PaginatedFilter
 class PaginatedFilter(BaseModel):
-    page: Annotated[int, Field(gt=-1)] = 0
-    page_size: Annotated[int, Field(gt=0)] = 10
+    page: Annotated[int, Field(gt=-1)] = const.PAGINATION_DEFAULT_PAGE
+    page_size: Annotated[int, Field(gt=0, le=const.PAGINATION_MAX_PAGE_SIZE)] = (
+        const.PAGINATION_DEFAULT_PAGE_SIZE
+    )
     sort_models: list[SortModel] = []
     filter_models: list[FilterModel] = []
 

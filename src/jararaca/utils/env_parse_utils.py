@@ -41,6 +41,23 @@ def get_env_bool(
         return "invalid"
 
 
+def get_abs_env_bool(
+    var_name: str, default: DF_BOOL_T | None = None
+) -> DF_BOOL_T | bool:
+    result = get_env_bool(var_name, default)
+    if result == "invalid":
+        raise ValueError(
+            f"Environment variable '{var_name}' has an invalid boolean value"
+        )
+    elif result is None:
+        if default is None:
+            raise ValueError(
+                f"Environment variable '{var_name}' is not set and no default value provided"
+            )
+        return default
+    return result
+
+
 DF_INT_T = TypeVar("DF_INT_T", bound="int | None | Literal[False]")
 
 
