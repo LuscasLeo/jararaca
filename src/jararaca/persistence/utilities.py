@@ -312,7 +312,11 @@ class QueryOperations(Generic[QUERY_FILTER_T, QUERY_ENTITY_T]):
         unique: bool = False,
         sort_rule_applier: SortRuleApplier | None = None,
         filter_rule_applier: FilterRuleApplier | None = None,
-        base_statement: Select[Tuple[QUERY_ENTITY_T]] | None = None,
+        base_statement: (
+            Select[Tuple[QUERY_ENTITY_T]]
+            | Callable[[Select[Tuple[QUERY_ENTITY_T]]], Select[Tuple[QUERY_ENTITY_T]]]
+            | None
+        ) = None,
     ) -> None:
         self.entity_type: type[QUERY_ENTITY_T] = entity_type
         self.session_provider = session_provider
@@ -353,7 +357,13 @@ class QueryOperations(Generic[QUERY_FILTER_T, QUERY_ENTITY_T]):
             Paginated[QUERY_ENTITY_T]: A paginated result containing the items and metadata.
         """
 
-        initial_statement = self.base_statement or select(self.entity_type)
+        if self.base_statement is not None:
+            if callable(self.base_statement):
+                initial_statement = self.base_statement(select(self.entity_type))
+            else:
+                initial_statement = self.base_statement
+        else:
+            initial_statement = select(self.entity_type)
 
         if base_statement is not None and callable(base_statement):
             initial_statement = base_statement(initial_statement)
