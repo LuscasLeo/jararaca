@@ -5,7 +5,7 @@
 import re
 from datetime import date, datetime
 from functools import reduce
-from typing import Literal, Tuple, TypeVar
+from typing import Literal, Tuple, TypeVar, Union
 from uuid import UUID
 
 from pydantic import BaseModel
@@ -50,7 +50,7 @@ class SortModel(BaseModel):
 
 class FilterModel(BaseModel):
     field: str
-    operator: Literal[
+    operator: Union[
         STRING_OPERATORS, DATE_DATETIME_OPERATORS, BOOLEAN_OPERATORS, NUMBER_OPERATORS
     ]
     value: str | list[str] = ""
