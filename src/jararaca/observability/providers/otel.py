@@ -373,6 +373,15 @@ class OtelObservabilityProvider(ObservabilityProvider):
         self.meter_export_interval = meter_export_interval
         self.logging_handler_callback = logging_handler_callback
         self.attributes = attributes or {}
+        self.__message_bus_metrics: MessageBusMetrics | None = None
+
+    @property
+    def message_bus_metrics(self) -> MessageBusMetrics:
+        if self.__message_bus_metrics is None:
+            raise RuntimeError(
+                "MessageBusMetrics is not available outside of the app context"
+            )
+        return self.__message_bus_metrics
 
     @asynccontextmanager
     async def setup(
@@ -421,10 +430,10 @@ class OtelObservabilityProvider(ObservabilityProvider):
 
         # Create message bus metrics
         meter = metrics.get_meter(__name__)
-        message_bus_metrics = MessageBusMetrics(meter)
+        self.__message_bus_metrics = MessageBusMetrics(meter)
 
-        with provide_message_bus_metrics(message_bus_metrics):
-            yield
+        # with provide_message_bus_metrics(message_bus_metrics):
+        yield
 
     @staticmethod
     def from_url(
@@ -452,3 +461,16 @@ class OtelObservabilityProvider(ObservabilityProvider):
             meter_export_interval=meter_export_interval,
             attributes=attributes,
         )
+
+    @asynccontextmanager
+    async def root_setup(
+        self, app_context: AppTransactionContext
+    ) -> AsyncGenerator[None, None]:
+        async with self.tracing_provider.root_setup(app_context):
+            with provide_message_bus_metrics(self.message_bus_metrics):
+                yield
+
+    def start_provider(
+        self, app_context: AppTransactionContext
+    ) -> TracingContextProvider:
+        return self.tracing_provider.provide_provider(app_context)
