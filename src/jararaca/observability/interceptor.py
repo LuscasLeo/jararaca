@@ -13,14 +13,20 @@ from jararaca.microservice import (
     Microservice,
 )
 from jararaca.observability.decorators import (
-    TracingContextProviderFactory,
+    TracingContextProvider,
     provide_tracing_ctx_provider,
 )
 
 
 class ObservabilityProvider(Protocol):
 
-    tracing_provider: TracingContextProviderFactory
+    def root_setup(
+        self, app_context: AppTransactionContext
+    ) -> AsyncContextManager[None]: ...
+
+    def start_provider(
+        self, app_context: AppTransactionContext
+    ) -> TracingContextProvider: ...
 
     def setup(
         self, app: Microservice, container: Container
@@ -40,13 +46,12 @@ class ObservabilityInterceptor(AppInterceptor, AppInterceptorWithLifecycle):
         self, app_context: AppTransactionContext
     ) -> AsyncGenerator[None, None]:
 
-        async with self.observability_provider.tracing_provider.root_setup(app_context):
+        async with self.observability_provider.root_setup(app_context):
 
             with provide_tracing_ctx_provider(
-                self.observability_provider.tracing_provider.provide_provider(
-                    app_context
-                )
+                self.observability_provider.start_provider(app_context)
             ):
+
                 yield
 
     @asynccontextmanager
