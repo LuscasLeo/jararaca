@@ -59,6 +59,7 @@ from jararaca.microservice import (
 )
 from jararaca.observability.hooks import (
     record_exception,
+    record_message_inflight,
     record_message_processed,
     record_message_processing_time,
     set_span_status,
@@ -1536,6 +1537,14 @@ class MessageHandlerCallback:
         headers = aio_pika_message.headers or {}
         retry_count = int(str(headers.get("x-retry-count", 0)))
 
+        if retry_count > 0:
+            logger.warning(
+                "Reprocessing message id=%s topic=%s (attempt %s)",
+                aio_pika_message.message_id or "unknown",
+                message_type.MESSAGE_TOPIC,
+                retry_count + 1,
+            )
+
         with provide_implicit_headers(
             {
                 k: v
@@ -1562,6 +1571,13 @@ class MessageHandlerCallback:
                     maybe_timeout_ctx = none_context()
 
                 start_time = time.perf_counter()
+                record_message_inflight(
+                    topic=message_type.MESSAGE_TOPIC,
+                    queue_name=routing_key,
+                    message_type=message_type.MESSAGE_TYPE,
+                    message_category=message_type.MESSAGE_CATEGORY,
+                    delta=1,
+                )
                 async with maybe_timeout_ctx:
                     try:
                         with provide_bus_message_controller(
@@ -1675,6 +1691,13 @@ class MessageHandlerCallback:
                                     )
 
                             elapsed_time = time.perf_counter() - start_time
+                            record_message_inflight(
+                                topic=message_type.MESSAGE_TOPIC,
+                                queue_name=routing_key,
+                                message_type=message_type.MESSAGE_TYPE,
+                                message_category=message_type.MESSAGE_CATEGORY,
+                                delta=-1,
+                            )
                             record_message_processing_time(
                                 message_id=aio_pika_message.message_id or "unknown",
                                 topic=message_type.MESSAGE_TOPIC,
