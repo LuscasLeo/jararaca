@@ -1526,42 +1526,6 @@ class MessageHandlerCallback:
         handler = handler_data.instance_callable
         handler_method = handler_data.controller_member.member_function
 
-        # sig = inspect.signature(handler)
-
-        # if len(sig.parameters) != 1:
-        #     logger.warning(
-        #         "Handler for topic '%s' must have exactly one parameter which is MessageOf[T extends Message]"
-        #         % routing_key
-        #     )
-        #     return
-
-        # parameter = list(sig.parameters.values())[0]
-
-        # param_origin = get_origin(parameter.annotation)
-
-        # if param_origin is not MessageOf:
-        #     logger.warning(
-        #         "Handler for topic '%s' must have exactly one parameter of type Message"
-        #         % routing_key
-        #     )
-        #     return
-
-        # if len(parameter.annotation.__args__) != 1:
-        #     logger.warning(
-        #         "Handler for topic '%s' must have exactly one parameter of type Message"
-        #         % routing_key
-        #     )
-        #     return
-
-        # message_type = parameter.annotation.__args__[0]
-
-        # if not issubclass(message_type, BaseModel):
-        #     logger.warning(
-        #         "Handler for topic '%s' must have exactly one parameter of type MessageOf[BaseModel]"
-        #         % routing_key
-        #     )
-        #     return
-
         mode, message_type = MessageHandler.validate_decorated_fn(handler_method)
 
         built_message = AioPikaMessage(aio_pika_message, message_type)
