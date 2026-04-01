@@ -60,6 +60,7 @@ from jararaca.microservice import (
 from jararaca.observability.hooks import (
     record_exception,
     record_message_processed,
+    record_message_processing_time,
     set_span_status,
 )
 from jararaca.scheduler.decorators import ScheduledActionData
@@ -1710,6 +1711,15 @@ class MessageHandlerCallback:
                                     )
 
                             elapsed_time = time.perf_counter() - start_time
+                            record_message_processing_time(
+                                message_id=aio_pika_message.message_id or "unknown",
+                                topic=message_type.MESSAGE_TOPIC,
+                                queue_name=routing_key,
+                                message_type=message_type.MESSAGE_TYPE,
+                                message_category=message_type.MESSAGE_CATEGORY,
+                                duration_seconds=elapsed_time,
+                                success=successfully,
+                            )
                             # Message processed successfully, log and clean up any retry state
                             message_id = aio_pika_message.message_id or str(
                                 uuid.uuid4()

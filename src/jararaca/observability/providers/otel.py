@@ -76,6 +76,11 @@ class MessageBusMetrics:
             description="Number of messages that failed processing",
             unit="1",
         )
+        self.messages_processing_time_histogram = meter.create_histogram(
+            name="messagebus.messages.processing_time",
+            description="Time spent processing messages from the message bus",
+            unit="s",
+        )
 
 
 _message_bus_metrics_ctx = ContextVar[MessageBusMetrics | None](
