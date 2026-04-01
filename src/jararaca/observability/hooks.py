@@ -109,6 +109,39 @@ def add_span_link(span_context: TracingSpanContext) -> None:
         trace_context_provider.add_link(span_context=span_context)
 
 
+def record_message_inflight(
+    topic: str,
+    queue_name: str,
+    message_type: str,
+    message_category: str,
+    delta: int,
+) -> None:
+    """
+    Adjust the in-flight message counter by delta (+1 when processing starts, -1 when done).
+
+    Args:
+        topic: The message topic derived from the message type (MESSAGE_TOPIC)
+        queue_name: The broker queue name the message was consumed from
+        message_type: The message type (task/event)
+        message_category: The message category
+        delta: +1 to increment, -1 to decrement
+    """
+    try:
+        if metrics := use_message_bus_metrics():
+            metrics.messages_inflight_counter.add(
+                delta,
+                {
+                    "topic": topic,
+                    "queue_name": queue_name,
+                    "message_type": message_type,
+                    "message_category": message_category,
+                },
+            )
+    except Exception:
+        # Silently ignore metrics errors to not break functionality
+        pass
+
+
 def record_message_sent(topic: str, message_type: str, message_category: str) -> None:
     """
     Record a message sent to the message bus.

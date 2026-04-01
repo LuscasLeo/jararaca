@@ -81,6 +81,11 @@ class MessageBusMetrics:
             description="Time spent processing messages from the message bus",
             unit="s",
         )
+        self.messages_inflight_counter = meter.create_up_down_counter(
+            name="messagebus.messages.inflight",
+            description="Number of messages currently being processed by the worker",
+            unit="1",
+        )
 
 
 _message_bus_metrics_ctx = ContextVar[MessageBusMetrics | None](
