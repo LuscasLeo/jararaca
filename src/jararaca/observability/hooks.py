@@ -134,6 +134,45 @@ def record_message_sent(topic: str, message_type: str, message_category: str) ->
         pass
 
 
+def record_message_processing_time(
+    message_id: str,
+    topic: str,
+    queue_name: str,
+    message_type: str,
+    message_category: str,
+    duration_seconds: float,
+    success: bool,
+) -> None:
+    """
+    Record the time spent processing a message from the message bus.
+
+    Args:
+        message_id: The unique message identifier
+        topic: The message topic derived from the message type (MESSAGE_TOPIC)
+        queue_name: The broker queue name the message was consumed from
+        message_type: The message type (task/event)
+        message_category: The message category
+        duration_seconds: Processing duration in seconds
+        success: Whether the message was processed successfully
+    """
+    try:
+        if metrics := use_message_bus_metrics():
+            metrics.messages_processing_time_histogram.record(
+                duration_seconds,
+                {
+                    "message.id": message_id,
+                    "topic": topic,
+                    "queue_name": queue_name,
+                    "message_type": message_type,
+                    "message_category": message_category,
+                    "success": success,
+                },
+            )
+    except Exception:
+        # Silently ignore metrics errors to not break functionality
+        pass
+
+
 def record_message_processed(
     topic: str, message_type: str, message_category: str, success: bool
 ) -> None:
