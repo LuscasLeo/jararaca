@@ -1699,7 +1699,6 @@ class MessageHandlerCallback:
                                 delta=-1,
                             )
                             record_message_processing_time(
-                                message_id=aio_pika_message.message_id or "unknown",
                                 topic=message_type.MESSAGE_TOPIC,
                                 queue_name=routing_key,
                                 message_type=message_type.MESSAGE_TYPE,

@@ -168,7 +168,6 @@ def record_message_sent(topic: str, message_type: str, message_category: str) ->
 
 
 def record_message_processing_time(
-    message_id: str,
     topic: str,
     queue_name: str,
     message_type: str,
@@ -180,7 +179,6 @@ def record_message_processing_time(
     Record the time spent processing a message from the message bus.
 
     Args:
-        message_id: The unique message identifier
         topic: The message topic derived from the message type (MESSAGE_TOPIC)
         queue_name: The broker queue name the message was consumed from
         message_type: The message type (task/event)
@@ -193,7 +191,6 @@ def record_message_processing_time(
             metrics.messages_processing_time_histogram.record(
                 duration_seconds,
                 {
-                    "message.id": message_id,
                     "topic": topic,
                     "queue_name": queue_name,
                     "message_type": message_type,
