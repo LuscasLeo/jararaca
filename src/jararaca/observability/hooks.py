@@ -204,7 +204,13 @@ def record_message_processing_time(
 
 
 def record_message_processed(
-    topic: str, message_type: str, message_category: str, success: bool
+    topic: str,
+    broker_topic: str,
+    handler_name: str,
+    handler_method_name: str,
+    message_type: str,
+    message_category: str,
+    success: bool,
 ) -> None:
     """
     Record a message processed from the message bus.
@@ -222,6 +228,9 @@ def record_message_processed(
                 "topic": topic,
                 "message_type": message_type,
                 "message_category": message_category,
+                "handler_name": handler_name,
+                "handler_method_name": handler_method_name,
+                "broker_topic": broker_topic,
             }
 
             if success:

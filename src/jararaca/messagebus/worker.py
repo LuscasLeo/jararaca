@@ -1624,7 +1624,11 @@ class MessageHandlerCallback:
 
                                 # Record successful message processing metric
                                 record_message_processed(
-                                    topic=routing_key,
+                                    topic=message_type.MESSAGE_TOPIC,
+                                    broker_topic=routing_key,
+                                    handler_name=handler_data.spec.name
+                                    or handler_method.__qualname__,
+                                    handler_method_name=handler_method.__name__,
                                     message_type=message_type.MESSAGE_TYPE,
                                     message_category=message_type.MESSAGE_CATEGORY,
                                     success=True,
@@ -1643,7 +1647,11 @@ class MessageHandlerCallback:
 
                                 # Record failed message processing metric
                                 record_message_processed(
-                                    topic=routing_key,
+                                    topic=message_type.MESSAGE_TOPIC,
+                                    broker_topic=routing_key,
+                                    handler_name=handler_data.spec.name
+                                    or handler_method.__qualname__,
+                                    handler_method_name=handler_method.__name__,
                                     message_type=message_type.MESSAGE_TYPE,
                                     message_category=message_type.MESSAGE_CATEGORY,
                                     success=False,
