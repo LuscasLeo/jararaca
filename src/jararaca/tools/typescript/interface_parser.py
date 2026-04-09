@@ -97,15 +97,24 @@ def is_upload_file_type(field_type: Any) -> bool:
     Returns:
         True if it's UploadFile or list[UploadFile], False otherwise
     """
+
+    if get_origin(field_type) == UnionType or get_origin(field_type) == typing.Union:
+        args = getattr(field_type, "__args__", ())
+        if args and len(args) == 2 and args[1] is type(None):
+            return is_upload_file_type(args[0])
+
     if field_type == UploadFile:
         return True
 
     # Check for list[UploadFile], List[UploadFile], etc.
     origin = get_origin(field_type)
-    if origin in (list, frozenset, set):
+    if inspect.isclass(origin) and issubclass(origin, UploadFile):
+        return True
+
+    if origin in (list, frozenset, set, Annotated):
         args = getattr(field_type, "__args__", ())
-        if args and args[0] == UploadFile:
-            return True
+        if args:
+            return is_upload_file_type(args[0])
 
     return False
 
