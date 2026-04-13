@@ -436,6 +436,12 @@ def cli() -> None:
     help="Comma-separated list of handler names to listen to. If not specified, all handlers will be used.",
 )
 @click.option(
+    "--groups",
+    type=str,
+    envvar="GROUPS",
+    help="Comma-separated list of handler groups to listen to. If not specified, all groups will be used.",
+)
+@click.option(
     "--reload",
     is_flag=True,
     envvar="RELOAD",
@@ -460,6 +466,7 @@ def worker(
     broker_url: str,
     backend_url: str,
     handlers: str | None,
+    groups: str | None,
     reload: bool,
     src_dir: str,
     gracious_shutdown_seconds: int,
@@ -472,12 +479,13 @@ def worker(
             "broker_url": broker_url,
             "backend_url": backend_url,
             "handlers": handlers,
+            "groups": groups,
         }
         run_with_reload_watcher(
             process_args, run_worker_process, src_dir, gracious_shutdown_seconds
         )
     else:
-        run_worker_process(app_path, broker_url, backend_url, handlers)
+        run_worker_process(app_path, broker_url, backend_url, handlers, groups)
 
 
 @cli.command()
@@ -919,7 +927,11 @@ def declare(
 
 
 def run_worker_process(
-    app_path: str, broker_url: str, backend_url: str, handlers: str | None
+    app_path: str,
+    broker_url: str,
+    backend_url: str,
+    handlers: str | None,
+    groups: str | None = None,
 ) -> None:
     """Run a worker process with the given parameters."""
     app = find_microservice_by_module_path(app_path)
@@ -929,12 +941,18 @@ def run_worker_process(
     if handlers:
         handler_names = {name.strip() for name in handlers.split(",") if name.strip()}
 
+    # Parse handler groups if provided
+    handler_groups: set[str] | None = None
+    if groups:
+        handler_groups = {name.strip() for name in groups.split(",") if name.strip()}
+
     click.echo(f"Starting worker for {app_path}...")
     worker_mod.MessageBusWorker(
         app=app,
         broker_url=broker_url,
         backend_url=backend_url,
         handler_names=handler_names,
+        handler_groups=handler_groups,
     ).start_sync()
 
 

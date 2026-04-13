@@ -19,7 +19,12 @@ from jararaca.reflect.decorators import (
 )
 from jararaca.reflect.helpers import is_generic_alias
 from jararaca.scheduler.decorators import ScheduledAction, ScheduledActionData
-from jararaca.utils.env_parse_utils import get_env_float, get_env_int, is_env_truffy
+from jararaca.utils.env_parse_utils import (
+    get_env_float,
+    get_env_int,
+    get_env_str,
+    is_env_truffy,
+)
 from jararaca.utils.retry import RetryPolicy
 
 AcceptableHandler = (
@@ -33,6 +38,12 @@ DEFAULT_NACK_ON_EXCEPTION = is_env_truffy("JARARACA_MESSAGEBUS_NACK_ON_EXCEPTION
 DEFAULT_AUTO_ACK = is_env_truffy("JARARACA_MESSAGEBUS_AUTO_ACK")
 DEFAULT_NACK_DELAY_ON_EXCEPTION = get_env_float(
     "JARARACA_MESSAGEBUS_NACK_DELAY_ON_EXCEPTION"
+)
+
+DEFAULT = "DEFAULT"
+
+DEFAULT_MESSAGE_HANDLER_GROUP = (
+    get_env_str("JARARACA_MESSAGEBUS_HANDLER_GROUP") or DEFAULT
 )
 
 
@@ -49,6 +60,7 @@ class MessageHandler(GenericStackableDecorator[AcceptableHandler]):
         auto_ack: bool = DEFAULT_AUTO_ACK,
         name: str | None = None,
         retry_config: RetryPolicy | None = None,
+        group: str | None = None,
     ) -> None:
         self.message_type = message
 
@@ -60,6 +72,7 @@ class MessageHandler(GenericStackableDecorator[AcceptableHandler]):
         self.auto_ack = auto_ack
         self.name = name
         self.retry_config = retry_config
+        self.group = group or DEFAULT_MESSAGE_HANDLER_GROUP
 
     def __call__(self, subject: MessageHandlerT) -> MessageHandlerT:
         return cast(MessageHandlerT, super().__call__(subject))
