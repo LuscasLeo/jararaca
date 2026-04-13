@@ -1780,11 +1780,13 @@ class MessageBusWorker:
         broker_url: str,
         backend_url: str,
         handler_names: set[str] | None = None,
+        handler_groups: set[str] | None = None,
     ) -> None:
         self.app = app
         self.backend_url = backend_url
         self.broker_url = broker_url
         self.handler_names = handler_names
+        self.handler_groups = handler_groups
 
         self.container = Container(app)
         self.lifecycle = AppLifecycle(app, self.container)
@@ -1836,6 +1838,11 @@ class MessageBusWorker:
                         ):
                             # Skip handlers without names when filtering is requested
                             continue
+
+                        # Filter handlers by group if specified
+                        if self.handler_groups is not None:
+                            if handler_data.spec.group not in self.handler_groups:
+                                continue
 
                         if (
                             topic in message_handler_data_map
