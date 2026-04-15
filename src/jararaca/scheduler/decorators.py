@@ -12,6 +12,12 @@ from jararaca.reflect.controller_inspect import (
     inspect_controller,
 )
 from jararaca.reflect.decorators import StackableDecorator
+from jararaca.utils.env_parse_utils import get_env_str
+
+DEFAULT = "DEFAULT"
+DEFAULT_SCHEDULED_ACTION_GROUP = (
+    get_env_str("JARARACA_SCHEDULER_ACTION_GROUP") or DEFAULT
+)
 
 DECORATED_FUNC = TypeVar("DECORATED_FUNC", bound=Callable[..., Any])
 
@@ -26,6 +32,7 @@ class ScheduledAction(StackableDecorator):
         timeout: int | None = None,
         exception_handler: Callable[[BaseException], None] | None = None,
         name: str | None = None,
+        group: str | None = None,
     ) -> None:
         """
         :param cron: A string representing the cron expression for the scheduled action.
@@ -34,6 +41,7 @@ class ScheduledAction(StackableDecorator):
         :param exception_handler: A callable that will be called when an exception is raised during the execution of the scheduled action.
         :param timeout: An integer representing the timeout for the scheduled action in seconds. If the scheduled action takes longer than this time, it will be terminated.
         :param name: An optional name for the scheduled action, used for filtering which actions to run.
+        :param group: An optional group name for the scheduled action, used for filtering which actions to run.
         """
         self.cron = cron
         """
@@ -65,6 +73,11 @@ class ScheduledAction(StackableDecorator):
         self.name = name
         """
         An optional name for the scheduled action, used for filtering which actions to run.
+        """
+
+        self.group = group or DEFAULT_SCHEDULED_ACTION_GROUP
+        """
+        An optional group name for the scheduled action, used for filtering which actions to run.
         """
 
     @staticmethod

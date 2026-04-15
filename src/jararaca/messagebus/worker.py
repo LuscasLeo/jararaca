@@ -1820,7 +1820,29 @@ class MessageBusWorker:
                     handlers, schedulers = factory(instance)
 
                     message_handler_data_map: dict[str, MessageHandlerData] = {}
-                    all_scheduled_actions_set.update(schedulers)
+
+                    for scheduler_data in schedulers:
+                        # Filter scheduled actions by name if specified
+                        if (
+                            self.handler_names is not None
+                            and scheduler_data.spec.name is not None
+                        ):
+                            if scheduler_data.spec.name not in self.handler_names:
+                                continue
+                        elif (
+                            self.handler_names is not None
+                            and scheduler_data.spec.name is None
+                        ):
+                            # Skip scheduled actions without names when filtering is requested
+                            continue
+
+                        # Filter scheduled actions by group if specified
+                        if self.handler_groups is not None:
+                            if scheduler_data.spec.group not in self.handler_groups:
+                                continue
+
+                        all_scheduled_actions_set.add(scheduler_data)
+
                     for handler_data in handlers:
                         message_type = handler_data.spec.message_type
                         topic = message_type.MESSAGE_TOPIC

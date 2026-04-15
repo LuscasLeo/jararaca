@@ -460,6 +460,7 @@ Options:
 - `--broker-url`: The URL for the message broker (required) [env: BROKER_URL]
 - `--backend-url`: The URL for the message broker backend (required) [env: BACKEND_URL]
 - `--handlers`: Comma-separated list of handler names to listen to (optional) [env: HANDLERS]
+- `--groups`: Comma-separated list of handler groups to listen to (optional) [env: GROUPS]
 - `--reload`: Enable auto-reload when Python files change (for development) [env: RELOAD]
 - `--src-dir`: The source directory to watch for changes when --reload is enabled (default: "src") [env: SRC_DIR]
 
@@ -468,6 +469,9 @@ Examples:
 ```bash
 # Standard worker execution
 jararaca worker myapp.main:app --broker-url "amqp://guest:guest@localhost:5672/?exchange=jararaca" --backend-url "redis://localhost:6379"
+
+# Run only handlers belonging to the "payments" and "notifications" groups
+jararaca worker myapp.main:app --broker-url "amqp://..." --backend-url "redis://..." --groups "payments,notifications"
 
 # With auto-reload for development
 jararaca worker myapp.main:app --broker-url "amqp://guest:guest@localhost:5672/?exchange=jararaca" --backend-url "redis://localhost:6379" --reload
@@ -478,7 +482,7 @@ export BROKER_URL="amqp://guest:guest@localhost:5672/?exchange=jararaca"
 export BACKEND_URL="redis://localhost:6379"
 export RELOAD="true"
 export SRC_DIR="src"
-export RELOAD="true"
+export GROUPS="payments"
 jararaca worker
 ```
 
@@ -496,6 +500,7 @@ The following environment variables control the default behavior of `@MessageHan
 | `JARARACA_MESSAGEBUS_NACK_ON_EXCEPTION` | `bool` | `false` | Whether to send a negative acknowledgment (NACK) when an exception occurs during message processing. Truthy values: `1`, `true`, `yes`, `on`. |
 | `JARARACA_MESSAGEBUS_AUTO_ACK` | `bool` | `false` | Whether to automatically acknowledge messages after successful processing. Truthy values: `1`, `true`, `yes`, `on`. |
 | `JARARACA_MESSAGEBUS_NACK_DELAY_ON_EXCEPTION` | `float` | `5.0` | Delay in seconds before sending a NACK when an exception occurs. Set to `0` or empty to use default of `5.0`. |
+| `JARARACA_MESSAGEBUS_HANDLER_GROUP` | `str` | `DEFAULT` | Default group assigned to message handlers that do not specify a group explicitly. |
 
 ### Usage Example
 
@@ -535,6 +540,121 @@ class MyController:
     )
     async def handler_with_custom_config(self, message: MessageOf[MyMessage]):
         ...
+```
+
+## Handler Groups
+
+Handler groups allow you to partition message handlers across multiple worker processes. Each handler can belong to a named group, and a worker process can be started to handle only a specific subset of groups.
+
+### Assigning a Handler to a Group
+
+Use the `group` parameter on `@MessageHandler`:
+
+```python
+from jararaca import MessageBusController, MessageHandler, MessageOf
+
+
+@MessageBusController()
+class OrderController:
+    @MessageHandler(OrderCreatedEvent, group="payments")
+    async def handle_order_created(self, message: MessageOf[OrderCreatedEvent]) -> None:
+        ...
+
+    @MessageHandler(OrderShippedEvent, group="notifications")
+    async def handle_order_shipped(self, message: MessageOf[OrderShippedEvent]) -> None:
+        ...
+
+    @MessageHandler(OrderCancelledEvent)  # uses DEFAULT group
+    async def handle_order_cancelled(self, message: MessageOf[OrderCancelledEvent]) -> None:
+        ...
+```
+
+Handlers that do not specify a `group` are assigned to the group defined by the `JARARACA_MESSAGEBUS_HANDLER_GROUP` environment variable (defaults to `"DEFAULT"`).
+
+### Running a Worker for Specific Groups
+
+Start one worker process per group (or per group combination) to scale independently:
+
+```bash
+# Worker that processes only the "payments" group
+jararaca worker myapp.main:app \
+    --broker-url "amqp://..." \
+    --backend-url "redis://..." \
+    --groups "payments"
+
+# Worker that processes "notifications" and "DEFAULT" groups
+jararaca worker myapp.main:app \
+    --broker-url "amqp://..." \
+    --backend-url "redis://..." \
+    --groups "notifications,DEFAULT"
+```
+
+The `--groups` option accepts a comma-separated list. If omitted, all handlers (regardless of group) are consumed by the worker.
+
+You can also configure the group filter via environment variable:
+
+```bash
+export GROUPS="payments"
+jararaca worker myapp.main:app --broker-url "amqp://..." --backend-url "redis://..."
+```
+
+### Use Cases
+
+- **Resource isolation**: CPU-intensive handlers in a dedicated worker, lightweight handlers in another.
+- **Independent scaling**: Scale the payments group to 5 replicas while keeping 1 replica for notifications.
+- **Deployment isolation**: Deploy groups independently with different resource limits.
+
+```mermaid
+graph TD
+    App[Microservice Controllers] --> G1[Group: payments]
+    App --> G2[Group: notifications]
+    App --> G3[Group: DEFAULT]
+
+    G1 --> W1[Worker Process A<br/>--groups payments]
+    G2 --> W2[Worker Process B<br/>--groups notifications]
+    G3 --> W3[Worker Process C<br/>--groups DEFAULT]
+```
+
+## Implicit Headers
+
+When consuming a message, the framework automatically exposes the RabbitMQ message headers as *implicit headers* — a context-scoped dictionary available to all code running within the handler's transaction boundary.
+
+### Reading Implicit Headers
+
+```python
+from jararaca import MessageBusController, MessageHandler, MessageOf
+from jararaca.messagebus.implicit_headers import use_implicit_headers
+
+
+@MessageBusController()
+class AuditController:
+    @MessageHandler(UserCreatedEvent)
+    async def handle_user_created(self, message: MessageOf[UserCreatedEvent]) -> None:
+        headers = use_implicit_headers()
+        correlation_id = headers.get("x-correlation-id")
+        ...
+```
+
+### Providing Additional Headers
+
+You can add extra headers to the context within a handler or any other interceptor layer using `provide_implicit_headers`:
+
+```python
+from jararaca.messagebus.implicit_headers import provide_implicit_headers
+
+
+async def some_service_method() -> None:
+    with provide_implicit_headers({"x-tenant-id": "acme"}):
+        # All code inside this block sees the extra header
+        ...
+```
+
+The `provide_implicit_headers` context manager *merges* the given headers with the current context. Pass `reset=True` to start with an empty context instead.
+
+```python
+# Start fresh, ignoring any previously set headers
+with provide_implicit_headers({"x-trace": "abc"}, reset=True):
+    ...
 ```
 
 ## Conclusion
