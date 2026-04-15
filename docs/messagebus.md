@@ -207,23 +207,6 @@ graph LR
 - **Service isolation**: Each service typically has its own queue
 - **Message persistence**: Messages remain in queues until processed, even if consumers are temporarily unavailable
 
-#### Example Queue Binding Configuration
-
-```python
-from jararaca import MessageBusController, MessageHandler
-
-# AioPikaWorkerConfig is not exported by jararaca, so we import it from the module
-from jararaca.messagebus.worker import AioPikaWorkerConfig
-
-# Define worker configuration with queue binding patterns
-worker_config = AioPikaWorkerConfig(
-    url="amqp://guest:guest@localhost/",
-    exchange="jararaca_ex",
-    queue="user_service_queue",
-    binding_keys=["user.*", "notification.user.*"]  # This queue receives all user-related topics
-)
-```
-
 This message routing architecture allows for flexible and scalable communication patterns between different parts of your application, supporting both direct task assignment and broad event publishing.
 
 ## Worker Infrastructure
@@ -232,6 +215,7 @@ The MessageBusWorker is the central piece that orchestrates message consumption 
 
 ```mermaid
 classDiagram
+
     class MessageBusWorker {
         -app: Microservice
         -config: AioPikaWorkerConfig
