@@ -287,24 +287,57 @@ Jararaca provides utilities for common query patterns:
 
 ### QueryOperations
 
-Base class for query operations with filtering and pagination:
+`QueryOperations` is a generic base class that provides paginated, filtered, and sorted list queries for a given entity and filter type.
+
+#### Basic usage
 
 ```python
 from sqlalchemy import select
 
-from jararaca import QueryOperations
+from jararaca import QueryOperations, use_session
 
 
-class UserQueries(QueryOperations[User, UserFilter]):
-    async def list_users(self, filter: UserFilter):
-        session = use_session()
+class UserQueryOperations(QueryOperations[UserFilter, User]):
+    pass
 
-        stmt = select(User)
-        stmt = self.apply_filters(stmt, filter)
 
-        result = await session.execute(stmt)
-        return result.scalars().all()
+# Instantiate once per handler call
+user_queries = UserQueryOperations(
+    entity_type=User,
+    session_provider=use_session,
+)
+
+paginated_users = await user_queries.get_paginated(filter)
 ```
+
+#### `base_statement` — Static or Callable
+
+The `base_statement` parameter lets you pre-scope every query to a sub-set of rows. It accepts either a fixed `Select` object or a **callable** that receives the default `select(EntityType)` and returns a modified statement:
+
+```python
+from sqlalchemy import select
+
+from jararaca import QueryOperations, use_session
+
+# Static base statement — only active users
+active_users_query = QueryOperations(
+    entity_type=User,
+    session_provider=use_session,
+    base_statement=select(User).where(User.is_active == True),
+)
+
+# Callable base statement — apply a dynamic join or subquery at each call
+def add_department_join(stmt):
+    return stmt.join(Department, Department.id == User.department_id)
+
+dept_users_query = QueryOperations(
+    entity_type=User,
+    session_provider=use_session,
+    base_statement=add_department_join,
+)
+```
+
+When a callable is provided it is invoked with `select(EntityType)` each time a query is built, giving you full control over joins, CTEs, or other transformations without hard-coding the entity select.
 
 ### Pagination
 
