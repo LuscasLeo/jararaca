@@ -137,7 +137,7 @@ async def providing_new_session(
 
 
 @asynccontextmanager
-async def get_or_create_session(
+async def providing_new_or_current_session(
     connection_name: str | None = None,
 ) -> AsyncGenerator[AsyncSession, None]:
     """
