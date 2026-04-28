@@ -153,6 +153,7 @@ if TYPE_CHECKING:
     from .persistence.interceptors.aiosqa_interceptor import (
         AIOSQAConfig,
         AIOSqlAlchemySessionInterceptor,
+        get_or_create_session,
         providing_new_session,
         providing_session,
         providing_transaction,
@@ -328,6 +329,7 @@ if TYPE_CHECKING:
         "skip_persistence_session",
         "set_use_persistence_session",
         "providing_transaction",
+        "get_or_create_session",
         "providing_new_session",
         "Post",
         "Get",
@@ -557,6 +559,11 @@ _dynamic_imports: "dict[str, tuple[str, str, str | None]]" = {
         None,
     ),
     "providing_session": (
+        __SPEC_PARENT__,
+        "persistence.interceptors.aiosqa_interceptor",
+        None,
+    ),
+    "get_or_create_session": (
         __SPEC_PARENT__,
         "persistence.interceptors.aiosqa_interceptor",
         None,

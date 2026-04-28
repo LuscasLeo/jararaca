@@ -136,6 +136,23 @@ async def providing_new_session(
                     raise
 
 
+@asynccontextmanager
+async def get_or_create_session(
+    connection_name: str | None = None,
+) -> AsyncGenerator[AsyncSession, None]:
+    """
+    Async context manager that yields the existing session from the context if one is present,
+    or creates and provides a new session if none exists.
+    """
+    resolved_name = ensure_name(connection_name)
+    current_map = ctx_session_map.get({})
+    if resolved_name in current_map:
+        yield current_map[resolved_name].session
+    else:
+        async with providing_new_session(connection_name) as session:
+            yield session
+
+
 def use_session(connection_name: str | None = None) -> AsyncSession:
     connection_name = ensure_name(connection_name)
     current_map = ctx_session_map.get({})
