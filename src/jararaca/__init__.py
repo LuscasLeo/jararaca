@@ -563,7 +563,7 @@ _dynamic_imports: "dict[str, tuple[str, str, str | None]]" = {
         "persistence.interceptors.aiosqa_interceptor",
         None,
     ),
-    "get_or_create_session": (
+    "providing_new_or_current_session": (
         __SPEC_PARENT__,
         "persistence.interceptors.aiosqa_interceptor",
         None,
