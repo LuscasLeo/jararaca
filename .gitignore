@@ -13,3 +13,5 @@ coverage.xml
 *.cover
 .pytest_cache/
 .mypy_cache
+
+.pycache

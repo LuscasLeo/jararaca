@@ -18,7 +18,6 @@ import aio_pika
 import croniter
 import urllib3
 import urllib3.util
-import uvloop
 from aio_pika import connect
 from aio_pika.abc import AbstractChannel, AbstractConnection
 from aio_pika.exceptions import (
@@ -509,28 +508,26 @@ class BeatWorker:
 
         self.lifecycle = AppLifecycle(app, self.container)
 
-    def run(self) -> None:
+    async def run(self) -> None:
 
         def on_shutdown(loop: asyncio.AbstractEventLoop) -> None:
             logger.debug("Shutting down - signal received")
             # Schedule the shutdown to run in the event loop
             asyncio.create_task(self._graceful_shutdown())
 
-        with asyncio.Runner(loop_factory=uvloop.new_event_loop) as runner:
-            loop = runner.get_loop()
-            loop.add_signal_handler(signal.SIGINT, on_shutdown, loop)
-            # Add graceful shutdown handler for SIGTERM as well
-            loop.add_signal_handler(signal.SIGTERM, on_shutdown, loop)
-            try:
-                runner.run(self.start_scheduler())
-            except Exception as e:
-                logger.critical(
-                    "Scheduler failed to start due to connection error: %s", e
-                )
-                # Exit with error code 1 to indicate startup failure
-                import sys
+        loop = asyncio.get_event_loop()
 
-                sys.exit(1)
+        loop.add_signal_handler(signal.SIGINT, on_shutdown, loop)
+        # Add graceful shutdown handler for SIGTERM as well
+        loop.add_signal_handler(signal.SIGTERM, on_shutdown, loop)
+        try:
+            await self.start_scheduler()
+        except Exception as e:
+            logger.critical("Scheduler failed to start due to connection error: %s", e)
+            # Exit with error code 1 to indicate startup failure
+            import sys
+
+            sys.exit(1)
 
     async def start_scheduler(self) -> None:
         """

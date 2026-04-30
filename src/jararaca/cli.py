@@ -20,6 +20,7 @@ from urllib.parse import parse_qs, urlparse
 import aio_pika
 import click
 import uvicorn
+import uvloop
 from mako.template import Template
 
 from jararaca.messagebus import worker as worker_mod
@@ -968,6 +969,21 @@ def run_beat_process(
         scheduler_names = {name.strip() for name in actions.split(",") if name.strip()}
 
     click.echo(f"Starting beat scheduler for {app_path}...")
+    with asyncio.Runner(loop_factory=uvloop.new_event_loop) as runner:
+        runner.run(
+            start_beat_scheduler(
+                app, interval, broker_url, backend_url, scheduler_names
+            )
+        )
+
+
+async def start_beat_scheduler(
+    app: Microservice,
+    interval: int,
+    broker_url: str,
+    backend_url: str,
+    scheduler_names: set[str] | None,
+) -> None:
     beat_worker = BeatWorker(
         app=app,
         interval=interval,
@@ -975,7 +991,7 @@ def run_beat_process(
         broker_url=broker_url,
         scheduled_action_names=scheduler_names,
     )
-    beat_worker.run()
+    await beat_worker.run()
 
 
 def run_with_reload_watcher(
