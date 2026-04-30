@@ -16,7 +16,10 @@ classifiers = [
 [tool.poetry.dependencies]
 python = "^3.11"
 uvicorn = "^0.30.6"
-uvloop = "^0.20.0"
+uvloop = [
+    {version="^0.20.0", python = ">=3.8,<3.12"},
+    {version="^0.22.1", python = ">=3.12"},
+]
 fastapi = "^0.124.4"
 aio-pika = "^9.4.3"
 sqlalchemy = "^2.0.34"
