@@ -1036,6 +1036,7 @@ class ScheduledMessageHandlerCallback:
         self.queue_name = queue_name
         self.routing_key = routing_key
         self.scheduled_action = scheduled_action
+        self._current_task: asyncio.Task[Any] | None = None
 
     async def __call__(
         self, aio_pika_message: aio_pika.abc.AbstractIncomingMessage
@@ -1079,10 +1080,22 @@ class ScheduledMessageHandlerCallback:
                 return
 
         async with self.consumer.lock:
+            # Guard: skip this trigger if the previous execution is still running.
+            # With no_ack=True, each cron trigger is auto-acked on delivery, so a
+            # slow handler would accumulate thousands of concurrent tasks without
+            # this check.
+            if self._current_task is not None and not self._current_task.done():
+                logger.warning(
+                    "Scheduled action '%s' is still running, skipping overlapping trigger",
+                    self.queue_name,
+                )
+                return
+
             task = asyncio.create_task(
                 self.handle_message(aio_pika_message),
                 name=f"ScheduledAction-{self.queue_name}-handle-message-{aio_pika_message.message_id}",
             )
+            self._current_task = task
             self.consumer.tasks.add(task)
             task.add_done_callback(self.handle_message_consume_done)
 
@@ -1137,25 +1150,11 @@ class ScheduledMessageHandlerCallback:
 
         sig = inspect.signature(self.scheduled_action.callable)
         if len(sig.parameters) == 1:
-
-            task = asyncio.create_task(
-                self.run_with_context(
-                    self.scheduled_action,
-                    (ScheduleDispatchData(int(aio_pika_message.body.decode("utf-8"))),),
-                    {},
-                ),
-                name=f"ScheduledAction-{self.queue_name}-handle-message-{aio_pika_message.message_id}",
+            args: tuple[Any, ...] = (
+                ScheduleDispatchData(int(aio_pika_message.body.decode("utf-8"))),
             )
-
         elif len(sig.parameters) == 0:
-            task = asyncio.create_task(
-                self.run_with_context(
-                    self.scheduled_action,
-                    (),
-                    {},
-                ),
-                name=f"ScheduledAction-{self.queue_name}-handle-message-{aio_pika_message.message_id}",
-            )
+            args = ()
         else:
             logger.warning(
                 "Scheduled action '%s' must have exactly one parameter of type ScheduleDispatchData or no parameters"
@@ -1163,13 +1162,9 @@ class ScheduledMessageHandlerCallback:
             )
             return
 
-        self.consumer.tasks.add(task)
-        task.add_done_callback(self.handle_message_consume_done)
-
         try:
-            await task
+            await self.run_with_context(self.scheduled_action, args, {})
         except Exception as e:
-
             logger.exception(
                 "Error processing scheduled action %s: %s", self.queue_name, e
             )
@@ -1366,6 +1361,7 @@ class MessageHandlerCallback:
                     name=f"MessageHandler-{self.queue_name}-delayed-retry-{message_id}",
                 )
                 self.consumer.tasks.add(task)
+                task.add_done_callback(lambda t: self.consumer.tasks.discard(t))
 
                 # Acknowledge the current message since we'll handle retry ourselves
                 try:
@@ -1442,19 +1438,17 @@ class MessageHandlerCallback:
             if message_id in self.retry_state:
                 del self.retry_state[message_id]
 
-            # Republish the message to the same queue with retry logic
+            # Republish the message to the same queue with retry logic.
+            # Use the default exchange (routing_key == queue_name) so the retry
+            # is delivered ONLY to this handler's queue and not fan-out to every
+            # other queue that shares the same "{topic}.#" binding.
             max_attempts = 3
             for attempt in range(max_attempts):
                 try:
                     async with self.consumer.get_channel_ctx(
                         self.queue_name
                     ) as channel:
-                        exchange = await RabbitmqUtils.get_main_exchange(
-                            channel=channel,
-                            exchange_name=self.consumer.config.exchange,
-                        )
-
-                        await exchange.publish(
+                        await channel.default_exchange.publish(
                             aio_pika.Message(
                                 body=message_body,
                                 headers=headers,
@@ -1463,7 +1457,7 @@ class MessageHandlerCallback:
                                 content_encoding=aio_pika_message.content_encoding,
                                 delivery_mode=aio_pika_message.delivery_mode,
                             ),
-                            routing_key=self.routing_key,
+                            routing_key=self.queue_name,
                         )
 
                         logger.warning(
