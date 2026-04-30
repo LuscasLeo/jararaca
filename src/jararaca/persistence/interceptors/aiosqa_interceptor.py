@@ -128,7 +128,7 @@ async def providing_new_session(
             with providing_session(new_session, new_tx, connection_name):
                 try:
                     yield new_session
-                    if new_tx.is_active:
+                    if new_tx.is_active and new_session.is_active:
                         await new_tx.commit()
                 except Exception:
                     if new_tx.is_active:
@@ -248,10 +248,11 @@ class AIOSqlAlchemySessionInterceptor(AppInterceptor, SessionManager):
                     with providing_session(session, tx, self.config.connection_name):
                         try:
                             yield
-                            if tx.is_active:
+                            if tx.is_active and session.is_active:
                                 await tx.commit()
                         except Exception as e:
-                            await tx.rollback()
+                            if tx.is_active:
+                                await tx.rollback()
                             raise e
                         finally:
                             with suppress(ValueError):
