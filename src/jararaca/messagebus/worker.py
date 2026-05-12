@@ -311,7 +311,7 @@ class AioPikaMicroserviceConsumer(MessageBusConsumer):
                 # Store consumer tag for cleanup
                 self.consumer_tags[queue_name] = consumer_tag
 
-                logger.debug("Consuming scheduler %s on dedicated channel", queue_name)
+                logger.info("Consuming scheduler %s on dedicated channel", queue_name)
 
                 await self.shutdown_event.wait()
 
