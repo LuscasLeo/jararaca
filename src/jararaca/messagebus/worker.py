@@ -46,7 +46,11 @@ from jararaca.messagebus.decorators import (
     MessageHandlerData,
     ScheduleDispatchData,
 )
-from jararaca.messagebus.implicit_headers import provide_implicit_headers
+from jararaca.messagebus.implicit_headers import (
+    ImplicitHeaders,
+    provide_implicit_headers,
+    use_implicit_headers,
+)
 from jararaca.messagebus.message import Message, MessageOf
 from jararaca.microservice import (
     AppTransactionContext,
@@ -1353,10 +1357,20 @@ class MessageHandlerCallback:
                     "next_retry": time.time() + delay,
                 }
 
+                # Capture the current span's tracing headers before the task
+                # is scheduled. _delayed_retry runs as an async task after the
+                # handler's span has already closed, so we must capture the
+                # traceparent/tracestate now while the span is still active.
+                captured_tracing_headers = dict(use_implicit_headers())
+
                 # Schedule retry after delay
                 task = asyncio.create_task(
                     self._delayed_retry(
-                        aio_pika_message, delay, retry_count + 1, exception
+                        aio_pika_message,
+                        delay,
+                        retry_count + 1,
+                        exception,
+                        captured_tracing_headers,
                     ),
                     name=f"MessageHandler-{self.queue_name}-delayed-retry-{message_id}",
                 )
@@ -1407,6 +1421,7 @@ class MessageHandlerCallback:
         delay: float,
         retry_count: int,
         exception: Optional[BaseException],
+        tracing_headers: Optional[ImplicitHeaders] = None,
     ) -> None:
         """
         Handle delayed retry of a message after exponential backoff delay.
@@ -1416,6 +1431,10 @@ class MessageHandlerCallback:
             delay: Delay in seconds before retrying
             retry_count: The current retry count (after increment)
             exception: The exception that caused the failure
+            tracing_headers: Implicit headers (including traceparent) captured from
+                the active span at scheduling time. These are merged into the
+                republished message so the traceparent is preserved even when the
+                original message was published without one.
         """
         message_id = aio_pika_message.message_id or str(uuid.uuid4())
 
@@ -1428,6 +1447,14 @@ class MessageHandlerCallback:
             headers = (
                 aio_pika_message.headers.copy() if aio_pika_message.headers else {}
             )
+
+            # Overlay tracing headers captured at scheduling time (while the
+            # processing span was still active). This ensures traceparent is
+            # present on retry even when the original message lacked it.
+            if tracing_headers:
+                headers.update(
+                    {k: v for k, v in tracing_headers.items() if v is not None}
+                )
 
             # Add retry information to headers
             headers["x-retry-count"] = retry_count
@@ -1990,6 +2017,9 @@ class AioPikaMessageBusController(BusMessageController):
             headers = self.aio_pika_message.headers or {}
             retry_count = int(str(headers.get("x-retry-count", 0)))
 
+            # Capture tracing headers while the span is still active
+            captured_tracing_headers = dict(use_implicit_headers())
+
             # Handle retry with explicit delay
             asyncio.create_task(
                 callback._delayed_retry(
@@ -1997,6 +2027,7 @@ class AioPikaMessageBusController(BusMessageController):
                     float(delay),
                     retry_count + 1,
                     None,  # No specific exception
+                    captured_tracing_headers,
                 ),
                 name=f"MessageHandler-{callback.queue_name}-delayed-retry-{self.aio_pika_message.message_id or 'unknown'}-{int(time.time())}",
             )
