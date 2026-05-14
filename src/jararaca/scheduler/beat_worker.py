@@ -600,7 +600,9 @@ class BeatWorker:
                             next_run: datetime = cron.get_next(datetime).replace(
                                 tzinfo=configured_tz
                             )
-                            if next_run > datetime.now(configured_tz):
+                            if logger.isEnabledFor(
+                                logging.DEBUG
+                            ) and next_run > datetime.now(configured_tz):
                                 logger.debug(
                                     "Skipping %s.%s until %s",
                                     func.__module__,
@@ -633,7 +635,7 @@ class BeatWorker:
                             if logger.isEnabledFor(logging.INFO):
                                 now_formatted = datetime.fromtimestamp(now).isoformat()
                                 logger.info(
-                                    "Scheduled %s.%s at %s in %.4fs",
+                                    "Scheduled %s.%s at %s UTC in %.4fs",
                                     func.__module__,
                                     func.__qualname__,
                                     now_formatted,
