@@ -159,12 +159,12 @@ class _RabbitMQBrokerDispatcher(_MessageBrokerDispatcher):
         """
 
         async def _establish_connection() -> AbstractConnection:
-            logger.debug("Establishing connection to RabbitMQ")
+            logger.info("Establishing connection to RabbitMQ")
             connection = await connect(
                 self.url,
                 heartbeat=self.config.connection_heartbeat_interval,
             )
-            logger.debug("Connected to RabbitMQ successfully")
+            logger.info("Connected to RabbitMQ successfully")
             return connection
 
         return await retry_with_backoff(
@@ -207,7 +207,7 @@ class _RabbitMQBrokerDispatcher(_MessageBrokerDispatcher):
             await self._wait_for_connection()
 
         async def _dispatch() -> None:
-            logger.debug("Dispatching message to %s at %s", action_id, timestamp)
+            logger.info("Dispatching message to %s at %s", action_id, timestamp)
             async with self.channel_pool.acquire() as channel:
                 exchange = await RabbitmqUtils.get_main_exchange(channel, self.exchange)
 
@@ -215,7 +215,7 @@ class _RabbitMQBrokerDispatcher(_MessageBrokerDispatcher):
                     aio_pika.Message(body=str(timestamp).encode()),
                     routing_key=action_id,
                 )
-                logger.debug("Dispatched message to %s at %s", action_id, timestamp)
+                logger.info("Dispatched message to %s at %s", action_id, timestamp)
 
         try:
             await retry_with_backoff(
@@ -304,7 +304,7 @@ class _RabbitMQBrokerDispatcher(_MessageBrokerDispatcher):
                     )
 
         try:
-            logger.debug("Initializing RabbitMQ connection...")
+            logger.info("Initializing RabbitMQ connection...")
             await retry_with_backoff(
                 _initialize,
                 retry_policy=self.config.connection_retry_config,
@@ -328,7 +328,7 @@ class _RabbitMQBrokerDispatcher(_MessageBrokerDispatcher):
                     raise ConnectionError("Connection not healthy after initialization")
 
             self.connection_healthy = True
-            logger.debug("RabbitMQ connection initialized successfully")
+            logger.info("RabbitMQ connection initialized successfully")
 
             # Start health monitoring
             self.health_check_task = asyncio.create_task(
@@ -341,7 +341,7 @@ class _RabbitMQBrokerDispatcher(_MessageBrokerDispatcher):
 
     async def dispose(self) -> None:
         """Clean up resources"""
-        logger.debug("Disposing RabbitMQ broker dispatcher")
+        logger.warning("Disposing RabbitMQ broker dispatcher")
         self.shutdown_event.set()
 
         # Cancel health monitoring
@@ -371,7 +371,7 @@ class _RabbitMQBrokerDispatcher(_MessageBrokerDispatcher):
                     break
 
             except asyncio.CancelledError:
-                logger.debug("Connection health monitoring cancelled")
+                logger.warning("Connection health monitoring cancelled")
                 break
             except Exception as e:
                 logger.error("Error in connection health monitoring: %s", e)
@@ -391,7 +391,7 @@ class _RabbitMQBrokerDispatcher(_MessageBrokerDispatcher):
                 return True
 
         except Exception as e:
-            logger.debug("Connection health check failed: %s", e)
+            logger.warning("Connection health check failed: %s", e)
             return False
 
     async def _cleanup_pools(self) -> None:
@@ -511,7 +511,7 @@ class BeatWorker:
     async def run(self) -> None:
 
         def on_shutdown(loop: asyncio.AbstractEventLoop) -> None:
-            logger.debug("Shutting down - signal received")
+            logger.warning("Shutting down - signal received")
             # Schedule the shutdown to run in the event loop
             asyncio.create_task(self._graceful_shutdown())
 
@@ -542,21 +542,21 @@ class BeatWorker:
                 )
 
                 # Initialize and wait for connection to be established
-                logger.debug("Initializing broker connection...")
+                logger.info("Initializing broker connection...")
                 await self.broker.initialize(scheduled_actions)
 
                 # Wait for connection to be healthy before starting scheduler
-                logger.debug("Waiting for connection to be established...")
+                logger.info("Waiting for connection to be established...")
                 await self._wait_for_broker_connection()
 
-                logger.debug("Connection established, starting scheduler...")
+                logger.info("Connection established, starting scheduler...")
                 await self.run_scheduled_actions(scheduled_actions)
 
     async def run_scheduled_actions(
         self, scheduled_actions: list[ScheduledActionData]
     ) -> None:
 
-        logger.debug("Starting scheduled actions processing loop")
+        logger.info("Starting scheduled actions processing loop")
 
         # Ensure we have a healthy connection before starting the main loop
         if (
@@ -630,7 +630,7 @@ class BeatWorker:
                                 ScheduledAction.get_function_id(func), now
                             )
 
-                            logger.debug(
+                            logger.info(
                                 "Scheduled %s.%s at %s in %.4fs",
                                 func.__module__,
                                 func.__qualname__,
@@ -675,7 +675,7 @@ class BeatWorker:
                         start_time = time.perf_counter()
                         await self.broker.dispatch_delayed_message(delayed_message_data)
                         elapsed_time = time.perf_counter() - start_time
-                        logger.debug(
+                        logger.info(
                             "Dispatched delayed message for topic %s in %.4fs",
                             delayed_message_data.message_topic,
                             elapsed_time,
@@ -690,7 +690,7 @@ class BeatWorker:
             with contextlib.suppress(asyncio.TimeoutError):
                 await asyncio.wait_for(self.shutdown_event.wait(), self.interval)
 
-        logger.debug("Scheduler stopped")
+        logger.info("Scheduler stopped")
 
         try:
             await self.backend.dispose()
@@ -704,9 +704,9 @@ class BeatWorker:
 
     async def _graceful_shutdown(self) -> None:
         """Handles graceful shutdown process"""
-        logger.debug("Initiating graceful shutdown sequence")
+        logger.warning("Initiating graceful shutdown sequence")
         self.shutdown_event.set()
-        logger.debug("Graceful shutdown completed")
+        logger.warning("Graceful shutdown completed")
 
     async def _wait_for_broker_connection(self) -> None:
         """
@@ -717,7 +717,7 @@ class BeatWorker:
         check_interval = 2.0  # Check every 2 seconds
         elapsed_time = 0.0
 
-        logger.debug(
+        logger.info(
             "Waiting for broker connection to be established (timeout: %ss)...",
             max_wait_time,
         )
@@ -733,17 +733,17 @@ class BeatWorker:
                 isinstance(self.broker, _RabbitMQBrokerDispatcher)
                 and self.broker.connection_healthy
             ):
-                logger.debug("Broker connection is healthy")
+                logger.info("Broker connection is healthy")
                 return
 
             # If broker doesn't have health status, try a simple health check
             if not hasattr(self.broker, "connection_healthy"):
                 try:
                     # For non-RabbitMQ brokers, assume connection is ready after initialization
-                    logger.debug("Broker connection assumed to be ready")
+                    logger.info("Broker connection assumed to be ready")
                     return
                 except Exception as e:
-                    logger.debug("Broker connection check failed: %s", e)
+                    logger.info("Broker connection check failed: %s", e)
 
             if elapsed_time % 10.0 == 0.0:  # Log every 10 seconds
                 logger.warning(
