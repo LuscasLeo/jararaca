@@ -5,6 +5,7 @@
 import asyncio
 import inspect
 import logging
+import os
 import random
 import signal
 import time
@@ -876,7 +877,7 @@ class AioPikaMicroserviceConsumer(MessageBusConsumer):
         self.connection_healthy = False
 
 
-def create_message_bus(
+def create_message_bus_consumer(
     broker_url: str,
     broker_backend: MessageBrokerBackend,
     scheduled_actions: SCHEDULED_ACTION_DATA_SET,
@@ -895,22 +896,24 @@ def create_message_bus(
         assert (
             len(query_params["exchange"]) == 1
         ), "Exchange must be set in the query string"
-        assert (
-            "prefetch_count" in query_params
-        ), "Prefetch count must be set in the query string"
-        assert (
-            len(query_params["prefetch_count"]) == 1
-        ), "Prefetch count must be set in the query string"
-        assert query_params["prefetch_count"][
-            0
-        ].isdigit(), "Prefetch count must be an integer in the query string"
         assert query_params["exchange"][0], "Exchange must be set in the query string"
-        assert query_params["prefetch_count"][
-            0
-        ], "Prefetch count must be set in the query string"
 
         exchange = query_params["exchange"][0]
-        prefetch_count = int(query_params["prefetch_count"][0])
+
+        _prefetch_count_raw: str | None = None
+        if (
+            "prefetch_count" in query_params
+            and len(query_params["prefetch_count"]) == 1
+        ):
+            _prefetch_count_raw = query_params["prefetch_count"][0]
+        else:
+            _prefetch_count_raw = os.environ.get("AMQP_PREFETCH_COUNT")
+
+        assert (
+            _prefetch_count_raw is not None and _prefetch_count_raw.isdigit()
+        ), "Prefetch count must be an integer set via query string 'prefetch_count' or env var AMQP_PREFETCH_COUNT"
+
+        prefetch_count = int(_prefetch_count_raw)
 
         # Parse optional retry configuration parameters
         connection_retry_config = RetryPolicy()
@@ -1903,7 +1906,7 @@ class MessageBusWorker:
                     url=self.backend_url
                 )
 
-                consumer = self._consumer = create_message_bus(
+                consumer = self._consumer = create_message_bus_consumer(
                     broker_url=self.broker_url,
                     broker_backend=broker_backend,
                     scheduled_actions=all_scheduled_actions_set,
