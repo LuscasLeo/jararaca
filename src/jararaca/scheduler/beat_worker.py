@@ -630,13 +630,15 @@ class BeatWorker:
                                 ScheduledAction.get_function_id(func), now
                             )
 
-                            logger.info(
-                                "Scheduled %s.%s at %s in %.4fs",
-                                func.__module__,
-                                func.__qualname__,
-                                now,
-                                elapsed_time,
-                            )
+                            if logger.isEnabledFor(logging.INFO):
+                                now_formatted = datetime.fromtimestamp(now).isoformat()
+                                logger.info(
+                                    "Scheduled %s.%s at %s in %.4fs",
+                                    func.__module__,
+                                    func.__qualname__,
+                                    now_formatted,
+                                    elapsed_time,
+                                )
                         except ChannelInvalidStateError as e:
                             logger.error(
                                 "Channel invalid state error when dispatching %s.%s: %s",
