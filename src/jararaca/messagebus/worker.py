@@ -1063,7 +1063,11 @@ class ScheduledMessageHandlerCallback:
                 )
             except Exception as e:
                 logger.error(
-                    "Failed to requeue scheduled message during shutdown: %s", e
+                    "Failed to requeue scheduled message %s during shutdown: (%s) %s",
+                    self.queue_name,
+                    e.__class__.__name__,
+                    e,
+                    exc_info=e,
                 )
             return
 
@@ -1150,8 +1154,11 @@ class ScheduledMessageHandlerCallback:
                 return
             except Exception as e:
                 logger.error(
-                    "Failed to requeue scheduled message due to connection issues: %s",
+                    "Failed to requeue scheduled message due to connection issues: (%s) %s",
+                    e.__class__.__name__,
                     e,
+                    self.queue_name,
+                    exc_info=e,
                 )
                 return
 
