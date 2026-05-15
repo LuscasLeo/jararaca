@@ -351,8 +351,7 @@ class CustomLoggingHandler(LoggingHandler):
                             current_span.name if is_span_with_name(current_span) else ""
                         ),
                     }
-                    if hasattr(current_span, "name")
-                    and current_span.is_recording() is False
+                    if hasattr(current_span, "name") and current_span.is_recording()
                     else {}
                 ),
             }
