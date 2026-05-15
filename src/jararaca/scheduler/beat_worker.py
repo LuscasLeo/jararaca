@@ -37,6 +37,7 @@ from jararaca.core.uow import UnitOfWorkContextProvider
 from jararaca.di import Container
 from jararaca.lifecycle import AppLifecycle
 from jararaca.microservice import Microservice, providing_app_type
+from jararaca.observability.hooks import record_message_sent
 from jararaca.scheduler.decorators import (
     ScheduledAction,
     ScheduledActionData,
@@ -219,7 +220,11 @@ class _RabbitMQBrokerDispatcher(_MessageBrokerDispatcher):
                     aio_pika.Message(body=str(timestamp).encode()),
                     routing_key=action_id,
                 )
-                logger.info("Dispatched message to %s at %s", action_id, timestamp)
+                if logger.isEnabledFor(logging.INFO):
+                    formatted_time = datetime.fromtimestamp(timestamp).isoformat()
+                    logger.info(
+                        "Dispatched message to %s at %s", action_id, formatted_time
+                    )
 
         try:
             await retry_with_backoff(
@@ -588,38 +593,32 @@ class BeatWorker:
 
                 try:
                     async with self.backend.lock():
-
+                        function_id = ScheduledAction.get_function_id(func)
                         last_dispatch_time: int | None = (
-                            await self.backend.get_last_dispatch_time(
-                                ScheduledAction.get_function_id(func)
-                            )
+                            await self.backend.get_last_dispatch_time(function_id)
                         )
 
                         if last_dispatch_time is not None:
-                            cron = croniter.croniter(
-                                scheduled_action.cron, last_dispatch_time
-                            )
                             # Use configured timezone for cron verification
                             configured_tz = ZoneInfo(const.DEFAULT_TIMEZONE)
-                            next_run: datetime = cron.get_next(datetime).replace(
-                                tzinfo=configured_tz
+                            start_dt = datetime.fromtimestamp(
+                                last_dispatch_time, tz=configured_tz
                             )
-                            if logger.isEnabledFor(
-                                logging.DEBUG
-                            ) and next_run > datetime.now(configured_tz):
-                                logger.debug(
-                                    "Skipping %s.%s until %s",
-                                    func.__module__,
-                                    func.__qualname__,
-                                    next_run,
-                                )
+                            cron = croniter.croniter(scheduled_action.cron, start_dt)
+                            next_run: datetime = cron.get_next(datetime)
+                            if next_run > datetime.now(configured_tz):
+                                if logger.isEnabledFor(logging.DEBUG):
+                                    logger.debug(
+                                        "Skipping %s.%s until %s",
+                                        func.__module__,
+                                        func.__qualname__,
+                                        next_run,
+                                    )
                                 continue
 
                         if not scheduled_action.allow_overlap:
                             if (
-                                await self.backend.get_in_execution_count(
-                                    ScheduledAction.get_function_id(func)
-                                )
+                                await self.backend.get_in_execution_count(function_id)
                                 > 0
                             ):
                                 continue
@@ -627,14 +626,18 @@ class BeatWorker:
                         try:
                             start_time = time.perf_counter()
                             await self.broker.dispatch_scheduled_action(
-                                ScheduledAction.get_function_id(func),
+                                function_id,
                                 now,
                             )
                             elapsed_time = time.perf_counter() - start_time
 
-                            await self.backend.set_last_dispatch_time(
-                                ScheduledAction.get_function_id(func), now
+                            record_message_sent(
+                                topic=function_id,
+                                message_type="task",
+                                message_category="scheduler",
                             )
+
+                            await self.backend.set_last_dispatch_time(function_id, now)
 
                             if logger.isEnabledFor(logging.INFO):
                                 now_formatted = datetime.fromtimestamp(now).isoformat()
@@ -683,6 +686,11 @@ class BeatWorker:
                         start_time = time.perf_counter()
                         await self.broker.dispatch_delayed_message(delayed_message_data)
                         elapsed_time = time.perf_counter() - start_time
+                        record_message_sent(
+                            topic=delayed_message_data.message_topic,
+                            message_type="task",
+                            message_category="delayed",
+                        )
                         logger.info(
                             "Dispatched delayed message for topic %s in %.4fs",
                             delayed_message_data.message_topic,

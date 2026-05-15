@@ -441,8 +441,8 @@ class OtelObservabilityProvider(ObservabilityProvider):
         meter = metrics.get_meter(__name__)
         self.__message_bus_metrics = MessageBusMetrics(meter)
 
-        # with provide_message_bus_metrics(message_bus_metrics):
-        yield
+        with provide_message_bus_metrics(self.__message_bus_metrics):
+            yield
 
     @staticmethod
     def from_url(
