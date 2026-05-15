@@ -4,8 +4,13 @@
 
 from contextlib import contextmanager, suppress
 from contextvars import ContextVar
-from logging import Handler, LogRecord
+from logging import Handler, LogRecord, getLogger
 from typing import Any, Callable, Generator, Union
+
+_RESERVED_LOGRECORD_ATTRS = frozenset(
+    LogRecord("", 0, "", 0, "", (), None).__dict__.keys()
+)
+_LOGGER = getLogger(__name__)
 
 LoggerExtraAttributes = Union[str, int, float, bool, None]
 
@@ -14,6 +19,14 @@ LoggerExtraAttributeMap = dict[str, LoggerExtraAttributes]
 logger_extra_attrubutes_ctxvar: "ContextVar[LoggerExtraAttributeMap]" = ContextVar(
     "logger_extra_attrubutes_ctxvar", default={}
 )
+
+
+def _is_forbidden_extra_key(key: str) -> bool:
+    return (
+        not key.isidentifier()
+        or key.startswith("_")
+        or key in _RESERVED_LOGRECORD_ATTRS
+    )
 
 
 def get_logger_extra_attributes() -> LoggerExtraAttributeMap:
@@ -43,8 +56,20 @@ def providing_logger_extra_attributes(
         **attributes: Atributos extras a serem fornecidos para o logger. As chaves devem ser strings e os valores podem ser de tipos primitivos (str, int, float, bool, None).
     """
 
+    forbidden_keys = set(
+        sorted(key for key in attributes if _is_forbidden_extra_key(key))
+    )
+    if forbidden_keys:
+        _LOGGER.warning(
+            "Ignoring forbidden logger extra attribute keys: %s",
+            ", ".join(forbidden_keys),
+        )
+
+    safe_attribute_keys = forbidden_keys ^ (attributes.keys())
+    safe_attributes = {key: attributes[key] for key in safe_attribute_keys}
+
     old_attributes = logger_extra_attrubutes_ctxvar.get()
-    new_attributes = old_attributes | attributes
+    new_attributes = old_attributes | safe_attributes
     token = logger_extra_attrubutes_ctxvar.set(new_attributes)
     try:
         yield
@@ -53,7 +78,7 @@ def providing_logger_extra_attributes(
             logger_extra_attrubutes_ctxvar.reset(token)
 
 
-class LoggerExtraInterceptor(Handler):
+class ContextualLoggerExtraAttributesHandler(Handler):
     """Interceptor de logs para adicionar atributos extras do contexto aos registros de log.
 
     Este handler deve ser adicionado à configuração do logger para garantir que os atributos extras fornecidos pelo contexto sejam incluídos nos registros de log.
@@ -73,4 +98,7 @@ class LoggerExtraInterceptor(Handler):
             self.inject_extra(record) if self.inject_extra else {}
         )
         for key, value in extra_attributes.items():
-            setattr(record, key, value)
+            # Avoid clobbering LogRecord internals or existing keys.
+            if _is_forbidden_extra_key(key) or key in record.__dict__:
+                continue
+            record.__dict__[key] = value
