@@ -117,7 +117,7 @@ if TYPE_CHECKING:
         TimeoutException,
     )
     from jararaca.utils.logger_extra_interceptor import (
-        LoggerExtraInterceptor,
+        ContextualLoggerExtraAttributesHandler,
         get_logger_extra_attributes,
         providing_logger_extra_attributes,
     )
@@ -220,7 +220,7 @@ if TYPE_CHECKING:
         "provide_implicit_headers",
         "get_logger_extra_attributes",
         "providing_logger_extra_attributes",
-        "LoggerExtraInterceptor",
+        "ContextualLoggerExtraAttributesHandler",
         "SetMetadata",
         "start_transaction_metadata_context",
         "start_providing_metadata",
@@ -410,7 +410,11 @@ _dynamic_imports: "dict[str, tuple[str, str, str | None]]" = {
         "utils.logger_extra_interceptor",
         None,
     ),
-    "LoggerExtraInterceptor": (__SPEC_PARENT__, "utils.logger_extra_interceptor", None),
+    "ContextualLoggerExtraAttributesHandler": (
+        __SPEC_PARENT__,
+        "utils.logger_extra_interceptor",
+        None,
+    ),
     "SetMetadata": (__SPEC_PARENT__, "reflect.metadata", None),
     "TransactionMetadata": (__SPEC_PARENT__, "reflect.metadata", None),
     "start_transaction_metadata_context": (__SPEC_PARENT__, "reflect.metadata", None),
