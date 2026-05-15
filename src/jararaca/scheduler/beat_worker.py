@@ -207,7 +207,11 @@ class _RabbitMQBrokerDispatcher(_MessageBrokerDispatcher):
             await self._wait_for_connection()
 
         async def _dispatch() -> None:
-            logger.info("Dispatching message to %s at %s", action_id, timestamp)
+            if logger.isEnabledFor(logging.INFO):
+                datetime_formatted = datetime.fromtimestamp(timestamp).isoformat()
+                logger.info(
+                    "Dispatching message to %s at %s", action_id, datetime_formatted
+                )
             async with self.channel_pool.acquire() as channel:
                 exchange = await RabbitmqUtils.get_main_exchange(channel, self.exchange)
 
