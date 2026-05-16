@@ -266,13 +266,35 @@ class _RabbitMQBrokerDispatcher(_MessageBrokerDispatcher):
 
         async def _dispatch() -> None:
             async with self.channel_pool.acquire() as channel:
-                exchange = await RabbitmqUtils.get_main_exchange(channel, self.exchange)
-                await exchange.publish(
-                    aio_pika.Message(
-                        body=delayed_message.payload,
-                    ),
-                    routing_key=f"{delayed_message.message_topic}.#",
-                )
+                message_kwargs: dict[str, Any] = {"body": delayed_message.payload}
+                if delayed_message.headers:
+                    message_kwargs["headers"] = dict(delayed_message.headers)
+                if delayed_message.message_id:
+                    message_kwargs["message_id"] = delayed_message.message_id
+                if delayed_message.content_type:
+                    message_kwargs["content_type"] = delayed_message.content_type
+                if delayed_message.content_encoding:
+                    message_kwargs["content_encoding"] = (
+                        delayed_message.content_encoding
+                    )
+                message = aio_pika.Message(**message_kwargs)
+
+                if delayed_message.target_queue:
+                    # Direct-to-queue delivery (used by handler retries) so the
+                    # message lands only on the originating handler's queue
+                    # rather than fanning out via the topic exchange.
+                    await channel.default_exchange.publish(
+                        message,
+                        routing_key=delayed_message.target_queue,
+                    )
+                else:
+                    exchange = await RabbitmqUtils.get_main_exchange(
+                        channel, self.exchange
+                    )
+                    await exchange.publish(
+                        message,
+                        routing_key=f"{delayed_message.message_topic}.#",
+                    )
 
         try:
             await retry_with_backoff(
