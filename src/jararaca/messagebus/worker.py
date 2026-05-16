@@ -48,7 +48,6 @@ from jararaca.messagebus.decorators import (
     ScheduleDispatchData,
 )
 from jararaca.messagebus.implicit_headers import (
-    ImplicitHeaders,
     provide_implicit_headers,
     use_implicit_headers,
 )
@@ -70,6 +69,7 @@ from jararaca.observability.hooks import (
     set_span_status,
 )
 from jararaca.scheduler.decorators import ScheduledActionData
+from jararaca.scheduler.types import DelayedMessageData
 from jararaca.utils.rabbitmq_utils import RabbitmqUtils
 from jararaca.utils.retry import RetryPolicy, retry_with_backoff
 
@@ -1220,7 +1220,6 @@ class MessageHandlerCallback:
         self.queue_name = queue_name
         self.routing_key = routing_key
         self.message_handler = message_handler
-        self.retry_state: dict[str, dict[str, Any]] = {}
 
     async def message_consumer(
         self, aio_pika_message: aio_pika.abc.AbstractIncomingMessage
@@ -1360,39 +1359,69 @@ class MessageHandlerCallback:
                     delay,
                 )
 
-                # Store retry state for this message
-                self.retry_state[message_id] = {
-                    "retry_count": retry_count + 1,
-                    "last_exception": exception,
-                    "next_retry": time.time() + delay,
-                }
-
-                # Capture the current span's tracing headers before the task
-                # is scheduled. _delayed_retry runs as an async task after the
-                # handler's span has already closed, so we must capture the
-                # traceparent/tracestate now while the span is still active.
+                # Capture tracing headers while the span is still active so the
+                # retry message carries the parent trace context.
                 captured_tracing_headers = dict(use_implicit_headers())
 
-                # Schedule retry after delay
-                task = asyncio.create_task(
-                    self._delayed_retry(
-                        aio_pika_message,
-                        delay,
-                        retry_count + 1,
-                        exception,
-                        captured_tracing_headers,
-                    ),
-                    name=f"MessageHandler-{self.queue_name}-delayed-retry-{message_id}",
+                retry_headers: dict[str, str | int | float | bool] = {}
+                if aio_pika_message.headers:
+                    retry_headers.update(
+                        {
+                            k: v
+                            for k, v in aio_pika_message.headers.items()
+                            if isinstance(v, (str, int, float, bool))
+                        }
+                    )
+                retry_headers.update(
+                    {k: v for k, v in captured_tracing_headers.items() if v is not None}
                 )
-                self.consumer.tasks.add(task)
-                task.add_done_callback(lambda t: self.consumer.tasks.discard(t))
+                retry_headers["x-retry-count"] = retry_count + 1
+                retry_headers["x-last-error"] = str(exception)
 
-                # Acknowledge the current message since we'll handle retry ourselves
+                delayed_message = DelayedMessageData(
+                    message_topic=self.message_handler.message_type.MESSAGE_TOPIC,
+                    payload=aio_pika_message.body,
+                    dispatch_time=int(time.time() + delay),
+                    headers=retry_headers,
+                    target_queue=self.queue_name,
+                    message_id=message_id,
+                    content_type=aio_pika_message.content_type,
+                    content_encoding=aio_pika_message.content_encoding,
+                )
+
+                # Hand the retry off to the broker backend. The beat worker
+                # will redispatch it once dispatch_time elapses, so no
+                # in-process task has to hold the message body in memory while
+                # sleeping — concurrent in-flight count stays bounded by
+                # prefetch_count.
+                try:
+                    await self.consumer.broker_backend.enqueue_delayed_message(
+                        delayed_message
+                    )
+                except Exception as enqueue_error:
+                    logger.error(
+                        "Failed to enqueue delayed retry for message %s on %s: %s. Requeueing to broker.",
+                        message_id,
+                        self.queue_name,
+                        enqueue_error,
+                    )
+                    try:
+                        await aio_pika_message.reject(requeue=True)
+                    except Exception as reject_error:
+                        logger.error(
+                            "Failed to requeue message %s after enqueue failure: %s",
+                            message_id,
+                            reject_error,
+                        )
+                    return
+
                 try:
                     await aio_pika_message.ack()
                 except Exception as e:
                     logger.error(
-                        "Failed to acknowledge message %s for retry: %s", message_id, e
+                        "Failed to acknowledge message %s after scheduling retry: %s",
+                        message_id,
+                        e,
                     )
                 return
 
@@ -1424,120 +1453,6 @@ class MessageHandlerCallback:
                 self.queue_name,
                 e,
             )
-
-    async def _delayed_retry(
-        self,
-        aio_pika_message: aio_pika.abc.AbstractIncomingMessage,
-        delay: float,
-        retry_count: int,
-        exception: Optional[BaseException],
-        tracing_headers: Optional[ImplicitHeaders] = None,
-    ) -> None:
-        """
-        Handle delayed retry of a message after exponential backoff delay.
-
-        Args:
-            aio_pika_message: The original message
-            delay: Delay in seconds before retrying
-            retry_count: The current retry count (after increment)
-            exception: The exception that caused the failure
-            tracing_headers: Implicit headers (including traceparent) captured from
-                the active span at scheduling time. These are merged into the
-                republished message so the traceparent is preserved even when the
-                original message was published without one.
-        """
-        message_id = aio_pika_message.message_id or str(uuid.uuid4())
-
-        try:
-            # Wait for the backoff delay
-            await self._wait_delay_or_shutdown(delay)
-
-            # Get message body and properties for republishing
-            message_body = aio_pika_message.body
-            headers = (
-                aio_pika_message.headers.copy() if aio_pika_message.headers else {}
-            )
-
-            # Overlay tracing headers captured at scheduling time (while the
-            # processing span was still active). This ensures traceparent is
-            # present on retry even when the original message lacked it.
-            if tracing_headers:
-                headers.update(
-                    {k: v for k, v in tracing_headers.items() if v is not None}
-                )
-
-            # Add retry information to headers
-            headers["x-retry-count"] = retry_count
-            if exception:
-                headers["x-last-error"] = str(exception)
-
-            # Clean up retry state
-            if message_id in self.retry_state:
-                del self.retry_state[message_id]
-
-            # Republish the message to the same queue with retry logic.
-            # Use the default exchange (routing_key == queue_name) so the retry
-            # is delivered ONLY to this handler's queue and not fan-out to every
-            # other queue that shares the same "{topic}.#" binding.
-            max_attempts = 3
-            for attempt in range(max_attempts):
-                try:
-                    async with self.consumer.get_channel_ctx(
-                        self.queue_name
-                    ) as channel:
-                        await channel.default_exchange.publish(
-                            aio_pika.Message(
-                                body=message_body,
-                                headers=headers,
-                                message_id=message_id,
-                                content_type=aio_pika_message.content_type,
-                                content_encoding=aio_pika_message.content_encoding,
-                                delivery_mode=aio_pika_message.delivery_mode,
-                            ),
-                            routing_key=self.queue_name,
-                        )
-
-                        logger.warning(
-                            "Message %s (%s) republished for retry %s",
-                            message_id,
-                            self.queue_name,
-                            retry_count,
-                        )
-                        return
-
-                except Exception as e:
-                    if attempt < max_attempts - 1:
-                        logger.warning(
-                            "Failed to republish message %s (attempt %s): %s",
-                            message_id,
-                            attempt + 1,
-                            e,
-                        )
-                        await self._wait_delay_or_shutdown(
-                            (1.0 * (attempt + 1))
-                        )  # Exponential backoff
-                    else:
-                        logger.error(
-                            "Failed to republish message %s after %s attempts: %s",
-                            message_id,
-                            max_attempts,
-                            e,
-                        )
-                        raise
-
-        except Exception as e:
-            logger.exception(
-                "Failed to execute delayed retry for message %s (%s): %s",
-                message_id,
-                self.queue_name,
-                e,
-            )
-            # If we fail to republish, try to dead-letter the original message
-            try:
-                if message_id in self.retry_state:
-                    del self.retry_state[message_id]
-            except Exception:
-                pass
 
     async def _wait_delay_or_shutdown(self, delay: float) -> None:
         await self.consumer._wait_delay_or_shutdown(delay)
@@ -1745,12 +1660,9 @@ class MessageHandlerCallback:
                                 duration_seconds=elapsed_time,
                                 success=successfully,
                             )
-                            # Message processed successfully, log and clean up any retry state
                             message_id = aio_pika_message.message_id or str(
                                 uuid.uuid4()
                             )
-                            if message_id in self.retry_state:
-                                del self.retry_state[message_id]
 
                             # Log success with retry information if applicable
                             headers = aio_pika_message.headers or {}
@@ -2015,37 +1927,49 @@ class AioPikaMessageBusController(BusMessageController):
 
     async def retry_later(self, delay: int) -> None:
         """
-        Retry the message after a specified delay using the exponential backoff mechanism.
-
-        Args:
-            delay: Minimum delay in seconds before retrying
+        Retry the message after a specified delay by handing it to the broker
+        backend; the beat worker will redispatch it once the delay elapses.
         """
         try:
             callback = self._get_callback()
 
-            # Get current retry count from message headers
             headers = self.aio_pika_message.headers or {}
             retry_count = int(str(headers.get("x-retry-count", 0)))
 
-            # Capture tracing headers while the span is still active
             captured_tracing_headers = dict(use_implicit_headers())
 
-            # Handle retry with explicit delay
-            asyncio.create_task(
-                callback._delayed_retry(
-                    self.aio_pika_message,
-                    float(delay),
-                    retry_count + 1,
-                    None,  # No specific exception
-                    captured_tracing_headers,
-                ),
-                name=f"MessageHandler-{callback.queue_name}-delayed-retry-{self.aio_pika_message.message_id or 'unknown'}-{int(time.time())}",
+            retry_headers: dict[str, str | int | float | bool] = {}
+            retry_headers.update(
+                {
+                    k: v
+                    for k, v in headers.items()
+                    if isinstance(v, (str, int, float, bool))
+                }
+            )
+            retry_headers.update(
+                {k: v for k, v in captured_tracing_headers.items() if v is not None}
+            )
+            retry_headers["x-retry-count"] = retry_count + 1
+
+            message_id = self.aio_pika_message.message_id or str(uuid.uuid4())
+
+            delayed_message = DelayedMessageData(
+                message_topic=callback.message_handler.message_type.MESSAGE_TOPIC,
+                payload=self.aio_pika_message.body,
+                dispatch_time=int(time.time() + delay),
+                headers=retry_headers,
+                target_queue=callback.queue_name,
+                message_id=message_id,
+                content_type=self.aio_pika_message.content_type,
+                content_encoding=self.aio_pika_message.content_encoding,
             )
 
-            # Acknowledge the current message since we'll republish
+            await callback.consumer.broker_backend.enqueue_delayed_message(
+                delayed_message
+            )
             await self.aio_pika_message.ack()
 
         except Exception as e:
             logger.exception("Failed to schedule retry_later: %s", e)
-            # Fall back to immediate retry
+            # Fall back to immediate requeue so the message isn't lost
             await self.aio_pika_message.reject(requeue=True)
