@@ -349,14 +349,19 @@ class _RabbitMQBrokerDispatcher(_MessageBrokerDispatcher):
             )
 
             # Verify connection is actually healthy after initialization
-            if not await self._is_connection_healthy():
+            health_check_result = await self._is_connection_healthy()
+            if health_check_result is not None:
                 logger.warning(
-                    "Connection health check failed after initialization, retrying..."
+                    "Connection health check failed after initialization: %s, retrying...",
+                    health_check_result,
                 )
                 # Wait a bit and try again
                 await asyncio.sleep(2.0)
-                if not await self._is_connection_healthy():
-                    raise ConnectionError("Connection not healthy after initialization")
+                health_check_result = await self._is_connection_healthy()
+                if health_check_result is not None:
+                    raise ConnectionError(
+                        f"Connection not healthy after initialization: {health_check_result}"
+                    )
 
             self.connection_healthy = True
             logger.info("RabbitMQ connection initialized successfully")
@@ -396,8 +401,12 @@ class _RabbitMQBrokerDispatcher(_MessageBrokerDispatcher):
                     break
 
                 # Check connection health
-                if not await self._is_connection_healthy():
-                    logger.error("Connection health check failed, triggering shutdown")
+                health_check_result = await self._is_connection_healthy()
+                if health_check_result is not None:
+                    logger.error(
+                        "Connection health check failed, triggering shutdown: %s",
+                        health_check_result,
+                    )
                     self.shutdown_event.set()
                     break
 
@@ -408,22 +417,22 @@ class _RabbitMQBrokerDispatcher(_MessageBrokerDispatcher):
                 logger.error("Error in connection health monitoring: %s", e)
                 await asyncio.sleep(5)  # Wait before retrying
 
-    async def _is_connection_healthy(self) -> bool:
+    async def _is_connection_healthy(self) -> None | str:
         """Check if the connection is healthy"""
         try:
             # Try to acquire a connection from the pool
             async with self.conn_pool.acquire() as connection:
                 if connection.is_closed:
-                    return False
+                    return "Connection is closed"
 
                 # Try to create a channel to test connection
                 channel = await connection.channel()
                 await channel.close()
-                return True
+                return None
 
         except Exception as e:
             logger.warning("Connection health check failed: %s", e)
-            return False
+            return "%s: %s" % (type(e).__qualname__, str(e))
 
     async def _cleanup_pools(self) -> None:
         """Clean up existing connection pools"""
