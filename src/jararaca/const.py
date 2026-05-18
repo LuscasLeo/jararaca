@@ -22,6 +22,7 @@ Example usage:
 
 from jararaca.utils.env_parse_utils import (
     get_abs_env_bool,
+    get_env_bool,
     get_env_float,
     get_env_int,
     get_env_str,
@@ -262,6 +263,15 @@ OBSERVABILITY_TRACING_ENABLED: bool = False  # Set via configuration
 # Trace sampling rate (0.0 to 1.0)
 OBSERVABILITY_TRACE_SAMPLE_RATE: float = get_env_float(
     "JARARACA_OBSERVABILITY_TRACE_SAMPLE_RATE", default=1.0
+)
+
+OBSERVABILITY_TRACE_SPAN_HTTP_REQUEST_MAX_BODY_SIZE_ATTRIBUTE_VALUE: int = get_env_int(
+    "JARARACA_OBSERVABILITY_TRACE_SPAN_HTTP_REQUEST_MAX_BODY_SIZE_ATTRIBUTE_VALUE",
+    default=5000,  # 5KB
+)
+OBSERVABILITY_TRACE_SPAN_HTTP_REQUEST_USE_ABSOLUTE_PATH_ON_TITLE: bool = get_env_bool(
+    "JARARACA_OBSERVABILITY_TRACE_SPAN_HTTP_REQUEST_USE_ABSOLUTE_PATH_ON_TITLE",
+    default=False,
 )
 
 # ==========================================

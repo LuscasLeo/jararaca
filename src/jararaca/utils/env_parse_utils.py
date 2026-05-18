@@ -5,51 +5,43 @@
 import os
 from typing import Literal, Optional, TypeVar, overload
 
-
-def is_env_truffy(var_name: str) -> bool:
-    value = os.getenv(var_name, "").lower()
-    return value in ("1", "true", "yes", "on")
+AFFIRMATIVE_STRINGS = {"1", "true", "yes", "on"}
+NEGATIVE_STRINGS = {"0", "false", "no", "off"}
 
 
 DF_BOOL_T = TypeVar("DF_BOOL_T", bound="bool")
 
 
 @overload
-def get_env_bool(
-    var_name: str, default: DF_BOOL_T
-) -> DF_BOOL_T | bool | Literal["invalid"]: ...
+def get_env_bool(var_name: str, default: DF_BOOL_T) -> DF_BOOL_T | bool: ...
 
 
 @overload
-def get_env_bool(
-    var_name: str, default: None = None
-) -> bool | None | Literal["invalid"]: ...
+def get_env_bool(var_name: str, default: None = None) -> bool | None: ...
 
 
 def get_env_bool(
     var_name: str, default: DF_BOOL_T | None = None
-) -> DF_BOOL_T | bool | Literal["invalid"] | None:
+) -> DF_BOOL_T | bool | None:
     value = os.getenv(var_name)
     if value is None:
         return default
     value_lower = value.lower()
-    if value_lower in ("1", "true", "yes", "on"):
+    if value_lower in AFFIRMATIVE_STRINGS:
         return True
-    elif value_lower in ("0", "false", "no", "off"):
+    elif value_lower in NEGATIVE_STRINGS:
         return False
     else:
-        return "invalid"
+        raise ValueError(
+            f"Environment variable '{var_name}' has an invalid boolean value: '{value}'. Try one of {AFFIRMATIVE_STRINGS.union(NEGATIVE_STRINGS)} (case-insensitive)."
+        )
 
 
 def get_abs_env_bool(
     var_name: str, default: DF_BOOL_T | None = None
 ) -> DF_BOOL_T | bool:
     result = get_env_bool(var_name, default)
-    if result == "invalid":
-        raise ValueError(
-            f"Environment variable '{var_name}' has an invalid boolean value"
-        )
-    elif result is None:
+    if result is None:
         if default is None:
             raise ValueError(
                 f"Environment variable '{var_name}' is not set and no default value provided"
