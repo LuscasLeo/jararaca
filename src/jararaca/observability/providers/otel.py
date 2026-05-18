@@ -28,6 +28,10 @@ from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import BatchSpanProcessor
 from opentelemetry.trace.propagation.tracecontext import TraceContextTextMapPropagator
 
+from jararaca.const import (
+    OBSERVABILITY_TRACE_SPAN_HTTP_REQUEST_MAX_BODY_SIZE_ATTRIBUTE_VALUE,
+    OBSERVABILITY_TRACE_SPAN_HTTP_REQUEST_USE_ABSOLUTE_PATH_ON_TITLE,
+)
 from jararaca.messagebus.implicit_headers import (
     ImplicitHeaders,
     provide_implicit_headers,
@@ -260,9 +264,9 @@ class OtelTracingContextProviderFactory(TracingContextProviderFactory):
 
         if tx_data.context_type == "http":
             headers = dict(tx_data.request.headers)
-            title = f"HTTP {tx_data.request.method} {tx_data.request.url}"
+            title = f"HTTP {tx_data.request.method} {tx_data.request.scope['route'].path if not OBSERVABILITY_TRACE_SPAN_HTTP_REQUEST_USE_ABSOLUTE_PATH_ON_TITLE else tx_data.request.url.path }"
             extra_attributes["http.request.body"] = (await tx_data.request.body())[
-                :5000
+                :OBSERVABILITY_TRACE_SPAN_HTTP_REQUEST_MAX_BODY_SIZE_ATTRIBUTE_VALUE
             ].decode(errors="ignore")
 
         elif tx_data.context_type == "message_bus":
