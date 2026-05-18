@@ -19,12 +19,7 @@ from jararaca.reflect.decorators import (
 )
 from jararaca.reflect.helpers import is_generic_alias
 from jararaca.scheduler.decorators import ScheduledAction, ScheduledActionData
-from jararaca.utils.env_parse_utils import (
-    get_env_bool,
-    get_env_float,
-    get_env_int,
-    get_env_str,
-)
+from jararaca.utils.env_parse_utils import get_env_bool, get_env_int, get_env_str
 from jararaca.utils.retry import RetryPolicy
 
 AcceptableHandler = (
@@ -38,7 +33,7 @@ DEFAULT_NACK_ON_EXCEPTION = get_env_bool(
     "JARARACA_MESSAGEBUS_NACK_ON_EXCEPTION", default=False
 )
 DEFAULT_AUTO_ACK = get_env_bool("JARARACA_MESSAGEBUS_AUTO_ACK", default=False)
-DEFAULT_NACK_DELAY_ON_EXCEPTION = get_env_float(
+DEFAULT_NACK_DELAY_ON_EXCEPTION = get_env_int(
     "JARARACA_MESSAGEBUS_NACK_DELAY_ON_EXCEPTION"
 )
 

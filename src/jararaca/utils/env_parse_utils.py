@@ -3,7 +3,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 
 import os
-from typing import Literal, Optional, TypeVar, overload
+from typing import Optional, TypeVar, overload
 
 AFFIRMATIVE_STRINGS = {"1", "true", "yes", "on"}
 NEGATIVE_STRINGS = {"0", "false", "no", "off"}
@@ -50,56 +50,29 @@ def get_abs_env_bool(
     return result
 
 
-DF_INT_T = TypeVar("DF_INT_T", bound="int | None | Literal[False]")
+DF_INT_T = TypeVar("DF_INT_T", bound="int | None")
 
 
 @overload
-def get_env_int(var_name: str, default: None = None) -> int | None | Literal[False]: ...
+def get_env_int(var_name: str, default: None = None) -> int | None: ...
 
 
 @overload
-def get_env_int(
-    var_name: str, default: DF_INT_T
-) -> DF_INT_T | int | Literal[False]: ...
+def get_env_int(var_name: str, default: DF_INT_T) -> DF_INT_T | int: ...
 
 
 def get_env_int(
-    var_name: str, default: DF_INT_T = False  # type: ignore[assignment]
-) -> DF_INT_T | int | Literal[False]:
+    var_name: str, default: DF_INT_T = None  # type: ignore[assignment]
+) -> DF_INT_T | int:
     value = os.getenv(var_name)
     if value is None:
         return default
     try:
         return int(value)
     except ValueError:
-        return False
-
-
-DF_FLOAT_T = TypeVar("DF_FLOAT_T", bound="float | None | Literal[False]")
-
-
-@overload
-def get_env_float(
-    var_name: str, default: None = None
-) -> float | None | Literal[False]: ...
-
-
-@overload
-def get_env_float(
-    var_name: str, default: DF_FLOAT_T
-) -> DF_FLOAT_T | float | Literal[False]: ...
-
-
-def get_env_float(
-    var_name: str, default: DF_FLOAT_T = False  # type: ignore[assignment]
-) -> DF_FLOAT_T | float | Literal[False]:
-    value = os.getenv(var_name)
-    if value is None:
-        return default
-    try:
-        return float(value)
-    except ValueError:
-        return False
+        raise ValueError(
+            f"Environment variable '{var_name}' has an invalid integer value: '{value}'."
+        )
 
 
 DF_STR_T = TypeVar("DF_STR_T", bound="Optional[str]")
@@ -118,25 +91,3 @@ def get_env_str(var_name: str, default: DF_STR_T = None) -> DF_STR_T | str:  # t
     if value is None:
         return default
     return value
-
-
-def get_env_list(var_name: str, separator: str = ",") -> list[str]:
-    value = os.getenv(var_name, "")
-    if not value:
-        return []
-    return [item.strip() for item in value.split(separator) if item.strip()]
-
-
-def get_env_dict(
-    var_name: str, item_separator: str = ",", key_value_separator: str = "="
-) -> dict[str, str]:
-    value = os.getenv(var_name, "")
-    result: dict[str, str] = {}
-    if not value:
-        return result
-    items = [item.strip() for item in value.split(item_separator) if item.strip()]
-    for item in items:
-        if key_value_separator in item:
-            key, val = item.split(key_value_separator, 1)
-            result[key.strip()] = val.strip()
-    return result
