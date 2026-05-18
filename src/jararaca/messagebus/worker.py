@@ -792,9 +792,11 @@ class AioPikaMicroserviceConsumer(MessageBusConsumer):
                     break
 
                 # Check connection health
-                if not await self._is_connection_healthy():
+                health_check_result = await self._is_connection_healthy()
+                if health_check_result is not None:
                     logger.error(
-                        "Connection health check failed, initiating worker shutdown"
+                        "Connection health check failed, initiating worker shutdown: %s",
+                        health_check_result,
                     )
                     self.shutdown()
                     break
@@ -806,22 +808,22 @@ class AioPikaMicroserviceConsumer(MessageBusConsumer):
                 logger.error("Error in connection health monitoring: %s", e)
                 await self._wait_delay_or_shutdown(5)  # Wait before retrying
 
-    async def _is_connection_healthy(self) -> bool:
+    async def _is_connection_healthy(self) -> str | None:
         """
         Check if the connection is healthy.
         """
         try:
             if self.connection is None or self.connection.is_closed:
-                return False
+                return "Connection is closed or not established"
 
             # Try to create a temporary channel to test connection
             async with self.connection.channel() as test_channel:
                 # If we can create a channel, connection is healthy
-                return True
+                return None
 
         except Exception as e:
             logger.debug("Connection health check failed: %s", e)
-            return False
+            return "%s: %s" % (type(e).__qualname__, str(e))
 
     def _trigger_shutdown(self) -> None:
         """
