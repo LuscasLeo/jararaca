@@ -5,7 +5,15 @@
 import logging
 from contextlib import asynccontextmanager, contextmanager, suppress
 from contextvars import ContextVar
-from typing import TYPE_CHECKING, Any, AsyncGenerator, Generator, Literal, Protocol
+from typing import (
+    TYPE_CHECKING,
+    Any,
+    AsyncGenerator,
+    Callable,
+    Generator,
+    Literal,
+    Protocol,
+)
 
 from opentelemetry import metrics, trace
 from opentelemetry._logs import set_logger_provider
@@ -330,6 +338,9 @@ class LoggerHandlerCallback(Protocol):
     def __call__(self, logger_handler: logging.Handler) -> None: ...
 
 
+LoggerHandlerCallbackFunc = Callable[[logging.Handler], None]
+
+
 class SpanWithName(Protocol):
 
     @property
@@ -378,7 +389,9 @@ class OtelObservabilityProvider(ObservabilityProvider):
         logs_exporter: LogExporter,
         span_exporter: SpanExporter,
         meter_exporter: MeterExporter,
-        logging_handler_callback: LoggerHandlerCallback = lambda logger_handler: None,
+        logging_handler_callback: (
+            LoggerHandlerCallback | LoggerHandlerCallbackFunc
+        ) = lambda logger_handler: None,
         meter_export_interval: int = 5000,
         attributes: Attributes | None = None,
     ) -> None:
@@ -457,7 +470,9 @@ class OtelObservabilityProvider(ObservabilityProvider):
         app_name: str,
         *,
         url: str,
-        logging_handler_callback: LoggerHandlerCallback = lambda logger_handler: None,
+        logging_handler_callback: (
+            LoggerHandlerCallback | LoggerHandlerCallbackFunc
+        ) = lambda logger_handler: None,
         meter_export_interval: int = 5000,
         attributes: AttributeMap | None = None,
     ) -> "OtelObservabilityProvider":
