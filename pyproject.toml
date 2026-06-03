@@ -17,8 +17,8 @@ classifiers = [
 python = "^3.11"
 uvicorn = "^0.30.6"
 uvloop = [
-    {version="^0.20.0", python = ">=3.8,<3.12"},
-    {version="^0.22.1", python = ">=3.12"},
+    { version = "^0.20.0", python = ">=3.8,<3.12" },
+    { version = "^0.22.1", python = ">=3.12" },
 ]
 fastapi = "^0.124.4"
 aio-pika = "^9.4.3"
@@ -63,6 +63,14 @@ types-redis = "^4.6.0.20240903"
 pyright = "^1.1.410"
 
 
+[tool.autoflake]
+in-place = true
+recursive = true
+remove-all-unused-imports = true
+remove-unused-variables = true
+ignore-init-module-imports = true
+expand-star-imports = true
+
 [tool.poetry.group.docs.dependencies]
 mkdocs-material = "^9.5.34"
 mkdocs-mermaid2-plugin = "^1.2.1"
@@ -88,7 +96,6 @@ profile = "black"
 [tool.pyright]
 
 
-
 [tool.mypy]
 python_version = "3.11"
 strict = true
@@ -109,11 +116,7 @@ python_files = ["test_*.py"]
 python_classes = ["Test*"]
 python_functions = ["test_*"]
 asyncio_mode = "auto"
-addopts = [
-    "--strict-markers",
-    "--strict-config",
-    "--showlocals",
-]
+addopts = ["--strict-markers", "--strict-config", "--showlocals"]
 markers = [
     "unit: Unit tests",
     "integration: Integration tests",
@@ -122,11 +125,7 @@ markers = [
 
 [tool.coverage.run]
 source = ["src/jararaca"]
-omit = [
-    "*/tests/*",
-    "*/__pycache__/*",
-    "*/.venv/*",
-]
+omit = ["*/tests/*", "*/__pycache__/*", "*/.venv/*"]
 
 [tool.coverage.report]
 exclude_lines = [

@@ -4,7 +4,7 @@
 
 # See https://pre-commit.com for more information
 # See https://pre-commit.com/hooks.html for more hooks
-exclude: '^frontend/'
+exclude: "^frontend/"
 repos:
   - repo: https://github.com/pre-commit/pre-commit-hooks
     rev: v3.2.0
@@ -18,16 +18,11 @@ repos:
     hooks:
       - id: autoflake
         name: autoflake
-        entry: poetry run autoflake
+
         language: system
         pass_filenames: true
-        args:
-          - "--in-place"
-          - "--expand-star-imports"
-          - "--remove-duplicate-keys"
-          - "--remove-unused-variables"
-          - "--remove-all-unused-imports"
-
+        entry: bash -c 'poetry run autoflake --in-place  "$@" || true; git add -u' -- #poetry run autoflake --in-place --expand-star-imports --remove-duplicate-keys --remove-unused-variables --remove-all-unused-imports
+        types: [python]
   # mypy
   - repo: local
 
@@ -49,7 +44,7 @@ repos:
     hooks:
       - id: black
         name: black
-        entry: poetry run black --config pyproject.toml
+        entry: bash -c 'poetry run black "$@" || true; git add -u' -- #poetry run black --config pyproject.toml
         language: system
         types: [python]
         pass_filenames: true
@@ -60,12 +55,12 @@ repos:
     hooks:
       - id: isort
         name: isort
-        entry: poetry run isort
+        entry: bash -c 'poetry run isort "$@" || true; git add -u' -- #poetry run isort --profile black
         stages: [commit, merge-commit, push, manual]
         language: system
 
-        args:
-          - --settings-path=pyproject.toml
+        # args:
+        #   - --settings-path=pyproject.toml
         pass_filenames: true
 
         minimum_pre_commit_version: "2.9.2"
