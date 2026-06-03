@@ -76,6 +76,16 @@ repos:
     hooks:
       - id: reuse
 
+  # pyright
+  - repo: local
+    hooks:
+      - id: pyright
+        name: pyright
+        entry: poetry run pyright
+        language: system
+        types: [python]
+        pass_filenames: true
+
   # -   repo: local
   #     hooks:
   #     -   id: codespell
