@@ -2629,6 +2629,27 @@ pyyaml = "*"
 extra = ["pygments (>=2.19.1)"]
 
 [[package]]
+name = "pyright"
+version = "1.1.410"
+description = "Command line wrapper for pyright"
+optional = false
+python-versions = ">=3.7"
+groups = ["lint"]
+files = [
+    {file = "pyright-1.1.410-py3-none-any.whl", hash = "sha256:5e961bed37cacf96b3f7cd7b1da39b350a9239aa2e69138d0e88f728cfaf296c"},
+    {file = "pyright-1.1.410.tar.gz", hash = "sha256:07a073b8ba6749826773c1269773efa11b93440d9a6aa60419d9a3172d6dc488"},
+]
+
+[package.dependencies]
+nodeenv = ">=1.6.0"
+typing-extensions = ">=4.1"
+
+[package.extras]
+all = ["nodejs-wheel-binaries", "twine (>=3.4.1)"]
+dev = ["twine (>=3.4.1)"]
+nodejs = ["nodejs-wheel-binaries"]
+
+[[package]]
 name = "pytest"
 version = "9.0.3"
 description = "pytest: simple powerful testing with Python"
@@ -3878,4 +3899,4 @@ watch = ["watchdog"]
 [metadata]
 lock-version = "2.1"
 python-versions = "^3.11"
-content-hash = "c9c76971aee959af4ffe7a0f2f336c480923f6ae628941c3c03fbfa398386828"
+content-hash = "e40ae62dad80c752d179b7d19222edfef1b8d053a0f3da48f0b78e2c0b47a890"
