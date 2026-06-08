@@ -14,7 +14,11 @@ from jararaca.observability.decorators import (
     TracingSpanContext,
     get_tracing_ctx_provider,
 )
-from jararaca.observability.providers.otel import use_message_bus_metrics
+
+try:
+    from jararaca.observability.providers.otel import use_message_bus_metrics
+except ImportError:
+    use_message_bus_metrics = lambda: None
 
 
 @contextmanager
