@@ -1001,6 +1001,7 @@ def new(
         "__PACKAGE_NAME__": package,
         "__DESCRIPTION__": description,
         "__PYTHON_VERSION__": python_version,
+        "__PYTHON_VERSION_NEXT_MAJOR__": str(int(python_version.split(".")[0]) + 1),
         "__PYTHON_VERSION_NODOT__": python_version.replace(".", ""),
         "__JARARACA_VERSION__": get_jararaca_version(),
     }

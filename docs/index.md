@@ -57,10 +57,44 @@ a sample HTTP controller, message handler, and scheduled action.
 jararaca new "Billing API" --package billing --description "Billing service"
 
 cd billing-api
-python -m venv .venv && source .venv/bin/activate
-pip install -e ".[dev]"
-docker compose up -d
-jararaca server billing.app:app --port 8000
+```
+
+Install the project with its `dev` extras (Ruff, Mypy, Pytest). Pick the tab
+for your package manager:
+
+=== "uv"
+
+    ```bash
+    uv sync --extra dev
+    ```
+
+    `uv sync` creates the `.venv` and installs the project. Prefix commands with
+    `uv run` (e.g. `uv run jararaca server ...`), or activate the environment
+    with `source .venv/bin/activate`.
+
+=== "poetry"
+
+    ```bash
+    poetry install --extras dev
+    ```
+
+    Run commands with `poetry run` (e.g. `poetry run jararaca server ...`), or
+    drop into the environment with `poetry shell`.
+
+=== "pip"
+
+    ```bash
+    python -m venv .venv
+    source .venv/bin/activate    # Windows: .venv\Scripts\activate
+    pip install -e ".[dev]"
+    ```
+
+With the environment ready, start RabbitMQ and Redis (defined in
+`docker-compose.yml`) and launch the HTTP server:
+
+```bash
+docker compose up -d                          # RabbitMQ + Redis
+jararaca server billing.app:app --port 8000   # http://localhost:8000
 ```
 
 The generated project layout:
