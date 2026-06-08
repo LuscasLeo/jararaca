@@ -94,9 +94,15 @@ build-backend = "poetry.core.masonry.api"
 
 [tool.isort]
 profile = "black"
+# Scaffolding templates ship as package data and must be ordered for the
+# *generated* project (where jararaca is a third-party dependency), not for
+# this repo (where jararaca is first-party). Keep isort out of them.
+extend_skip_glob = ["*/files/project_template/*", "*/examples/*"]
 
 [tool.pyright]
-
+ignore = [
+    "examples/**",
+]
 
 [tool.mypy]
 python_version = "3.11"
