@@ -1,0 +1,41 @@
+[project]
+name = "__PROJECT_NAME__"
+version = "0.1.0"
+description = "__DESCRIPTION__"
+readme = "README.md"
+requires-python = ">=__PYTHON_VERSION__"
+dependencies = [
+    "jararaca>=__JARARACA_VERSION__",
+]
+
+[project.optional-dependencies]
+dev = [
+    "ruff>=0.6",
+    "mypy>=1.11",
+    "pytest>=8.0",
+    "pytest-asyncio>=0.23",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/__PACKAGE_NAME__"]
+
+[tool.ruff]
+line-length = 88
+target-version = "py__PYTHON_VERSION_NODOT__"
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+
+[tool.mypy]
+python_version = "__PYTHON_VERSION__"
+strict = true
+mypy_path = "src"
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
