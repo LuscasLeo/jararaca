@@ -18,14 +18,19 @@ from jararaca.messagebus import implicit_headers
 from jararaca.messagebus.interceptors.publisher_interceptor import (
     MessageBusConnectionFactory,
 )
-from jararaca.messagebus.publisher import IMessage, MessagePublisher
+from jararaca.messagebus.publisher import (
+    DelayedMessageIdempotencyPayloadPolicy,
+    DelayedMessageIdempotencyTimePolicy,
+    IMessage,
+    InternalMessagePublisher,
+)
 from jararaca.observability.hooks import record_message_sent
 from jararaca.scheduler.types import DelayedMessageData
 
 logger = logging.getLogger(__name__)
 
 
-class AIOPikaMessagePublisher(MessagePublisher):
+class AIOPikaMessagePublisher(InternalMessagePublisher):
 
     def __init__(
         self,
@@ -61,7 +66,15 @@ class AIOPikaMessagePublisher(MessagePublisher):
             mandatory=message.MESSAGE_TYPE == "task",
         )
 
-    async def delay(self, message: IMessage, seconds: int) -> None:
+    async def delay(
+        self,
+        message: IMessage,
+        seconds: int,
+        *,
+        idempotency_key: str | None = None,
+        payload_policy: DelayedMessageIdempotencyPayloadPolicy = "ignore",
+        time_policy: DelayedMessageIdempotencyTimePolicy = "replace",
+    ) -> None:
         if not self.message_broker_backend:
             raise NotImplementedError(
                 "Delay is not implemented for AIOPikaMessagePublisher"
@@ -73,11 +86,21 @@ class AIOPikaMessagePublisher(MessagePublisher):
                 dispatch_time=int(
                     (datetime.now(tz=None) + timedelta(seconds=seconds)).timestamp()
                 ),
+                idempotency_key=idempotency_key,
+                payload_policy=payload_policy,
+                time_policy=time_policy,
             )
         )
 
     async def schedule(
-        self, message: IMessage, when: datetime, timezone: _TzInfo
+        self,
+        message: IMessage,
+        when: datetime,
+        timezone: _TzInfo,
+        *,
+        idempotency_key: str | None = None,
+        payload_policy: DelayedMessageIdempotencyPayloadPolicy = "ignore",
+        time_policy: DelayedMessageIdempotencyTimePolicy = "replace",
     ) -> None:
         if not self.message_broker_backend:
             raise NotImplementedError(
@@ -88,6 +111,9 @@ class AIOPikaMessagePublisher(MessagePublisher):
                 message_topic=message.MESSAGE_TOPIC,
                 payload=message.model_dump_json().encode(),
                 dispatch_time=int(when.timestamp()),
+                idempotency_key=idempotency_key,
+                payload_policy=payload_policy,
+                time_policy=time_policy,
             )
         )
 

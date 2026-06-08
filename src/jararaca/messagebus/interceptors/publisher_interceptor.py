@@ -9,13 +9,16 @@ from jararaca.broker_backend import MessageBrokerBackend
 from jararaca.messagebus.interceptors.message_publisher_collector import (
     MessagePublisherCollector,
 )
-from jararaca.messagebus.publisher import MessagePublisher, provide_message_publisher
+from jararaca.messagebus.publisher import (
+    InternalMessagePublisher,
+    provide_message_publisher,
+)
 from jararaca.microservice import AppInterceptor, AppTransactionContext
 
 
 class MessageBusConnectionFactory(Protocol):
 
-    def provide_connection(self) -> AsyncContextManager[MessagePublisher]: ...
+    def provide_connection(self) -> AsyncContextManager[InternalMessagePublisher]: ...
 
 
 class MessageBusPublisherInterceptor(AppInterceptor):

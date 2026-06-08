@@ -26,23 +26,102 @@ class IMessage(BaseModel):
     MESSAGE_CATEGORY: ClassVar[str] = "uncategorized"
 
 
-class MessagePublisher(ABC):
+DelayedMessageIdempotencyPayloadPolicy = Literal["ignore", "replace"]
+"""
+    DelayedMessageIdempotencyPayloadPolicy defines the policy for handling idempotent delayed messages with different payloads.
+    - "ignore": If a delayed message with the same idempotency key already exists, the new message will be ignored, even if the payload is different.
+    - "replace": If a delayed message with the same idempotency key already exists, the new message will replace the existing one, even if the payload is different.
+"""
+
+DelayedMessageIdempotencyTimePolicy = Literal["replace", "greater", "lesser"]
+"""
+    DelayedMessageIdempotencyTimePolicy defines the policy for handling idempotent delayed messages with different dispatch times.
+    - "replace": If a delayed message with the same idempotency key already exists, the new message will replace the existing one, even if the dispatch time is different.
+    - "greater": If a delayed message with the same idempotency key already exists, the new message will replace the existing one only if the dispatch time is greater than the existing one.
+    - "lesser": If a delayed message with the same idempotency key already exists, the new message will replace the existing one only if the dispatch time is lesser than the existing one.
+"""
+
+
+class InternalMessagePublisher(ABC):
     @abstractmethod
     async def publish(self, message: IMessage, topic: str) -> None:
-        pass
+        """
+        Immediately enqueue a message under the given topic.
+
+        The message is staged and will be dispatched to the broker once the
+        active interceptor commits the transaction (transactional-outbox pattern).
+
+        Args:
+            message: The message payload to publish.
+            topic:   The routing topic (queue / exchange key) to publish to.
+        """
 
     @abstractmethod
-    async def delay(self, message: IMessage, seconds: int) -> None:
+    async def delay(
+        self,
+        message: IMessage,
+        seconds: int,
+        *,
+        idempotency_key: str | None = None,
+        payload_policy: DelayedMessageIdempotencyPayloadPolicy = "ignore",
+        time_policy: DelayedMessageIdempotencyTimePolicy = "replace",
+    ) -> None:
         """
-        Delay the message for a given number of seconds.
+        Enqueue a message to be delivered after a relative delay.
+
+        The message will be dispatched ``seconds`` seconds from now. Useful for
+        implementing retry back-off, deferred side-effects, or cool-down periods
+        without blocking the current request.
+
+        When ``idempotency_key`` is provided, ``payload_policy`` controls what
+        happens if a pending message with the same key already exists but carries
+        a different payload, and ``time_policy`` controls what happens when the
+        existing dispatch time differs from the new one.
+
+        Args:
+            message:         The message payload to publish.
+            seconds:         Number of seconds to wait before delivery.
+            idempotency_key: Optional unique key to deduplicate this operation.
+            payload_policy:  How to handle an existing entry with a different payload
+                             (``"ignore"`` keeps the old payload, ``"replace"`` overwrites it).
+            time_policy:     How to handle an existing entry with a different dispatch time
+                             (``"replace"`` always overwrites; ``"greater"`` keeps the later
+                             time; ``"lesser"`` keeps the earlier time).
         """
 
     @abstractmethod
     async def schedule(
-        self, message: IMessage, when: datetime, timezone: tzinfo
+        self,
+        message: IMessage,
+        when: datetime,
+        timezone: tzinfo,
+        *,
+        idempotency_key: str | None = None,
+        payload_policy: DelayedMessageIdempotencyPayloadPolicy = "ignore",
+        time_policy: DelayedMessageIdempotencyTimePolicy = "replace",
     ) -> None:
         """
-        Schedule the message for a given datetime.
+        Enqueue a message to be delivered at an absolute point in time.
+
+        The message will be dispatched at ``when``, interpreted in ``timezone``.
+        Suitable for calendar-driven workflows such as sending reminders, expiry
+        notices, or time-boxed promotions.
+
+        When ``idempotency_key`` is provided, ``payload_policy`` controls what
+        happens if a pending message with the same key already exists but carries
+        a different payload, and ``time_policy`` controls what happens when the
+        existing dispatch time differs from the new one.
+
+        Args:
+            message:         The message payload to publish.
+            when:            The exact datetime at which the message should be delivered.
+            timezone:        The timezone used to interpret ``when``.
+            idempotency_key: Optional unique key to deduplicate this operation.
+            payload_policy:  How to handle an existing entry with a different payload
+                             (``"ignore"`` keeps the old payload, ``"replace"`` overwrites it).
+            time_policy:     How to handle an existing entry with a different dispatch time
+                             (``"replace"`` always overwrites; ``"greater"`` keeps the later
+                             time; ``"lesser"`` keeps the earlier time).
         """
 
     @abstractmethod
@@ -53,14 +132,14 @@ class MessagePublisher(ABC):
         """
 
 
-message_publishers_ctx = ContextVar[dict[str, MessagePublisher]](
+message_publishers_ctx = ContextVar[dict[str, InternalMessagePublisher]](
     "message_publishers_ctx", default={}
 )
 
 
 @contextmanager
 def provide_message_publisher(
-    connection_name: str, message_publisher: MessagePublisher
+    connection_name: str, message_publisher: InternalMessagePublisher
 ) -> Generator[None, Any, None]:
 
     current_map = message_publishers_ctx.get({})
@@ -76,7 +155,7 @@ def provide_message_publisher(
             message_publishers_ctx.reset(token)
 
 
-def use_publisher(connecton_name: str = "default") -> MessagePublisher:
+def use_publisher(connecton_name: str = "default") -> InternalMessagePublisher:
     publisher = message_publishers_ctx.get({}).get(connecton_name)
     if publisher is None:
         raise ValueError(f"MessagePublisher not found for connection {connecton_name}")

@@ -85,16 +85,32 @@ class RedisMessageBrokerBackend(MessageBrokerBackend):
         Enqueue a delayed message to the message broker.
         This is used to trigger the scheduled action.
         """
-        task_id = str(uuid4())
+        task_id = delayed_message.idempotency_key or str(uuid4())
+        is_idempotent = delayed_message.idempotency_key is not None
+
         async with self.redis.pipeline() as pipe:
-            pipe.set(
-                self.delayed_messages_metadata_key.format(task_id=task_id),
-                delayed_message.model_dump_json().encode(),
-            )
+            metadata_key = self.delayed_messages_metadata_key.format(task_id=task_id)
+            serialized = delayed_message.model_dump_json().encode()
+
+            # payload_policy only matters when there may be a pre-existing entry
+            if is_idempotent and delayed_message.payload_policy == "ignore":
+                pipe.set(metadata_key, serialized, nx=True)
+            else:
+                pipe.set(metadata_key, serialized)
+
+            # time_policy controls how the dispatch time is updated in the sorted set
+            zadd_kwargs: dict[str, bool] = {}
+            if is_idempotent:
+                if delayed_message.time_policy == "greater":
+                    zadd_kwargs["gt"] = True
+                elif delayed_message.time_policy == "lesser":
+                    zadd_kwargs["lt"] = True
+                # "replace" → default zadd behaviour (always add/overwrite)
+
             pipe.zadd(
                 self.delayed_messages_key,
                 {task_id: delayed_message.dispatch_time},
-                nx=True,
+                **zadd_kwargs,
             )
             await pipe.execute()
 
