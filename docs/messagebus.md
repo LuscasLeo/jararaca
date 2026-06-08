@@ -80,6 +80,8 @@ classDiagram
         +MESSAGE_TOPIC: ClassVar[str]
         +MESSAGE_TYPE: ClassVar[Literal["task", "event"]]
         +publish() async
+        +delay(seconds) async
+        +schedule(when, tz) async
     }
     class BaseModel {
         +model_validate_json()
@@ -110,6 +112,72 @@ class UserCreatedMessage(Message):
     username: str
     email: str
 ```
+
+## Publishing Messages
+
+A `Message` instance can be published from anywhere that runs inside a request
+or handler transaction (the active interceptor binds a publisher to the
+context). Publishing is part of the transactional-outbox pattern: messages are
+staged and only flushed to the broker when the surrounding transaction commits.
+
+### Immediate Publishing
+
+```python
+async def create_user(...) -> None:
+    # ... persist the user ...
+    await UserCreatedMessage(
+        user_id="123",
+        username="alice",
+        email="alice@example.com",
+    ).publish()
+```
+
+You can also obtain the publisher explicitly with `use_publisher()` and call
+`publish(message, topic)`.
+
+### Delayed and Scheduled Publishing
+
+Messages can be deferred to a future point in time, either with a relative delay
+or at an absolute datetime:
+
+```python
+from datetime import datetime, timedelta
+from zoneinfo import ZoneInfo
+
+# Deliver 5 minutes from now
+await ReminderMessage(...).delay(300)
+
+# Deliver at an exact moment, in a given timezone
+await ReminderMessage(...).schedule(
+    datetime.now() + timedelta(days=1),
+    tz=ZoneInfo("UTC"),
+)
+```
+
+Delayed delivery requires a broker backend that supports it (the Redis backend
+provides a delayed-message queue). See the
+[Scheduler documentation](scheduler.md#delayed-message-queue) for details.
+
+### Idempotent Delayed Messages
+
+Both `delay()` and `schedule()` accept an optional `idempotency_key` together
+with `payload_policy` and `time_policy` to deduplicate repeated enqueues of the
+same delayed message (for example when a handler retries):
+
+```python
+await ReminderMessage(...).delay(
+    300,
+    idempotency_key="reminder:123",
+    payload_policy="replace",  # "ignore" (default) | "replace"
+    time_policy="lesser",      # "replace" (default) | "greater" | "lesser"
+)
+```
+
+- `payload_policy` decides whether an existing pending entry's payload is kept
+  (`"ignore"`) or overwritten (`"replace"`).
+- `time_policy` decides whether the dispatch time is always overwritten
+  (`"replace"`), kept only if the new time is later (`"greater"`), or kept only
+  if the new time is earlier (`"lesser"`).
 
 ## Message Processing Flow
 
@@ -480,10 +548,10 @@ The following environment variables control the default behavior of `@MessageHan
 
 | Environment Variable | Type | Default | Description |
 |---------------------|------|---------|-------------|
-| `JARARACA_MESSAGEBUS_HANDLER_TIMEOUT` | `int` | `30` | Default timeout in seconds for message handler execution. Set to `0` or empty to disable timeout (returns `None`). |
+| `JARARACA_MESSAGEBUS_HANDLER_TIMEOUT` | `int` | _(unset)_ | Default timeout in seconds for message handler execution. When unset, handlers run without a timeout. |
 | `JARARACA_MESSAGEBUS_NACK_ON_EXCEPTION` | `bool` | `false` | Whether to send a negative acknowledgment (NACK) when an exception occurs during message processing. Truthy values: `1`, `true`, `yes`, `on`. |
 | `JARARACA_MESSAGEBUS_AUTO_ACK` | `bool` | `false` | Whether to automatically acknowledge messages after successful processing. Truthy values: `1`, `true`, `yes`, `on`. |
-| `JARARACA_MESSAGEBUS_NACK_DELAY_ON_EXCEPTION` | `float` | `5.0` | Delay in seconds before sending a NACK when an exception occurs. Set to `0` or empty to use default of `5.0`. |
+| `JARARACA_MESSAGEBUS_NACK_DELAY_ON_EXCEPTION` | `int` | `5.0` | Delay in seconds before sending a NACK when an exception occurs. When unset, falls back to `5.0`. |
 | `JARARACA_MESSAGEBUS_HANDLER_GROUP` | `str` | `DEFAULT` | Default group assigned to message handlers that do not specify a group explicitly. |
 
 ### Usage Example

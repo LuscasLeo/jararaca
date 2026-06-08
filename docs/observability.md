@@ -26,6 +26,16 @@ app = Microservice(
 
 The `OtelObservabilityProvider.from_url` helper configures the OTLP exporters for traces, metrics, and logs to the specified URL.
 
+### Trace Span Environment Variables
+
+The way HTTP request spans are recorded can be tuned through environment
+variables:
+
+| Environment Variable | Type | Default | Description |
+|---------------------|------|---------|-------------|
+| `JARARACA_OBSERVABILITY_TRACE_SPAN_HTTP_REQUEST_MAX_BODY_SIZE_ATTRIBUTE_VALUE` | `int` | `5000` | Maximum number of bytes of the HTTP request body recorded as a span attribute. Larger bodies are truncated. |
+| `JARARACA_OBSERVABILITY_TRACE_SPAN_HTTP_REQUEST_USE_ABSOLUTE_PATH_ON_TITLE` | `bool` | `false` | When enabled, the request span title uses the absolute request path instead of the matched route template. Truthy values: `1`, `true`, `yes`, `on`. |
+
 ## Context Attributes
 
 Jararaca automatically enriches your traces and logs with context-specific attributes. This is handled by the `extract_context_attributes` function, which extracts relevant information based on the current execution context.
