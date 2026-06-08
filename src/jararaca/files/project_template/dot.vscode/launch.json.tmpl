@@ -1,0 +1,65 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "HTTP Server",
+            "type": "debugpy",
+            "request": "launch",
+            "module": "jararaca",
+            "args": [
+                "server",
+                "__PACKAGE_NAME__.app:app",
+                "--host", "0.0.0.0",
+                "--port", "8000"
+            ],
+            "envFile": "${workspaceFolder}/.env",
+            "jinja": true,
+            "justMyCode": false
+        },
+        {
+            "name": "Worker",
+            "type": "debugpy",
+            "request": "launch",
+            "module": "jararaca",
+            "args": [
+                "worker",
+                "__PACKAGE_NAME__.app:app",
+                "--broker-url", "${env:BROKER_URL}",
+                "--backend-url", "${env:BACKEND_URL}"
+            ],
+            "envFile": "${workspaceFolder}/.env",
+            "jinja": true,
+            "justMyCode": false
+        },
+        {
+            "name": "Beat Scheduler",
+            "type": "debugpy",
+            "request": "launch",
+            "module": "jararaca",
+            "args": [
+                "beat",
+                "__PACKAGE_NAME__.app:app",
+                "--broker-url", "${env:BROKER_URL}",
+                "--backend-url", "${env:BACKEND_URL}",
+                "--interval", "1"
+            ],
+            "envFile": "${workspaceFolder}/.env",
+            "jinja": true,
+            "justMyCode": false
+        },
+        {
+            "name": "Declare Worker Infrastructure",
+            "type": "debugpy",
+            "request": "launch",
+            "module": "jararaca",
+            "args": [
+                "declare",
+                "__PACKAGE_NAME__.app:app",
+                "--broker-url", "${env:BROKER_URL}"
+            ],
+            "envFile": "${workspaceFolder}/.env",
+            "jinja": true,
+            "justMyCode": false
+        }
+    ]
+}
