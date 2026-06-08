@@ -55,6 +55,8 @@ The `@ScheduledAction` decorator accepts several parameters:
 - `exclusive`: A boolean indicating if the scheduled action should be executed in only one instance of the application (requires a distributed backend, default: `True`)
 - `timeout`: An integer representing the timeout for the scheduled action in seconds (default: `None`)
 - `exception_handler`: A callable that will be called when an exception is raised during execution (default: `None`)
+- `name`: An optional name for the scheduled action, used for filtering which actions to run (default: `None`)
+- `group`: An optional group name for the scheduled action, used for filtering which actions to run (default: `None`)
 
 ### Cron Expressions
 
@@ -164,34 +166,72 @@ sequenceDiagram
 
 ### Delayed Message Queue
 
-The V2 scheduler also supports delayed messages:
+The V2 scheduler also supports delayed messages. Any `Message` can be enqueued
+for future delivery using its `delay()` (relative) or `schedule()` (absolute)
+methods, which dispatch through the broker backend (Redis):
 
 ```python
-from jararaca import use_publisher
+from datetime import datetime, timedelta
+from zoneinfo import ZoneInfo
 
-# DelayedMessageData is not exported by jararaca, so we import it from the module
-from jararaca.scheduler.types import DelayedMessageData
+from jararaca import Message
 
 
-# Schedule a message to be published at a future time
-async def schedule_reminder():
-    message = ReminderMessage(
+class ReminderMessage(Message):
+    MESSAGE_TOPIC = "reminder.due"
+    MESSAGE_TYPE = "task"
+
+    user_id: str
+    message: str
+
+
+async def schedule_reminder() -> None:
+    reminder = ReminderMessage(
         user_id="123",
-        message="Don't forget your appointment!"
+        message="Don't forget your appointment!",
     )
 
-    # Current time + 1 hour in seconds
-    dispatch_time = int(time.time()) + 3600
+    # Deliver one hour from now (relative delay, in seconds)
+    await reminder.delay(3600)
 
-    # Get publisher
-    publisher = use_publisher()
-
-    # Schedule delayed message
-    await publisher.publish_delayed(
-        message,
-        dispatch_time=dispatch_time
+    # Or deliver at an exact moment (absolute schedule)
+    await reminder.schedule(
+        datetime.now() + timedelta(hours=1),
+        tz=ZoneInfo("UTC"),
     )
 ```
+
+You can also reach the underlying publisher directly via `use_publisher()` and
+call `delay(message, seconds)` / `schedule(message, when, timezone)`.
+
+#### Idempotent Delayed Messages
+
+Both `delay()` and `schedule()` accept an optional `idempotency_key` so that the
+same delayed message can be enqueued more than once (for example on a retry)
+without producing duplicate deliveries. When a key is supplied, two policies
+control how a conflict with an already-pending entry is resolved:
+
+- `payload_policy` — how to handle an existing entry with a different payload:
+    - `"ignore"` (default): keep the already-pending payload.
+    - `"replace"`: overwrite the pending payload with the new one.
+- `time_policy` — how to handle an existing entry with a different dispatch time:
+    - `"replace"` (default): always overwrite with the new dispatch time.
+    - `"greater"`: keep the entry only if the new dispatch time is later.
+    - `"lesser"`: keep the entry only if the new dispatch time is earlier.
+
+```python
+# Re-arming a debounce timer: keep the soonest dispatch time, replace payload.
+await reminder.delay(
+    300,
+    idempotency_key=f"reminder:{reminder.user_id}",
+    payload_policy="replace",
+    time_policy="lesser",
+)
+```
+
+On the Redis backend the `idempotency_key` is used as the task id, the
+`payload_policy` maps to a `SET ... NX`, and the `time_policy` maps to the
+`ZADD GT`/`LT` modifiers.
 
 ## Redis Backend Implementation
 
