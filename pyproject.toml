@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "jararaca"
-version = "0.4.14"
+version = "0.4.15"
 description = "A simple and fast API framework for Python"
 authors = ["Lucas S <me@luscasleo.dev>"]
 readme = "README.md"
@@ -72,9 +72,11 @@ ignore-init-module-imports = true
 expand-star-imports = true
 
 
+
 [tool.poetry.group.docs.dependencies]
 mkdocs-material = "^9.5.34"
 mkdocs-mermaid2-plugin = "^1.2.1"
+
 
 
 
