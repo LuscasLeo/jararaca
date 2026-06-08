@@ -1,0 +1,18 @@
+"""HTTP health-check controller."""
+
+from pydantic import BaseModel
+
+from jararaca import Get, RestController
+
+
+class HealthResponse(BaseModel):
+    status: str
+
+
+@RestController("/health")
+class HealthController:
+
+    @Get("/")
+    async def health(self) -> HealthResponse:
+        """Return a simple liveness response."""
+        return HealthResponse(status="ok")

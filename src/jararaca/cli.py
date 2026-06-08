@@ -4,15 +4,18 @@
 
 import asyncio
 import importlib
+import importlib.metadata
 import importlib.resources
 import multiprocessing
 import os
+import re
 import sys
 import time
 import traceback
 import typing
 from codecs import StreamWriter
 from dataclasses import dataclass
+from importlib.resources.abc import Traversable
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Callable
 from urllib.parse import parse_qs, urlparse
@@ -44,6 +47,7 @@ if TYPE_CHECKING:
 
 LIBRARY_FILES_PATH = importlib.resources.files("jararaca.files")
 ENTITY_TEMPLATE_PATH = LIBRARY_FILES_PATH / "entity.py.mako"
+PROJECT_TEMPLATE_PATH = LIBRARY_FILES_PATH / "project_template"
 
 
 def find_item_by_module_path(
@@ -838,6 +842,181 @@ def gen_entity(entity_name: str, file_path: StreamWriter) -> None:
             )
         )
     )
+
+
+def normalize_distribution_name(name: str) -> str:
+    """Normalize a project name to a PEP 503 compatible distribution name."""
+    normalized = re.sub(r"[^0-9a-zA-Z]+", "-", name.strip().lower()).strip("-")
+    return normalized or "jararaca-app"
+
+
+def normalize_package_name(name: str) -> str:
+    """Normalize a name to a valid, importable Python package identifier."""
+    normalized = re.sub(r"[^0-9a-zA-Z]+", "_", name.strip().lower()).strip("_")
+    if not normalized or normalized[0].isdigit():
+        normalized = f"app_{normalized}".rstrip("_")
+    return normalized
+
+
+def get_jararaca_version() -> str:
+    """Return the installed jararaca version, falling back to a sane default."""
+    try:
+        return importlib.metadata.version("jararaca")
+    except importlib.metadata.PackageNotFoundError:
+        return "0.4.0"
+
+
+def render_template_tree(
+    source: Traversable,
+    destination: Path,
+    replacements: dict[str, str],
+) -> list[Path]:
+    """Recursively render a template tree into ``destination``.
+
+    Both file/directory names and text contents have every ``key`` in
+    ``replacements`` substituted by its value. A ``.tmpl`` suffix is stripped
+    from rendered files, and a leading ``dot.`` is turned into ``.`` so that
+    dotfiles can be stored as regular files inside the package.
+    """
+    created: list[Path] = []
+
+    def apply(text: str) -> str:
+        for key, value in replacements.items():
+            text = text.replace(key, value)
+        return text
+
+    def render_name(name: str) -> str:
+        name = apply(name)
+        if name.startswith("dot."):
+            name = "." + name[len("dot.") :]
+        if name.endswith(".tmpl"):
+            name = name[: -len(".tmpl")]
+        return name
+
+    def walk(node: Traversable, target_dir: Path) -> None:
+        for child in node.iterdir():
+            rendered = render_name(child.name)
+            if child.is_dir():
+                child_dir = target_dir / rendered
+                child_dir.mkdir(parents=True, exist_ok=True)
+                walk(child, child_dir)
+            else:
+                target_file = target_dir / rendered
+                target_file.parent.mkdir(parents=True, exist_ok=True)
+                target_file.write_text(
+                    apply(child.read_text(encoding="utf-8")), encoding="utf-8"
+                )
+                created.append(target_file)
+
+    destination.mkdir(parents=True, exist_ok=True)
+    walk(source, destination)
+    return created
+
+
+@cli.command()
+@click.argument("project_name", type=str)
+@click.option(
+    "--output-dir",
+    "-o",
+    type=click.Path(file_okay=False, dir_okay=True),
+    default=".",
+    help="Directory in which the project folder will be created (default: current directory).",
+)
+@click.option(
+    "--package",
+    "-p",
+    "package_name",
+    type=str,
+    default=None,
+    help="Python package name (default: derived from the project name).",
+)
+@click.option(
+    "--description",
+    "-d",
+    type=str,
+    default="A Jararaca microservice",
+    help="Short project description.",
+)
+@click.option(
+    "--python",
+    "python_version",
+    type=str,
+    default="3.11",
+    help="Minimum Python version for the generated project (default: 3.11).",
+)
+@click.option(
+    "--force",
+    "-f",
+    is_flag=True,
+    default=False,
+    help="Allow generating into an existing, non-empty directory.",
+)
+def new(
+    project_name: str,
+    output_dir: str,
+    package_name: str | None,
+    description: str,
+    python_version: str,
+    force: bool,
+) -> None:
+    """Scaffold a new Jararaca project.
+
+    Generates a ready-to-run project (src layout, pyproject.toml, tooling
+    config, Docker Compose for RabbitMQ + Redis, and a sample HTTP controller,
+    message handler and scheduled action).
+
+    Examples:
+
+    \b
+    # Create ./my-service with package "my_service"
+    jararaca new my-service
+
+    \b
+    # Customize package name and description
+    jararaca new "Billing API" --package billing --description "Billing service"
+    """
+
+    distribution_name = normalize_distribution_name(project_name)
+    package = normalize_package_name(package_name or project_name)
+
+    project_dir = Path(output_dir).expanduser().resolve() / distribution_name
+
+    if project_dir.exists() and any(project_dir.iterdir()) and not force:
+        click.echo(
+            f"ERROR: directory '{project_dir}' already exists and is not empty. "
+            "Use --force to generate anyway.",
+            err=True,
+        )
+        sys.exit(1)
+
+    if not PROJECT_TEMPLATE_PATH.is_dir():
+        click.echo(
+            "ERROR: project template files are missing from the jararaca installation.",
+            err=True,
+        )
+        sys.exit(1)
+
+    replacements = {
+        "__PROJECT_NAME__": distribution_name,
+        "__PACKAGE_NAME__": package,
+        "__DESCRIPTION__": description,
+        "__PYTHON_VERSION__": python_version,
+        "__PYTHON_VERSION_NODOT__": python_version.replace(".", ""),
+        "__JARARACA_VERSION__": get_jararaca_version(),
+    }
+
+    created = render_template_tree(PROJECT_TEMPLATE_PATH, project_dir, replacements)
+
+    click.echo(f"✓ Created Jararaca project at {project_dir}")
+    click.echo(f"  distribution name : {distribution_name}")
+    click.echo(f"  python package    : {package}")
+    click.echo(f"  files written     : {len(created)}")
+    click.echo("\nNext steps:\n")
+    click.echo(f"  cd {project_dir.name}")
+    click.echo("  python -m venv .venv && source .venv/bin/activate")
+    click.echo('  pip install -e ".[dev]"')
+    click.echo("  docker compose up -d")
+    click.echo(f"  jararaca server {package}.app:app --port 8000")
 
 
 @cli.command()

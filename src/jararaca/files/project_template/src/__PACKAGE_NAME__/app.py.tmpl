@@ -1,0 +1,27 @@
+"""Application entry point for __PROJECT_NAME__.
+
+This module wires the :class:`Microservice` together with its controllers and
+exposes both:
+
+* ``app`` — the :class:`Microservice`, used by the ``jararaca`` CLI commands
+  (``server``, ``worker``, ``beat``, ``declare``, ``gen-tsi``).
+* ``http_app`` — the ASGI application, which can be served directly by uvicorn.
+"""
+
+from __PACKAGE_NAME__.controllers.health import HealthController
+from __PACKAGE_NAME__.controllers.tasks import TasksController
+
+from jararaca import HttpMicroservice, Microservice, create_http_server
+
+app = Microservice(
+    providers=[],
+    controllers=[
+        HealthController,
+        TasksController,
+    ],
+    interceptors=[],
+)
+
+# ASGI application. Serve with `jararaca server __PACKAGE_NAME__.app:app`
+# or `uvicorn __PACKAGE_NAME__.app:http_app`.
+http_app = create_http_server(HttpMicroservice(app))

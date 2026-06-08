@@ -1,0 +1,39 @@
+"""Example asynchronous message handler and scheduled action.
+
+Run these with the worker and scheduler:
+
+    jararaca worker __PACKAGE_NAME__.app:app --broker-url "$BROKER_URL" --backend-url "$BACKEND_URL"
+    jararaca beat   __PACKAGE_NAME__.app:app --broker-url "$BROKER_URL" --backend-url "$BACKEND_URL"
+"""
+
+import logging
+
+from jararaca import (
+    Message,
+    MessageBusController,
+    MessageHandler,
+    MessageOf,
+    ScheduledAction,
+)
+
+logger = logging.getLogger(__name__)
+
+
+class GreetingTask(Message):
+    MESSAGE_TOPIC = "greeting.requested"
+    MESSAGE_TYPE = "task"
+
+    name: str
+
+
+@MessageBusController()
+class TasksController:
+
+    @MessageHandler(GreetingTask)
+    async def handle_greeting(self, message: MessageOf[GreetingTask]) -> None:
+        payload = message.payload()
+        logger.info("Hello, %s!", payload.name)
+
+    @ScheduledAction("*/1 * * * *")
+    async def heartbeat(self) -> None:
+        logger.info("heartbeat: the scheduler is alive")

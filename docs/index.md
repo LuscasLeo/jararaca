@@ -20,9 +20,65 @@ Jararaca is a powerful Python microservice framework that provides a comprehensi
 pip install jararaca
 ```
 
+For the CLI as a standalone, isolated tool, install it with [pipx](https://pipx.pypa.io/)
+(or `uv tool install`):
+
+```bash
+pipx install jararaca
+```
+
 ## CLI Commands
 
 Jararaca comes with a powerful command-line interface to help you manage your microservices:
+
+### `new` - Scaffold a New Project
+
+```bash
+jararaca new PROJECT_NAME [OPTIONS]
+```
+
+Generates a ready-to-run project following modern Python packaging standards:
+a `src/` layout, a PEP 621 `pyproject.toml` (Hatchling build backend), Ruff +
+Mypy + Pytest configuration, a `docker-compose.yml` for RabbitMQ and Redis, and
+a sample HTTP controller, message handler, and scheduled action.
+
+**Options:**
+
+- `-o, --output-dir`: Directory in which the project folder is created (default: current directory)
+- `-p, --package`: Python package name (default: derived from the project name)
+- `-d, --description`: Short project description
+- `--python`: Minimum Python version for the generated project (default: `3.11`)
+- `-f, --force`: Allow generating into an existing, non-empty directory
+
+**Example:**
+
+```bash
+# Creates ./billing-api with the importable package "billing"
+jararaca new "Billing API" --package billing --description "Billing service"
+
+cd billing-api
+python -m venv .venv && source .venv/bin/activate
+pip install -e ".[dev]"
+docker compose up -d
+jararaca server billing.app:app --port 8000
+```
+
+The generated project layout:
+
+```
+billing-api/
+├── docker-compose.yml          # RabbitMQ + Redis for local development
+├── pyproject.toml              # project metadata and tooling config
+├── .env.example
+├── src/
+│   └── billing/
+│       ├── app.py              # Microservice + ASGI app wiring
+│       └── controllers/
+│           ├── health.py       # HTTP health-check controller
+│           └── tasks.py        # message handler + scheduled action
+└── tests/
+    └── test_app.py
+```
 
 ### `worker` - Message Bus Worker
 

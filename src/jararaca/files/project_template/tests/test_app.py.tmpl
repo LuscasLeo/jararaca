@@ -1,0 +1,12 @@
+"""Smoke tests for the __PROJECT_NAME__ microservice."""
+
+from __PACKAGE_NAME__.app import app, http_app
+from __PACKAGE_NAME__.controllers.health import HealthController
+
+
+def test_app_registers_controllers() -> None:
+    assert HealthController in app.controllers
+
+
+def test_http_app_is_built() -> None:
+    assert http_app is not None

@@ -1,0 +1,106 @@
+# __PROJECT_NAME__
+
+__DESCRIPTION__
+
+Bootstrapped with [`jararaca new`](https://github.com/LuscasLeo/jararaca).
+
+## Requirements
+
+- Python __PYTHON_VERSION__+
+- A RabbitMQ broker and a Redis backend (a ready-to-use `docker-compose.yml` is included)
+
+## Getting started
+
+Create a virtual environment and install the project in editable mode with the
+development dependencies:
+
+```bash
+python -m venv .venv
+source .venv/bin/activate
+pip install -e ".[dev]"
+```
+
+> Using [uv](https://docs.astral.sh/uv/)? `uv venv && uv pip install -e ".[dev]"`.
+
+Copy the example environment file and adjust it if needed:
+
+```bash
+cp .env.example .env
+```
+
+Start the supporting infrastructure (RabbitMQ + Redis):
+
+```bash
+docker compose up -d
+```
+
+## Running
+
+The application exposes a single `Microservice` instance (`app`) and an ASGI
+app (`http_app`) in [`src/__PACKAGE_NAME__/app.py`](src/__PACKAGE_NAME__/app.py).
+
+Run the HTTP server:
+
+```bash
+jararaca server __PACKAGE_NAME__.app:app --port 8000
+```
+
+Then open http://localhost:8000/docs for the interactive API documentation, or
+hit the health endpoint:
+
+```bash
+curl http://localhost:8000/health/
+```
+
+Run the message bus worker (consumes asynchronous messages):
+
+```bash
+jararaca worker __PACKAGE_NAME__.app:app \
+    --broker-url "$BROKER_URL" \
+    --backend-url "$BACKEND_URL"
+```
+
+Run the scheduler (dispatches scheduled actions):
+
+```bash
+jararaca beat __PACKAGE_NAME__.app:app \
+    --broker-url "$BROKER_URL" \
+    --backend-url "$BACKEND_URL"
+```
+
+Declare the broker infrastructure (exchanges and queues) before the first run:
+
+```bash
+jararaca declare __PACKAGE_NAME__.app:app --broker-url "$BROKER_URL"
+```
+
+## Generating a TypeScript client
+
+```bash
+jararaca gen-tsi __PACKAGE_NAME__.app:app ./client.ts
+```
+
+## Development
+
+```bash
+ruff check .          # lint
+ruff format .         # format
+mypy src              # type-check
+pytest                # run tests
+```
+
+## Project layout
+
+```
+__PROJECT_NAME__/
+├── docker-compose.yml          # RabbitMQ + Redis for local development
+├── pyproject.toml              # project metadata and tooling config
+├── src/
+│   └── __PACKAGE_NAME__/
+│       ├── app.py              # Microservice + ASGI app wiring
+│       └── controllers/
+│           ├── health.py       # HTTP health-check controller
+│           └── tasks.py        # message handler + scheduled action
+└── tests/
+    └── test_app.py
+```
