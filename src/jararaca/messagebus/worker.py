@@ -41,6 +41,7 @@ from jararaca.messagebus.bus_message_controller import (
     provide_bus_message_controller,
 )
 from jararaca.messagebus.decorators import (
+    DEFAULT_CHANNEL_ID,
     MESSAGE_HANDLER_DATA_SET,
     SCHEDULED_ACTION_DATA_SET,
     MessageBusController,
@@ -234,9 +235,13 @@ class AioPikaMicroserviceConsumer(MessageBusConsumer):
         queue_name = gen_queue_name(handler.message_type, handler.instance_callable)
         routing_key = gen_routing_key(handler.message_type)
 
+        channel_id = handler.spec.channel_id or (
+            DEFAULT_CHANNEL_ID if self.config.shared_default_channel else queue_name
+        )
+
         async def setup_consumer() -> None:
             # Create a channel using the context manager
-            channel = await self.retrieve_channel(handler.spec.channel_id)
+            channel = await self.retrieve_channel(channel_id)
             queue: aio_pika.abc.AbstractQueue = await RabbitmqUtils.get_queue(
                 channel=channel, queue_name=queue_name
             )
@@ -310,9 +315,13 @@ class AioPikaMicroserviceConsumer(MessageBusConsumer):
         queue_name = f"{scheduled_action.callable.__module__}.{scheduled_action.callable.__qualname__}"
         routing_key = queue_name
 
+        channel_id = scheduled_action.spec.channel_id or (
+            DEFAULT_CHANNEL_ID if self.config.shared_default_channel else queue_name
+        )
+
         async def setup_consumer() -> None:
             # Create a channel using the context manager
-            channel = await self.retrieve_channel(scheduled_action.spec.channel_id)
+            channel = await self.retrieve_channel(channel_id)
             queue = await RabbitmqUtils.get_queue(
                 channel=channel, queue_name=queue_name
             )
@@ -555,6 +564,7 @@ class AioPikaMicroserviceConsumer(MessageBusConsumer):
 
         logger.debug("Creating channel for queue %s", channel_id)
         channel = await self.connection.channel()
+
         channel_prefetch_count = self.config.prefetch_by_channel_id.get(
             channel_id, self.config.default_prefetch_count
         )
@@ -728,16 +738,16 @@ class AioPikaMicroserviceConsumer(MessageBusConsumer):
             self.shutdown()
 
 
-SHARED_DEFAULT_CHANNEL_QUERY_PARAMETER = "shared_channel"
-SHARED_DEFAULT_CHANNEL_ENV_VAR = "AMQP_SHARED_CHANNEL"
+SHARED_DEFAULT_CHANNEL_QUERY_PARAMETER = "shared_default_channel"
+SHARED_DEFAULT_CHANNEL_ENV_VAR = "AMQP_SHARED_DEFAULT_CHANNEL"
 
 BROKER_EXCHANGE_QUERY_PARAMETER = "exchange"
 
 PREFETCH_COUNT_QUERY_PARAMETER = "prefetch_count"
 PREFETCH_COUNT_ENV_VAR = "AMQP_PREFETCH_COUNT"
 
-PREFETCH_BY_CHANNEL_ID_QUERY_PARAMETER = "prefetch_by_channel_id"
-PREFETCH_BY_CHANNEL_ID_ENV_VAR = "AMQP_PREFETCH_BY_CHANNEL_ID"
+PREFETCH_COUNT_BY_CHANNEL_QUERY_PARAMETER = "prefetch_count_by_channel_id"
+PREFETCH_COUNT_BY_CHANNEL_ENV_VAR = "AMQP_PREFETCH_COUNT_BY_CHANNEL"
 
 CONNECTION_RETRY_MAX_QUERY_PARAMETER = "connection_retry_max"
 CONNECTION_RETRY_DELAY_QUERY_PARAMETER = "connection_retry_delay"
@@ -810,9 +820,9 @@ def create_message_bus_consumer(
 
         prefetch_count_by_channel_id: dict[str, int] = {}
 
-        if PREFETCH_BY_CHANNEL_ID_QUERY_PARAMETER in query_params:
+        if PREFETCH_COUNT_BY_CHANNEL_QUERY_PARAMETER in query_params:
             prefetch_by_channel_id_raw = query_params[
-                PREFETCH_BY_CHANNEL_ID_QUERY_PARAMETER
+                PREFETCH_COUNT_BY_CHANNEL_QUERY_PARAMETER
             ][0]
             if prefetch_by_channel_id_raw:
                 try:
@@ -825,7 +835,9 @@ def create_message_bus_consumer(
                         "Invalid format for 'prefetch_by_channel_id'. Expected format: 'channel1:count1,channel2:count2'"
                     ) from e
         else:
-            prefetch_by_channel_id_env = os.environ.get(PREFETCH_BY_CHANNEL_ID_ENV_VAR)
+            prefetch_by_channel_id_env = os.environ.get(
+                PREFETCH_COUNT_BY_CHANNEL_ENV_VAR
+            )
             if prefetch_by_channel_id_env:
                 try:
                     prefetch_count_by_channel_id = {
@@ -834,7 +846,7 @@ def create_message_bus_consumer(
                     }
                 except Exception as e:
                     raise ValueError(
-                        "Invalid format for 'AMQP_PREFETCH_BY_CHANNEL_ID'. Expected format: 'channel1:count1,channel2:count2'"
+                        "Invalid format for 'AMQP_PREFETCH_COUNT_BY_CHANNEL'. Expected format: 'channel1:count1,channel2:count2'"
                     ) from e
 
         # Parse optional retry configuration parameters

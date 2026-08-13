@@ -61,7 +61,7 @@ class MessageHandler(GenericStackableDecorator[AcceptableHandler]):
         name: str | None = None,
         retry_config: RetryPolicy | None = None,
         group: str | None = None,
-        channel_id: str = DEFAULT_CHANNEL_ID,
+        channel_id: str | None = None,
     ) -> None:
         self.message_type = message
 
