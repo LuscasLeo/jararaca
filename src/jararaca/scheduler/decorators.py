@@ -35,7 +35,7 @@ class ScheduledAction(StackableDecorator):
         exception_handler: Callable[[BaseException], None] | None = None,
         name: str | None = None,
         group: str | None = None,
-        channel_id: str = DEFAULT_CHANNEL_ID,
+        channel_id: str | None = None,
     ) -> None:
         """
         :param cron: A string representing the cron expression for the scheduled action.
