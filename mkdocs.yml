@@ -54,7 +54,9 @@ nav:
     - Middleware: http-middleware.md
     - HTTP RPC: http-rpc.md
   - WebSocket: websocket.md
-  - Message Bus: messagebus.md
+  - Message Bus:
+    - Overview: messagebus.md
+    - Worker Channels: worker-channels.md
   - Scheduler: scheduler.md
   - Database:
     - Persistence: persistence.md
@@ -70,6 +72,8 @@ nav:
   - Testing: testing.md
 
 markdown_extensions:
+  - admonition
+  - pymdownx.details
   - pymdownx.highlight:
       anchor_linenums: true
       line_spans: __span
