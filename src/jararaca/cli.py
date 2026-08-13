@@ -26,6 +26,7 @@ import uvicorn
 import uvloop
 from mako.template import Template
 
+import jararaca.messagebus.aiopika
 from jararaca.messagebus import worker as worker_mod
 from jararaca.messagebus.decorators import MessageBusController, MessageHandler
 from jararaca.microservice import Microservice
@@ -303,8 +304,12 @@ async def declare_message_handler_queue(
     """
     message_handler = MessageHandler.get_last(member.member_function)
     if message_handler is not None:
-        queue_name = f"{message_handler.message_type.MESSAGE_TOPIC}.{member.member_function.__module__}.{member.member_function.__qualname__}"
-        routing_key = f"{message_handler.message_type.MESSAGE_TOPIC}.#"
+        queue_name = jararaca.messagebus.aiopika.gen_queue_name(
+            message_handler.message_type, member.member_function
+        )
+        routing_key = jararaca.messagebus.aiopika.gen_routing_key(
+            message_handler.message_type
+        )
 
         await declare_and_bind_queue(
             connection,

@@ -35,6 +35,7 @@ from jararaca.broker_backend.mapper import get_message_broker_backend_from_url
 from jararaca.core.uow import UnitOfWorkContextProvider
 from jararaca.di import Container
 from jararaca.lifecycle import AppLifecycle
+from jararaca.messagebus.aiopika import gen_queue_name, gen_routing_key
 from jararaca.messagebus.bus_message_controller import (
     BusMessageController,
     provide_bus_message_controller,
@@ -80,7 +81,9 @@ logger = logging.getLogger(__name__)
 class AioPikaWorkerConfig:
     url: str
     exchange: str
-    prefetch_count: int
+    default_prefetch_count: int
+    shared_default_channel: bool
+    prefetch_by_channel_id: dict[str, int]
     connection_retry_config: RetryPolicy = field(
         default_factory=lambda: RetryPolicy(
             max_retries=15,
@@ -179,13 +182,15 @@ class AioPikaMicroserviceConsumer(MessageBusConsumer):
         self.config = config
         self.message_handler_set = message_handler_set
         self.scheduled_actions = scheduled_actions
-        self.incoming_map: dict[str, MessageHandlerData] = {}
         self.uow_context_provider = uow_context_provider
         self.shutdown_event = asyncio.Event()
         self.shutdown_state = _WorkerShutdownState(self.shutdown_event)
         self.lock = asyncio.Lock()
-        self.tasks: set[asyncio.Task[Any]] = set()
         self.connection: aio_pika.abc.AbstractConnection | None = None
+
+        self.tasks: set[asyncio.Task[Any]] = set()
+
+        self.incoming_map: dict[str, MessageHandlerData] = {}
         self.channels: dict[str, aio_pika.abc.AbstractChannel] = {}
 
         # Connection resilience attributes
@@ -193,6 +198,7 @@ class AioPikaMicroserviceConsumer(MessageBusConsumer):
         self.connection_lock = asyncio.Lock()
         self.consumer_tags: dict[str, str] = {}  # Track consumer tags for cleanup
         self.health_check_task: asyncio.Task[Any] | None = None
+        self.retrieve_channel_lock = asyncio.Lock()
 
     async def _verify_infrastructure(self) -> bool:
         """
@@ -225,40 +231,53 @@ class AioPikaMicroserviceConsumer(MessageBusConsumer):
         Set up a consumer for a message handler with retry mechanism.
         Returns True if successful, False otherwise.
         """
-        queue_name = f"{handler.message_type.MESSAGE_TOPIC}.{handler.instance_callable.__module__}.{handler.instance_callable.__qualname__}"
-        routing_key = f"{handler.message_type.MESSAGE_TOPIC}.#"
+        queue_name = gen_queue_name(handler.message_type, handler.instance_callable)
+        routing_key = gen_routing_key(handler.message_type)
 
         async def setup_consumer() -> None:
             # Create a channel using the context manager
-            async with self.create_channel(queue_name) as channel:
-                queue: aio_pika.abc.AbstractQueue = await RabbitmqUtils.get_queue(
-                    channel=channel, queue_name=queue_name
-                )
+            channel = await self.retrieve_channel(handler.spec.channel_id)
+            queue: aio_pika.abc.AbstractQueue = await RabbitmqUtils.get_queue(
+                channel=channel, queue_name=queue_name
+            )
 
-                # Configure consumer and get the consumer tag
-                consumer_tag = await queue.consume(
-                    callback=MessageHandlerCallback(
-                        consumer=self,
-                        queue_name=queue_name,
-                        routing_key=routing_key,
-                        message_handler=handler,
-                    ),
-                    # no_ack=handler.spec.auto_ack,
-                )
+            # Configure consumer and get the consumer tag
+            consumer_tag = await queue.consume(
+                callback=MessageHandlerCallback(
+                    consumer=self,
+                    queue_name=queue_name,
+                    routing_key=routing_key,
+                    message_handler=handler,
+                ),
+                # no_ack=handler.spec.auto_ack,
+            )
 
-                # Store consumer tag for cleanup
-                self.consumer_tags[queue_name] = consumer_tag
+            # Store consumer tag for cleanup
+            self.consumer_tags[queue_name] = consumer_tag
 
-                logger.info(
-                    "Consuming message handler %s on dedicated channel", queue_name
-                )
+            logger.info(
+                "Consuming message handler %s on channel %s",
+                queue_name,
+                handler.spec.channel_id,
+            )
 
-                await self.shutdown_event.wait()
+            await self.shutdown_event.wait()
 
+            try:
                 logger.warning(
                     "Shutdown event received, stopping consumer for %s", queue_name
                 )
                 await queue.cancel(consumer_tag)
+            except (ChannelClosed,) as e:
+                logger.warning(
+                    "Channel closed while stopping consumer for %s: %s. this may cause issues like in-progress messages to be repeated",
+                    queue_name,
+                    e,
+                )
+            except Exception as e:
+                logger.error(
+                    "Error occurred while stopping consumer for %s: %s", queue_name, e
+                )
 
         try:
             # Setup with retry
@@ -293,33 +312,44 @@ class AioPikaMicroserviceConsumer(MessageBusConsumer):
 
         async def setup_consumer() -> None:
             # Create a channel using the context manager
-            async with self.create_channel(queue_name) as channel:
-                queue = await RabbitmqUtils.get_queue(
-                    channel=channel, queue_name=queue_name
-                )
+            channel = await self.retrieve_channel(scheduled_action.spec.channel_id)
+            queue = await RabbitmqUtils.get_queue(
+                channel=channel, queue_name=queue_name
+            )
 
-                # Configure consumer and get the consumer tag
-                consumer_tag = await queue.consume(
-                    callback=ScheduledMessageHandlerCallback(
-                        consumer=self,
-                        queue_name=queue_name,
-                        routing_key=routing_key,
-                        scheduled_action=scheduled_action,
-                    ),
-                    no_ack=True,
-                )
+            # Configure consumer and get the consumer tag
+            consumer_tag = await queue.consume(
+                callback=ScheduledMessageHandlerCallback(
+                    consumer=self,
+                    queue_name=queue_name,
+                    routing_key=routing_key,
+                    scheduled_action=scheduled_action,
+                ),
+                no_ack=True,
+            )
 
-                # Store consumer tag for cleanup
-                self.consumer_tags[queue_name] = consumer_tag
+            # Store consumer tag for cleanup
+            self.consumer_tags[queue_name] = consumer_tag
 
-                logger.info("Consuming scheduler %s on dedicated channel", queue_name)
+            logger.info(
+                "Consuming scheduler %s on channel %s",
+                queue_name,
+                scheduled_action.spec.channel_id,
+            )
 
-                await self.shutdown_event.wait()
+            await self.shutdown_event.wait()
 
-                logger.warning(
-                    "Shutdown event received, stopping consumer for %s", queue_name
-                )
+            logger.warning(
+                "Shutdown event received, stopping consumer for %s", queue_name
+            )
+            try:
                 await queue.cancel(consumer_tag)
+            except (ChannelClosed,) as e:
+                logger.warning(
+                    "Channel closed while stopping consumer for %s: %s. This may cause issues like in-progress messages to be repeated",
+                    queue_name,
+                    e,
+                )
 
         try:
             # Setup with retry
@@ -379,7 +409,10 @@ class AioPikaMicroserviceConsumer(MessageBusConsumer):
 
                 # Setup message handlers
                 for handler in self.message_handler_set:
-                    queue_name = f"{handler.message_type.MESSAGE_TOPIC}.{handler.instance_callable.__module__}.{handler.instance_callable.__qualname__}"
+                    queue_name = gen_queue_name(
+                        handler.message_type, handler.instance_callable
+                    )
+
                     self.incoming_map[queue_name] = handler
 
                     tasks.add(
@@ -429,7 +462,7 @@ class AioPikaMicroserviceConsumer(MessageBusConsumer):
                 await self.shutdown_event.wait()
                 logger.debug("Shutdown event received, stopping consumers")
 
-                await self.cancel_queue_consumers()
+                # await self.cancel_queue_consumers()
 
                 # Cancel health monitoring
                 if self.health_check_task:
@@ -440,11 +473,7 @@ class AioPikaMicroserviceConsumer(MessageBusConsumer):
                 handle_task_results_task.cancel()
                 with suppress(asyncio.CancelledError):
                     await handle_task_results_task
-                for task in tasks:
-                    if not task.done():
-                        task.cancel()
-                        with suppress(asyncio.CancelledError):
-                            await task
+
                 logger.debug("Worker shutting down")
                 # Wait for all tasks to complete
                 await self.wait_all_tasks_done()
@@ -456,30 +485,6 @@ class AioPikaMicroserviceConsumer(MessageBusConsumer):
             logger.critical("Failed to establish initial connection to RabbitMQ: %s", e)
             # Re-raise the exception so it can be caught by the caller
             raise
-
-    async def cancel_queue_consumers(self) -> None:
-        """
-        Cancel all active queue consumers.
-        """
-        logger.debug("Cancelling all active queue consumers...")
-        for queue_name, channel in self.channels.items():
-            try:
-                if not channel.is_closed:
-                    # Cancel consumer if we have its tag
-                    if queue_name in self.consumer_tags:
-                        try:
-                            queue = await channel.get_queue(queue_name, ensure=False)
-                            if queue:
-                                await queue.cancel(self.consumer_tags[queue_name])
-                        except Exception as cancel_error:
-                            logger.warning(
-                                "Error cancelling consumer for %s: %s",
-                                queue_name,
-                                cancel_error,
-                            )
-                        del self.consumer_tags[queue_name]
-            except Exception as e:
-                logger.warning("Error cancelling consumer for %s: %s", queue_name, e)
 
     async def wait_all_tasks_done(self) -> None:
         if not self.tasks:
@@ -517,7 +522,7 @@ class AioPikaMicroserviceConsumer(MessageBusConsumer):
     async def close_channels_and_connection(self) -> None:
         """Close all channels and then the connection"""
         logger.warning("Closing channels and connection...")
-        await self._cleanup_connection()
+        # await self._cleanup_connection()
 
     def shutdown(self) -> None:
         """Signal for shutdown"""
@@ -538,81 +543,39 @@ class AioPikaMicroserviceConsumer(MessageBusConsumer):
         await self.wait_all_tasks_done()
         await self.close_channels_and_connection()
 
-    async def get_channel(self, queue_name: str) -> aio_pika.abc.AbstractChannel | None:
-        """
-        Get the channel for a specific queue, or None if not found.
-        This helps with error handling when a channel might have been closed.
-        """
-        if queue_name not in self.channels:
-            logger.warning("No channel found for queue %s", queue_name)
-            return None
-
-        try:
-            channel = self.channels[queue_name]
-            if channel.is_closed:
-                logger.warning("Channel for queue %s is closed", queue_name)
-                # Remove the closed channel
-                del self.channels[queue_name]
-
-                # Attempt to recreate the channel if connection is healthy
-                if (
-                    self.connection
-                    and not self.connection.is_closed
-                    and self.connection_healthy
-                ):
-                    try:
-                        logger.debug("Creating new channel for %s", queue_name)
-                        self.channels[queue_name] = await self.connection.channel()
-                        await self.channels[queue_name].set_qos(
-                            prefetch_count=self.config.prefetch_count
-                        )
-                        return self.channels[queue_name]
-                    except Exception as e:
-                        logger.error(
-                            "Failed to recreate channel for %s: %s", queue_name, e
-                        )
-                        # Trigger shutdown if channel creation fails
-                        self._trigger_shutdown()
-                        return None
-                else:
-                    # Connection is not healthy, trigger shutdown
-                    self._trigger_shutdown()
-                    return None
-            return channel
-        except Exception as e:
-            logger.error("Error accessing channel for queue %s: %s", queue_name, e)
-            # Trigger shutdown on any channel access error
-            self._trigger_shutdown()
-            return None
-
-    async def _establish_channel(self, queue_name: str) -> aio_pika.abc.AbstractChannel:
+    async def _establish_channel(self, channel_id: str) -> aio_pika.abc.AbstractChannel:
         """
         Creates a new channel for the specified queue with proper QoS settings.
         """
         if self.connection is None or self.connection.is_closed:
             logger.warning(
-                "Cannot create channel for %s: connection is not available", queue_name
+                "Cannot create channel for %s: connection is not available", channel_id
             )
             raise RuntimeError("Connection is not available")
 
-        logger.debug("Creating channel for queue %s", queue_name)
+        logger.debug("Creating channel for queue %s", channel_id)
         channel = await self.connection.channel()
-        await channel.set_qos(prefetch_count=self.config.prefetch_count)
-        logger.debug("Created channel for queue %s", queue_name)
+        channel_prefetch_count = self.config.prefetch_by_channel_id.get(
+            channel_id, self.config.default_prefetch_count
+        )
+        await channel.set_qos(prefetch_count=channel_prefetch_count)
+        logger.debug("Created channel for queue %s", channel_id)
         return channel
 
-    @asynccontextmanager
-    async def create_channel(
-        self, queue_name: str
-    ) -> AsyncGenerator[aio_pika.abc.AbstractChannel, None]:
+    async def retrieve_channel(self, channel_id: str) -> aio_pika.abc.AbstractChannel:
         """
         Create and yield a channel for the specified queue with retry mechanism.
         This context manager ensures the channel is properly managed.
         """
-        try:
+
+        async with self.retrieve_channel_lock:
+            if channel_id in self.channels and not self.channels[channel_id].is_closed:
+                logger.debug("Reusing existing channel for queue %s", channel_id)
+                return self.channels[channel_id]
+
             # Create a new channel with retry
             channel = await retry_with_backoff(
-                fn=lambda: self._establish_channel(queue_name),
+                fn=lambda: self._establish_channel(channel_id),
                 retry_policy=self.config.consumer_retry_policy,
                 retry_exceptions=(
                     AMQPConnectionError,
@@ -622,20 +585,9 @@ class AioPikaMicroserviceConsumer(MessageBusConsumer):
             )
 
             # Save in the channels dict for tracking
-            self.channels[queue_name] = channel
-            logger.debug("Created new channel for queue %s", queue_name)
-
-            try:
-                yield channel
-            finally:
-                # Don't close the channel here as it might be used later
-                # It will be closed during shutdown
-                pass
-        except aio_pika.exceptions.AMQPError as e:
-            logger.error(
-                "Error creating channel for queue %s after retries: %s", queue_name, e
-            )
-            raise
+            self.channels[channel_id] = channel
+            logger.debug("Created new channel with id %s", channel_id)
+            return channel
 
     async def _establish_connection(self) -> aio_pika.abc.AbstractConnection:
         """
@@ -699,65 +651,6 @@ class AioPikaMicroserviceConsumer(MessageBusConsumer):
                     )
                 self.connection = None
             raise
-
-    @asynccontextmanager
-    async def get_channel_ctx(
-        self, queue_name: str
-    ) -> AsyncGenerator[aio_pika.abc.AbstractChannel, None]:
-        """
-        Get a channel for a specific queue as a context manager.
-        This is safer than using get_channel directly as it ensures proper error handling.
-        """
-        max_retries = 3
-        retry_delay = 1.0
-
-        for attempt in range(max_retries):
-            try:
-                channel = await self.get_channel(queue_name)
-                if channel is not None:
-                    try:
-                        yield channel
-                        return
-                    finally:
-                        # We don't close the channel here as it's managed by the consumer
-                        pass
-
-                # No channel available, check connection state
-                if (
-                    self.connection
-                    and not self.connection.is_closed
-                    and self.connection_healthy
-                ):
-                    # Try to create a new channel
-                    async with self.create_channel(queue_name) as new_channel:
-                        yield new_channel
-                        return
-                else:
-                    # Connection is not healthy, trigger shutdown
-                    logger.error(
-                        "Connection not healthy while getting channel for %s, triggering shutdown",
-                        queue_name,
-                    )
-                    self._trigger_shutdown()
-                    raise RuntimeError(
-                        f"Cannot get channel for queue {queue_name}: connection is not healthy"
-                    )
-
-            except Exception as e:
-                if attempt < max_retries - 1:
-                    logger.warning(
-                        "Error getting channel for %s, retrying: %s", queue_name, e
-                    )
-                    await self._wait_delay_or_shutdown(retry_delay)
-                    retry_delay *= 2
-                else:
-                    logger.error(
-                        "Failed to get channel for %s after %s attempts: %s",
-                        queue_name,
-                        max_retries,
-                        e,
-                    )
-                    raise
 
     async def _wait_delay_or_shutdown(self, delay: float) -> None:
         """
@@ -834,49 +727,28 @@ class AioPikaMicroserviceConsumer(MessageBusConsumer):
             self.connection_healthy = False
             self.shutdown()
 
-    async def _cleanup_connection(self) -> None:
-        """
-        Clean up existing connection and channels.
-        """
-        # Cancel existing consumers
-        for queue_name, channel in self.channels.items():
-            try:
-                if not channel.is_closed:
-                    # Cancel consumer if we have its tag
-                    if queue_name in self.consumer_tags:
-                        try:
-                            queue = await channel.get_queue(queue_name, ensure=False)
-                            if queue:
-                                await queue.cancel(self.consumer_tags[queue_name])
-                        except Exception as cancel_error:
-                            logger.warning(
-                                "Error cancelling consumer for %s: %s",
-                                queue_name,
-                                cancel_error,
-                            )
-                        del self.consumer_tags[queue_name]
-            except Exception as e:
-                logger.warning("Error cancelling consumer for %s: %s", queue_name, e)
 
-        # Close channels
-        for queue_name, channel in self.channels.items():
-            try:
-                if not channel.is_closed:
-                    await channel.close()
-            except Exception as e:
-                logger.warning("Error closing channel for %s: %s", queue_name, e)
+SHARED_DEFAULT_CHANNEL_QUERY_PARAMETER = "shared_channel"
+SHARED_DEFAULT_CHANNEL_ENV_VAR = "AMQP_SHARED_CHANNEL"
 
-        self.channels.clear()
+BROKER_EXCHANGE_QUERY_PARAMETER = "exchange"
 
-        # Close connection
-        if self.connection and not self.connection.is_closed:
-            try:
-                await self.connection.close()
-            except Exception as e:
-                logger.warning("Error closing connection: %s", e)
+PREFETCH_COUNT_QUERY_PARAMETER = "prefetch_count"
+PREFETCH_COUNT_ENV_VAR = "AMQP_PREFETCH_COUNT"
 
-        self.connection = None
-        self.connection_healthy = False
+PREFETCH_BY_CHANNEL_ID_QUERY_PARAMETER = "prefetch_by_channel_id"
+PREFETCH_BY_CHANNEL_ID_ENV_VAR = "AMQP_PREFETCH_BY_CHANNEL_ID"
+
+CONNECTION_RETRY_MAX_QUERY_PARAMETER = "connection_retry_max"
+CONNECTION_RETRY_DELAY_QUERY_PARAMETER = "connection_retry_delay"
+CONNECTION_RETRY_MAX_DELAY_QUERY_PARAMETER = "connection_retry_max_delay"
+CONNECTION_RETRY_BACKOFF_QUERY_PARAMETER = "connection_retry_backoff"
+CONSUMER_RETRY_MAX_QUERY_PARAMETER = "consumer_retry_max"
+CONSUMER_RETRY_DELAY_QUERY_PARAMETER = "consumer_retry_delay"
+CONSUMER_RETRY_MAX_DELAY_QUERY_PARAMETER = "consumer_retry_max_delay"
+CONSUMER_RETRY_BACKOFF_QUERY_PARAMETER = "consumer_retry_backoff"
+CONNECTION_HEARTBEAT_INTERVAL_QUERY_PARAMETER = "connection_heartbeat_interval"
+CONNECTION_HEALTH_CHECK_INTERVAL_QUERY_PARAMETER = "connection_health_check_interval"
 
 
 def create_message_bus_consumer(
@@ -894,28 +766,76 @@ def create_message_bus_consumer(
 
         query_params: dict[str, list[str]] = parse_qs(parsed_url.query)
 
-        assert "exchange" in query_params, "Exchange must be set in the query string"
         assert (
-            len(query_params["exchange"]) == 1
+            BROKER_EXCHANGE_QUERY_PARAMETER in query_params
         ), "Exchange must be set in the query string"
-        assert query_params["exchange"][0], "Exchange must be set in the query string"
+        assert (
+            len(query_params[BROKER_EXCHANGE_QUERY_PARAMETER]) == 1
+        ), "Exchange must be set in the query string"
+        assert query_params[BROKER_EXCHANGE_QUERY_PARAMETER][
+            0
+        ], "Exchange must be set in the query string"
 
-        exchange = query_params["exchange"][0]
+        exchange = query_params[BROKER_EXCHANGE_QUERY_PARAMETER][0]
 
         _prefetch_count_raw: str | None = None
         if (
-            "prefetch_count" in query_params
-            and len(query_params["prefetch_count"]) == 1
+            PREFETCH_COUNT_QUERY_PARAMETER in query_params
+            and len(query_params[PREFETCH_COUNT_QUERY_PARAMETER]) == 1
         ):
-            _prefetch_count_raw = query_params["prefetch_count"][0]
+            _prefetch_count_raw = query_params[PREFETCH_COUNT_QUERY_PARAMETER][0]
         else:
-            _prefetch_count_raw = os.environ.get("AMQP_PREFETCH_COUNT")
+            _prefetch_count_raw = os.environ.get(PREFETCH_COUNT_ENV_VAR)
 
         assert (
             _prefetch_count_raw is not None and _prefetch_count_raw.isdigit()
         ), "Prefetch count must be an integer set via query string 'prefetch_count' or env var AMQP_PREFETCH_COUNT"
 
         prefetch_count = int(_prefetch_count_raw)
+
+        shared_default_channel: bool = False
+
+        if (
+            SHARED_DEFAULT_CHANNEL_QUERY_PARAMETER in query_params
+            and len(query_params[SHARED_DEFAULT_CHANNEL_QUERY_PARAMETER]) == 1
+        ):
+            shared_default_channel = (
+                query_params[SHARED_DEFAULT_CHANNEL_QUERY_PARAMETER][0].lower()
+                == "true"
+            )
+        else:
+            shared_channel_env = os.environ.get(SHARED_DEFAULT_CHANNEL_ENV_VAR)
+            if shared_channel_env is not None:
+                shared_default_channel = shared_channel_env.lower() == "true"
+
+        prefetch_count_by_channel_id: dict[str, int] = {}
+
+        if PREFETCH_BY_CHANNEL_ID_QUERY_PARAMETER in query_params:
+            prefetch_by_channel_id_raw = query_params[
+                PREFETCH_BY_CHANNEL_ID_QUERY_PARAMETER
+            ][0]
+            if prefetch_by_channel_id_raw:
+                try:
+                    prefetch_count_by_channel_id = {
+                        item.split(":")[0]: int(item.split(":")[1])
+                        for item in prefetch_by_channel_id_raw.split(",")
+                    }
+                except Exception as e:
+                    raise ValueError(
+                        "Invalid format for 'prefetch_by_channel_id'. Expected format: 'channel1:count1,channel2:count2'"
+                    ) from e
+        else:
+            prefetch_by_channel_id_env = os.environ.get(PREFETCH_BY_CHANNEL_ID_ENV_VAR)
+            if prefetch_by_channel_id_env:
+                try:
+                    prefetch_count_by_channel_id = {
+                        item.split(":")[0]: int(item.split(":")[1])
+                        for item in prefetch_by_channel_id_env.split(",")
+                    }
+                except Exception as e:
+                    raise ValueError(
+                        "Invalid format for 'AMQP_PREFETCH_BY_CHANNEL_ID'. Expected format: 'channel1:count1,channel2:count2'"
+                    ) from e
 
         # Parse optional retry configuration parameters
         connection_retry_config = RetryPolicy()
@@ -929,83 +849,83 @@ def create_message_bus_consumer(
 
         # Connection retry config parameters
         if (
-            "connection_retry_max" in query_params
-            and query_params["connection_retry_max"][0].isdigit()
+            CONNECTION_RETRY_MAX_QUERY_PARAMETER in query_params
+            and query_params[CONNECTION_RETRY_MAX_QUERY_PARAMETER][0].isdigit()
         ):
             connection_retry_config.max_retries = int(
-                query_params["connection_retry_max"][0]
+                query_params[CONNECTION_RETRY_MAX_QUERY_PARAMETER][0]
             )
 
-        if "connection_retry_delay" in query_params:
+        if CONNECTION_RETRY_DELAY_QUERY_PARAMETER in query_params:
             try:
                 connection_retry_config.initial_delay = float(
-                    query_params["connection_retry_delay"][0]
+                    query_params[CONNECTION_RETRY_DELAY_QUERY_PARAMETER][0]
                 )
             except ValueError:
                 pass
 
-        if "connection_retry_max_delay" in query_params:
+        if CONNECTION_RETRY_MAX_DELAY_QUERY_PARAMETER in query_params:
             try:
                 connection_retry_config.max_delay = float(
-                    query_params["connection_retry_max_delay"][0]
+                    query_params[CONNECTION_RETRY_MAX_DELAY_QUERY_PARAMETER][0]
                 )
             except ValueError:
                 pass
 
-        if "connection_retry_backoff" in query_params:
+        if CONNECTION_RETRY_BACKOFF_QUERY_PARAMETER in query_params:
             try:
                 connection_retry_config.backoff_factor = float(
-                    query_params["connection_retry_backoff"][0]
+                    query_params[CONNECTION_RETRY_BACKOFF_QUERY_PARAMETER][0]
                 )
             except ValueError:
                 pass
 
         # Consumer retry config parameters
         if (
-            "consumer_retry_max" in query_params
-            and query_params["consumer_retry_max"][0].isdigit()
+            CONSUMER_RETRY_MAX_QUERY_PARAMETER in query_params
+            and query_params[CONSUMER_RETRY_MAX_QUERY_PARAMETER][0].isdigit()
         ):
             consumer_retry_config.max_retries = int(
-                query_params["consumer_retry_max"][0]
+                query_params[CONSUMER_RETRY_MAX_QUERY_PARAMETER][0]
             )
 
-        if "consumer_retry_delay" in query_params:
+        if CONSUMER_RETRY_DELAY_QUERY_PARAMETER in query_params:
             try:
                 consumer_retry_config.initial_delay = float(
-                    query_params["consumer_retry_delay"][0]
+                    query_params[CONSUMER_RETRY_DELAY_QUERY_PARAMETER][0]
                 )
             except ValueError:
                 pass
 
-        if "consumer_retry_max_delay" in query_params:
+        if CONSUMER_RETRY_MAX_DELAY_QUERY_PARAMETER in query_params:
             try:
                 consumer_retry_config.max_delay = float(
-                    query_params["consumer_retry_max_delay"][0]
+                    query_params[CONSUMER_RETRY_MAX_DELAY_QUERY_PARAMETER][0]
                 )
             except ValueError:
                 pass
 
-        if "consumer_retry_backoff" in query_params:
+        if CONSUMER_RETRY_BACKOFF_QUERY_PARAMETER in query_params:
             try:
                 consumer_retry_config.backoff_factor = float(
-                    query_params["consumer_retry_backoff"][0]
+                    query_params[CONSUMER_RETRY_BACKOFF_QUERY_PARAMETER][0]
                 )
             except ValueError:
                 pass
 
         # Heartbeat and health check intervals
-        if "connection_heartbeat_interval" in query_params:
+        if CONNECTION_HEARTBEAT_INTERVAL_QUERY_PARAMETER in query_params:
             try:
                 connection_heartbeat_interval = float(
-                    query_params["connection_heartbeat_interval"][0]
+                    query_params[CONNECTION_HEARTBEAT_INTERVAL_QUERY_PARAMETER][0]
                 )
             except ValueError:
                 pass
 
-        if "connection_health_check_interval" in query_params:
+        if CONNECTION_HEALTH_CHECK_INTERVAL_QUERY_PARAMETER in query_params:
             try:
                 connection_health_check_interval = float(
-                    query_params["connection_health_check_interval"][0]
+                    query_params[CONNECTION_HEALTH_CHECK_INTERVAL_QUERY_PARAMETER][0]
                 )
             except ValueError:
                 pass
@@ -1013,7 +933,9 @@ def create_message_bus_consumer(
         config = AioPikaWorkerConfig(
             url=broker_url,
             exchange=exchange,
-            prefetch_count=prefetch_count,
+            shared_default_channel=shared_default_channel,
+            default_prefetch_count=prefetch_count,
+            prefetch_by_channel_id=prefetch_count_by_channel_id,
             connection_retry_config=connection_retry_config,
             consumer_retry_policy=consumer_retry_config,
             connection_heartbeat_interval=connection_heartbeat_interval,

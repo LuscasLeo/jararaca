@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from typing import Any, Awaitable, Callable, Literal, TypeVar, cast, get_args
 
 from jararaca.messagebus.message import INHERITS_MESSAGE_CO, Message, MessageOf
+from jararaca.messagebus.publisher import IMessage
 from jararaca.reflect.controller_inspect import (
     ControllerMemberReflect,
     inspect_controller,
@@ -43,6 +44,8 @@ DEFAULT_MESSAGE_HANDLER_GROUP = (
     get_env_str("JARARACA_MESSAGEBUS_HANDLER_GROUP") or DEFAULT
 )
 
+DEFAULT_CHANNEL_ID = get_env_str("JARARACA_MESSAGEBUS_CHANNEL_ID") or DEFAULT
+
 
 class MessageHandler(GenericStackableDecorator[AcceptableHandler]):
 
@@ -58,6 +61,7 @@ class MessageHandler(GenericStackableDecorator[AcceptableHandler]):
         name: str | None = None,
         retry_config: RetryPolicy | None = None,
         group: str | None = None,
+        channel_id: str = DEFAULT_CHANNEL_ID,
     ) -> None:
         self.message_type = message
 
@@ -70,6 +74,7 @@ class MessageHandler(GenericStackableDecorator[AcceptableHandler]):
         self.name = name
         self.retry_config = retry_config
         self.group = group or DEFAULT_MESSAGE_HANDLER_GROUP
+        self.channel_id = channel_id
 
     def __call__(self, subject: MessageHandlerT) -> MessageHandlerT:
         return cast(MessageHandlerT, super().__call__(subject))
@@ -142,7 +147,7 @@ class MessageHandler(GenericStackableDecorator[AcceptableHandler]):
 
 @dataclass(frozen=True)
 class MessageHandlerData:
-    message_type: type[Any]
+    message_type: type[IMessage]
     spec: MessageHandler
     instance_callable: Callable[..., Awaitable[None]]
     controller_member: ControllerMemberReflect
