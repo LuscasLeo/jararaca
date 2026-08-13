@@ -21,6 +21,8 @@ DEFAULT_SCHEDULED_ACTION_GROUP = (
 
 DECORATED_FUNC = TypeVar("DECORATED_FUNC", bound=Callable[..., Any])
 
+DEFAULT_CHANNEL_ID = get_env_str("JARARACA_MESSAGEBUS_CHANNEL_ID") or DEFAULT
+
 
 class ScheduledAction(StackableDecorator):
 
@@ -33,6 +35,7 @@ class ScheduledAction(StackableDecorator):
         exception_handler: Callable[[BaseException], None] | None = None,
         name: str | None = None,
         group: str | None = None,
+        channel_id: str = DEFAULT_CHANNEL_ID,
     ) -> None:
         """
         :param cron: A string representing the cron expression for the scheduled action.
@@ -78,6 +81,11 @@ class ScheduledAction(StackableDecorator):
         self.group = group or DEFAULT_SCHEDULED_ACTION_GROUP
         """
         An optional group name for the scheduled action, used for filtering which actions to run.
+        """
+
+        self.channel_id = channel_id
+        """
+        An optional channel ID for the scheduled action, used for filtering which actions to run.
         """
 
     @staticmethod

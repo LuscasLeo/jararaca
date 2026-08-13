@@ -52,6 +52,7 @@ async def retry_with_backoff(
     retry_policy: RetryPolicy,
     on_retry_callback: Optional[Callable[[int, E, float], None]] = None,
     retry_exceptions: tuple[type[E], ...] = (),
+    cancel_event: Optional[asyncio.Event] = None,
 ) -> T:
     """
     Execute a function with exponential backoff retry mechanism.
@@ -79,6 +80,9 @@ async def retry_with_backoff(
             return await fn()
         except retry_exceptions as e:
             last_exception = e
+            if cancel_event and cancel_event.is_set():
+                logger.info("Retry cancelled due to cancellation event.")
+                raise asyncio.CancelledError() from e
 
             if retry_count >= retry_policy.max_retries:
                 logger.error(

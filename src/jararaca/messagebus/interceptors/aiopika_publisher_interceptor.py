@@ -15,6 +15,7 @@ from pydantic import BaseModel
 
 from jararaca.broker_backend import MessageBrokerBackend
 from jararaca.messagebus import implicit_headers
+from jararaca.messagebus.aiopika import gen_routing_key
 from jararaca.messagebus.interceptors.publisher_interceptor import (
     MessageBusConnectionFactory,
 )
@@ -53,7 +54,7 @@ class AIOPikaMessagePublisher(InternalMessagePublisher):
         if not exchange:
             logging.warning(f"Exchange {self.exchange_name} not found")
             return
-        routing_key = f"{topic}.#"
+        routing_key = gen_routing_key(message.__class__)
 
         implicit_headers_data = implicit_headers.use_implicit_headers()
         await exchange.publish(
