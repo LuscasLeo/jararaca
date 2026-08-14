@@ -36,6 +36,71 @@ variables:
 | `JARARACA_OBSERVABILITY_TRACE_SPAN_HTTP_REQUEST_MAX_BODY_SIZE_ATTRIBUTE_VALUE` | `int` | `5000` | Maximum number of bytes of the HTTP request body recorded as a span attribute. Larger bodies are truncated. |
 | `JARARACA_OBSERVABILITY_TRACE_SPAN_HTTP_REQUEST_USE_ABSOLUTE_PATH_ON_TITLE` | `bool` | `false` | When enabled, the request span title uses the absolute request path instead of the matched route template. Truthy values: `1`, `true`, `yes`, `on`. |
 
+## Trace Boundaries
+
+By default, a message handler execution is recorded as a **child** of the span that
+published the message, so an HTTP request and every task it triggers live inside a single
+trace. That keeps the whole arc in one timeline, but it has a cost: the trace duration
+includes the time the message spent waiting in the broker, every retry piles onto the same
+trace (which may stay open for hours after a dead letter redelivery), and in Grafana every
+trace is listed under the name of whatever started it — almost always the HTTP span.
+
+The alternative is the **link** policy: the handler execution starts its own trace, so it
+gets its own name and its own duration, while the arc stays reconstructable through:
+
+- an OTEL **span link** back to the publisher span (plus the `flow.parent_trace_id` and
+  `flow.parent_span_id` attributes), and
+- a **`flow.id`** attribute shared by every trace of the arc, propagated across processes
+  via W3C baggage.
+
+In Grafana, `{ .flow.id = "<id>" }` returns the whole arc as a list of traces, and
+`{ .bus.message.topic = "<topic>" && duration > 5s }` finally means what it says.
+
+### Choosing the policy
+
+| Environment Variable | Type | Default | Description |
+|---------------------|------|---------|-------------|
+| `JARARACA_OBSERVABILITY_TRACE_ASYNC_BOUNDARY` | `child` \| `link` | `child` | Policy used when a worker picks up a message. |
+| `JARARACA_OBSERVABILITY_TRACE_ASYNC_BOUNDARY_ON_RETRY` | `child` \| `link` | `link` | Policy used when the message is being reprocessed (`processing_attempt > 1`), so retries never keep the original trace open. |
+| `JARARACA_OBSERVABILITY_TRACE_MESSAGEBUS_SPAN_NAME_STYLE` | `legacy` \| `compact` | `legacy` | `legacy` names the root span `Att#1 Message Bus <broker_topic>`; `compact` names it `TASK <message_topic>`, keeping attempt and broker topic as attributes only. |
+
+Individual messages can override the environment defaults, including the retry rule:
+
+```python
+from jararaca import Message
+
+
+class SendCampaignMessage(Message):
+    MESSAGE_TOPIC = "campaign.send"
+    # This one sits in the queue for a long time and fans out;
+    # it gets its own trace instead of inflating the publisher's.
+    TRACE_BOUNDARY = "link"
+
+
+class UpdateReadReceiptMessage(Message):
+    MESSAGE_TOPIC = "chat.read-receipt"
+    # Fast handoff — keep it in the same timeline as the request that triggered it.
+    TRACE_BOUNDARY = "child"
+```
+
+Only the message bus is treated as an async boundary. HTTP and WebSocket are synchronous
+handoffs and always continue the incoming trace, and the scheduler has no incoming parent
+to begin with.
+
+### Reading the flow id
+
+The flow id is available to application code and is attached to every log record emitted
+inside the transaction, so the same key correlates traces in Tempo and logs in Loki.
+
+```python
+from jararaca import get_flow_id
+
+
+async def handle(self, message: MessageOf[SendCampaignMessage]) -> None:
+    # Store it alongside your own records to jump straight to the whole arc later.
+    execution.trace_flow_id = get_flow_id()
+```
+
 ## Context Attributes
 
 Jararaca automatically enriches your traces and logs with context-specific attributes. This is handled by the `extract_context_attributes` function, which extracts relevant information based on the current execution context.
@@ -60,10 +125,18 @@ For HTTP requests, the following attributes are added:
 
 For message bus handlers:
 
-- `bus.topic`: Message topic
-- `bus.message.body`: Message payload (JSON)
+- `bus.message.id`: Broker message id
 - `bus.message.name`: Message class name
 - `bus.message.module`: Message class module
+- `bus.message.category`: `MESSAGE_CATEGORY` of the message
+- `bus.message.type`: `task` or `event`
+- `bus.message.topic`: `MESSAGE_TOPIC` of the message
+- `bus.message.broker_topic`: Full broker routing key (topic plus handler path)
+- `bus.message.processing_attempt`: Delivery attempt, starting at `1`
+
+When the boundary is crossed with the `link` policy, the root span also carries
+`flow.id`, `flow.parent_trace_id` and `flow.parent_span_id` (see
+[Trace Boundaries](#trace-boundaries)).
 
 ### WebSocket Context
 
@@ -99,7 +172,7 @@ class MyService:
 
 Jararaca integrates with the Python `logging` module. When observability is enabled, logs are automatically correlated with the current trace context. The `CustomLoggingHandler` ensures that all the context attributes mentioned above are also attached to your log records.
 
-This means you can filter logs by `http.path`, `bus.topic`, or any other context attribute in your observability backend (e.g., Jaeger, Grafana Tempo, Signoz).
+This means you can filter logs by `http.path`, `bus.message.topic`, `flow.id`, or any other context attribute in your observability backend (e.g., Jaeger, Grafana Tempo, Signoz).
 
 ## Class-level Tracing
 
