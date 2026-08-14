@@ -1797,11 +1797,10 @@ class MessageBusWorker:
 
     async def _graceful_shutdown(self) -> None:
         """Handles graceful shutdown process"""
-        logger.warning("Initiating graceful shutdown sequence")
         # Use the comprehensive close method that handles shutdown, task waiting and connection cleanup
 
         self.consumer.shutdown()
-        logger.warning("Graceful shutdown completed")
+        logger.warning("Initiating graceful shutdown sequence")
 
 
 class AioPikaMessageBusController(BusMessageController):

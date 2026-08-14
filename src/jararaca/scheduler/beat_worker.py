@@ -751,9 +751,8 @@ class BeatWorker:
 
     async def _graceful_shutdown(self) -> None:
         """Handles graceful shutdown process"""
-        logger.warning("Initiating graceful shutdown sequence")
         self.shutdown_event.set()
-        logger.warning("Graceful shutdown completed")
+        logger.warning("Initiating graceful shutdown sequence")
 
     async def _wait_for_broker_connection(self) -> None:
         """
