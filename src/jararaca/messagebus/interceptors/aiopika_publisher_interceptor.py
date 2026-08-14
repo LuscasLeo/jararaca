@@ -14,7 +14,6 @@ from aio_pika.abc import AbstractConnection
 from pydantic import BaseModel
 
 from jararaca.broker_backend import MessageBrokerBackend
-from jararaca.messagebus import implicit_headers
 from jararaca.messagebus.aiopika import gen_routing_key
 from jararaca.messagebus.interceptors.publisher_interceptor import (
     MessageBusConnectionFactory,
@@ -25,7 +24,7 @@ from jararaca.messagebus.publisher import (
     IMessage,
     InternalMessagePublisher,
 )
-from jararaca.observability.hooks import record_message_sent
+from jararaca.observability.hooks import record_message_sent, start_message_publish_span
 from jararaca.scheduler.types import DelayedMessageData
 
 logger = logging.getLogger(__name__)
@@ -56,16 +55,24 @@ class AIOPikaMessagePublisher(InternalMessagePublisher):
             return
         routing_key = gen_routing_key(message.__class__)
 
-        implicit_headers_data = implicit_headers.use_implicit_headers()
-        await exchange.publish(
-            aio_pika.Message(
-                body=message.model_dump_json().encode(),
-                headers={**implicit_headers_data},
-                delivery_mode=aio_pika.DeliveryMode.PERSISTENT,
-            ),
+        with start_message_publish_span(
+            topic=message.MESSAGE_TOPIC,
+            destination=self.exchange_name,
             routing_key=routing_key,
-            mandatory=message.MESSAGE_TYPE == "task",
-        )
+            message_name=type(message).__qualname__,
+            message_module=type(message).__module__,
+            message_type=message.MESSAGE_TYPE,
+            message_category=message.MESSAGE_CATEGORY,
+        ) as publish_headers:
+            await exchange.publish(
+                aio_pika.Message(
+                    body=message.model_dump_json().encode(),
+                    headers={**publish_headers},
+                    delivery_mode=aio_pika.DeliveryMode.PERSISTENT,
+                ),
+                routing_key=routing_key,
+                mandatory=message.MESSAGE_TYPE == "task",
+            )
 
     async def delay(
         self,
@@ -142,9 +149,28 @@ class AIOPikaMessagePublisher(InternalMessagePublisher):
                 logger.debug(
                     f"Scheduling delayed message {delayed_message.message_topic} with payload: {delayed_message.payload.decode()}"
                 )
-                await self.message_broker_backend.enqueue_delayed_message(
-                    delayed_message
-                )
+
+                with start_message_publish_span(
+                    topic=delayed_message.message_topic,
+                    destination=delayed_message.target_queue or self.exchange_name,
+                    message_id=delayed_message.message_id,
+                    mode="delayed",
+                    dispatch_time=delayed_message.dispatch_time,
+                ) as publish_headers:
+                    # The beat worker forwards these headers verbatim when the delay
+                    # elapses, so the consumer still links back to this publish moment
+                    # rather than to the beat dispatch that merely relayed it.
+                    delayed_message.headers = {
+                        **(delayed_message.headers or {}),
+                        **{
+                            key: value
+                            for key, value in publish_headers.items()
+                            if value is not None
+                        },
+                    }
+                    await self.message_broker_backend.enqueue_delayed_message(
+                        delayed_message
+                    )
 
                 # Note: For delayed messages, we don't have the full message object,
                 # so we can't record complete metrics here. The metric will be recorded

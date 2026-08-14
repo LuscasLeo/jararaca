@@ -144,6 +144,17 @@ def find_span(exporter: InMemorySpanExporter, name_fragment: str) -> ReadableSpa
     return spans[0]
 
 
+def find_consumer_span(exporter: InMemorySpanExporter) -> ReadableSpan:
+    """Finds the message bus root span regardless of the configured naming style."""
+    spans = [
+        s
+        for s in exporter.get_finished_spans()
+        if dict(s.attributes or {}).get("app.context_type") == "message_bus"
+    ]
+    assert len(spans) == 1, f"expected one message bus root span, got {spans}"
+    return spans[0]
+
+
 class TestResolveTraceBoundary:
 
     def test_defaults_to_child_on_first_attempt(self) -> None:
@@ -207,7 +218,7 @@ class TestRootSetupBoundary:
             await run_message_bus_root(headers)
 
         producer = find_span(exporter, "HTTP POST")
-        consumer = find_span(exporter, "Message Bus")
+        consumer = find_consumer_span(exporter)
 
         assert consumer.context is not None and producer.context is not None
         assert consumer.context.trace_id == producer.context.trace_id
@@ -224,7 +235,7 @@ class TestRootSetupBoundary:
             await run_message_bus_root(headers)
 
         producer = find_span(exporter, "HTTP POST")
-        consumer = find_span(exporter, "Message Bus")
+        consumer = find_consumer_span(exporter)
 
         assert consumer.context is not None and producer.context is not None
         assert consumer.context.trace_id != producer.context.trace_id
@@ -252,7 +263,7 @@ class TestRootSetupBoundary:
             forwarded = await run_message_bus_root(headers)
 
         producer = find_span(exporter, "HTTP POST")
-        consumer = find_span(exporter, "Message Bus")
+        consumer = find_consumer_span(exporter)
         assert producer.context is not None
 
         expected_flow_id = trace.format_trace_id(producer.context.trace_id)
@@ -269,7 +280,7 @@ class TestRootSetupBoundary:
         with patch.object(otel, "OBSERVABILITY_TRACE_ASYNC_BOUNDARY", "link"):
             await run_message_bus_root({})
 
-        consumer = find_span(exporter, "Message Bus")
+        consumer = find_consumer_span(exporter)
         assert consumer.context is not None
 
         attributes: dict[str, Any] = dict(consumer.attributes or {})

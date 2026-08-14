@@ -43,6 +43,7 @@ from jararaca.const import (
     OBSERVABILITY_TRACE_ASYNC_BOUNDARY,
     OBSERVABILITY_TRACE_ASYNC_BOUNDARY_ON_RETRY,
     OBSERVABILITY_TRACE_MESSAGEBUS_SPAN_NAME_STYLE,
+    OBSERVABILITY_TRACE_PUBLISH_SPAN,
     OBSERVABILITY_TRACE_SPAN_HTTP_REQUEST_MAX_BODY_SIZE_ATTRIBUTE_VALUE,
     OBSERVABILITY_TRACE_SPAN_HTTP_REQUEST_USE_ABSOLUTE_PATH_ON_TITLE,
 )
@@ -141,6 +142,87 @@ def build_message_bus_span_name(tx_data: MessageBusTransactionData) -> str:
         return f"{tx_data.message_type.MESSAGE_TYPE.upper()} {tx_data.message_type.MESSAGE_TOPIC}"
 
     return f"Att#{tx_data.processing_attempt} Message Bus {tx_data.topic}"
+
+
+PublishMode = Literal["immediate", "delayed"]
+
+
+@contextmanager
+def trace_message_publish(
+    *,
+    topic: str,
+    destination: str | None = None,
+    routing_key: str | None = None,
+    message_name: str | None = None,
+    message_module: str | None = None,
+    message_type: str | None = None,
+    message_category: str | None = None,
+    message_id: str | None = None,
+    mode: PublishMode = "immediate",
+    dispatch_time: int | None = None,
+) -> Generator[ImplicitHeaders, None, None]:
+    """
+    Record the handoff of a message to the broker as its own PRODUCER span and yield the
+    headers that must travel with the message.
+
+    The yielded headers carry the traceparent of *this* span rather than of whatever span
+    happened to be active in the producing transaction. That is what makes the consumer
+    attach to the exact publish moment: under the transactional outbox pattern the
+    ``publish()`` call only stages the message, so the span that was current back then
+    says nothing about when the broker actually received it.
+
+    Any non tracing implicit header set by the application is preserved, and so is the
+    incoming baggage (and with it the flow id).
+    """
+    headers: ImplicitHeaders = dict(use_implicit_headers())
+
+    if not OBSERVABILITY_TRACE_PUBLISH_SPAN:
+        yield headers
+        return
+
+    attributes: dict[str, AttributeValue] = {
+        "bus.message.topic": topic,
+        "bus.publish.mode": mode,
+        "messaging.system": "rabbitmq",
+        "messaging.operation": "publish",
+    }
+
+    optional_attributes: dict[str, AttributeValue | None] = {
+        "bus.message.name": message_name,
+        "bus.message.module": message_module,
+        "bus.message.type": message_type,
+        "bus.message.category": message_category,
+        "bus.message.id": message_id,
+        "bus.message.routing_key": routing_key,
+        "messaging.destination.name": destination,
+        "bus.publish.dispatch_time": dispatch_time,
+        FLOW_ID_ATTRIBUTE: use_flow_id(),
+    }
+    attributes.update(
+        {key: value for key, value in optional_attributes.items() if value is not None}
+    )
+
+    with tracer.start_as_current_span(
+        name=f"PUBLISH {topic}",
+        kind=trace.SpanKind.PRODUCER,
+        attributes=attributes,
+    ):
+        # Overrides only the trace context keys. `inject` is a no-op when the span is
+        # non recording, so a disabled tracer leaves the inherited headers untouched.
+        TraceContextTextMapPropagator().inject(headers)
+
+        if "baggage" not in headers:
+            # No transaction upstream to inherit baggage from (a publisher running
+            # outside a jararaca context), so seed it with the flow id of this span.
+            flow_id = use_flow_id() or trace.format_trace_id(
+                trace.get_current_span().get_span_context().trace_id
+            )
+            outgoing_context = baggage.set_baggage(
+                FLOW_ID_BAGGAGE_KEY, flow_id, context=context_api.get_current()
+            )
+            W3CBaggagePropagator().inject(headers, context=outgoing_context)
+
+        yield headers
 
 
 class MessageBusMetrics:

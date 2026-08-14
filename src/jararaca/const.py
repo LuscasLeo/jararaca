@@ -317,6 +317,16 @@ OBSERVABILITY_TRACE_MESSAGEBUS_SPAN_NAME_STYLE: str = _get_env_choice(
     choices={"legacy", "compact"},
 )
 
+# Record the handoff of a message to the broker as its own PRODUCER span, and propagate
+# that span (instead of whatever span happened to be active in the producing
+# transaction) as the trace context the consumer attaches to. This is what pins down the
+# exact moment a message was published, which matters under the transactional outbox
+# pattern where the `publish()` call and the actual dispatch can be far apart.
+OBSERVABILITY_TRACE_PUBLISH_SPAN: bool = get_env_bool(
+    "JARARACA_OBSERVABILITY_TRACE_PUBLISH_SPAN",
+    default=True,
+)
+
 # ==========================================
 # General Configuration
 # ==========================================
@@ -391,6 +401,7 @@ __all__ = [
     "OBSERVABILITY_TRACE_ASYNC_BOUNDARY",
     "OBSERVABILITY_TRACE_ASYNC_BOUNDARY_ON_RETRY",
     "OBSERVABILITY_TRACE_MESSAGEBUS_SPAN_NAME_STYLE",
+    "OBSERVABILITY_TRACE_PUBLISH_SPAN",
     # General
     "APP_ENVIRONMENT",
     "DEBUG",

@@ -37,6 +37,7 @@ if TYPE_CHECKING:
         set_span_attribute,
         set_span_status,
         spawn_trace,
+        start_message_publish_span,
         start_span,
     )
     from jararaca.observability.interceptor import ObservabilityInterceptor
@@ -285,6 +286,7 @@ if TYPE_CHECKING:
         "record_exception",
         "get_tracing_provider",
         "get_flow_id",
+        "start_message_publish_span",
         "QueryInjector",
         "HttpMicroservice",
         "use_current_container",
@@ -506,6 +508,7 @@ _dynamic_imports: "dict[str, tuple[str, str, str | None]]" = {
     "record_exception": (__SPEC_PARENT__, "observability.hooks", None),
     "get_tracing_provider": (__SPEC_PARENT__, "observability.hooks", None),
     "get_flow_id": (__SPEC_PARENT__, "observability.hooks", None),
+    "start_message_publish_span": (__SPEC_PARENT__, "observability.hooks", None),
     "QueryInjector": (__SPEC_PARENT__, "persistence.utilities", None),
     "HttpMicroservice": (__SPEC_PARENT__, "presentation.http_microservice", None),
     "use_current_container": (__SPEC_PARENT__, "microservice", None),
