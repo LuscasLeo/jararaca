@@ -14,7 +14,15 @@ from abc import ABC
 from contextlib import asynccontextmanager, suppress
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
-from typing import Any, AsyncContextManager, AsyncGenerator, Awaitable, Optional, Type
+from typing import (
+    Any,
+    AsyncContextManager,
+    AsyncGenerator,
+    Awaitable,
+    NoReturn,
+    Optional,
+    Type,
+)
 from urllib.parse import parse_qs, urlparse
 
 import aio_pika
@@ -38,6 +46,8 @@ from jararaca.lifecycle import AppLifecycle
 from jararaca.messagebus.aiopika import gen_queue_name, gen_routing_key
 from jararaca.messagebus.bus_message_controller import (
     BusMessageController,
+    MessageDisposed,
+    MessageDisposition,
     provide_bus_message_controller,
 )
 from jararaca.messagebus.decorators import (
@@ -68,6 +78,7 @@ from jararaca.observability.hooks import (
     record_message_inflight,
     record_message_processed,
     record_message_processing_time,
+    record_message_slot_wait,
     set_span_status,
 )
 from jararaca.scheduler.decorators import ScheduledActionData
@@ -77,6 +88,10 @@ from jararaca.utils.rabbitmq_utils import RabbitmqUtils
 from jararaca.utils.retry import RetryPolicy, retry_with_backoff
 
 logger = logging.getLogger(__name__)
+
+# Above this, a delivery waiting for a processing slot is worth a log line: the channel
+# is saturated and its prefetch is actively shaping throughput.
+SLOT_WAIT_WARNING_THRESHOLD_SECONDS = 1.0
 
 
 @dataclass
@@ -205,6 +220,99 @@ class AioPikaMicroserviceConsumer(MessageBusConsumer):
         self.consumer_tags: dict[str, str] = {}  # Track consumer tags for cleanup
         self.health_check_task: asyncio.Task[Any] | None = None
         self.retrieve_channel_lock = asyncio.Lock()
+        self.processing_slots: dict[str, asyncio.Semaphore] = {}
+
+    def get_channel_prefetch_count(self, channel_id: str) -> int:
+        return self.config.prefetch_by_channel_id.get(
+            channel_id, self.config.default_prefetch_count
+        )
+
+    def get_processing_slot(self, channel_id: str) -> asyncio.Semaphore | None:
+        """
+        The semaphore bounding concurrent handler executions of a channel, or None when
+        the channel is configured as unbounded (`prefetch_count=0`, which AMQP defines
+        as "no limit").
+
+        This is deliberately *not* a coroutine: the check-then-insert below must stay
+        atomic with respect to the event loop. With an await in between, two tasks of
+        the same channel arriving together would each build their own semaphore and
+        each would only ever bound itself.
+        """
+        prefetch_count = self.get_channel_prefetch_count(channel_id)
+
+        if prefetch_count <= 0:
+            return None
+
+        if channel_id not in self.processing_slots:
+            self.processing_slots[channel_id] = asyncio.Semaphore(prefetch_count)
+
+        return self.processing_slots[channel_id]
+
+    @asynccontextmanager
+    async def processing_slot(self, channel_id: str) -> AsyncGenerator[float, None]:
+        """
+        Bound how many handler tasks of a channel run at the same time, yielding how
+        many seconds the caller waited for its slot.
+
+        `prefetch_count` only bounds *unacknowledged deliveries*, which stops being a
+        bound on concurrency the moment a handler settles its message early (through
+        `ack`, `retry`, ...): the broker immediately pushes a replacement while the
+        original task is still running. It also stops being a bound when the broker does
+        not honour channel wide QoS, in which case each consumer on a shared channel
+        gets its own prefetch allowance, and it never applied to the auto-acking
+        scheduled action consumers at all.
+
+        This restores the invariant the configuration promises: at most `prefetch_count`
+        handlers of a channel execute concurrently. A `prefetch_count` of 0 means
+        unlimited, both to the broker and here.
+
+        The yielded wait is the visible cost of that bound: the delivery is already in
+        this process' memory, so the time is not queue time in the broker and shows up
+        nowhere else.
+        """
+        slot = self.get_processing_slot(channel_id)
+
+        if slot is None:
+            yield 0.0
+            return
+
+        waiting_since = time.perf_counter()
+
+        async with slot:
+            yield time.perf_counter() - waiting_since
+
+    def report_slot_wait(
+        self,
+        *,
+        topic: str,
+        queue_name: str,
+        channel_id: str,
+        waited_seconds: float,
+    ) -> None:
+        """
+        Publish how long a delivery was held in memory waiting for its slot.
+
+        Records the histogram unconditionally — a flat zero is the signal that the
+        channel is not saturated — and logs only once the wait crosses
+        `SLOT_WAIT_WARNING_THRESHOLD_SECONDS`, which is the point where the bound is
+        actively shaping throughput and the prefetch of that channel deserves a look.
+        """
+        record_message_slot_wait(
+            topic=topic,
+            queue_name=queue_name,
+            duration_seconds=waited_seconds,
+        )
+
+        if waited_seconds >= SLOT_WAIT_WARNING_THRESHOLD_SECONDS:
+            logger.warning(
+                "Message for %s waited %.2fs in memory for a free processing slot on "
+                "channel %s (prefetch %s). The channel is saturated: deliveries are "
+                "arriving faster than handlers retire them.",
+                queue_name,
+                waited_seconds,
+                channel_id,
+                self.get_channel_prefetch_count(channel_id),
+            )
 
     async def _verify_infrastructure(self) -> bool:
         """
@@ -258,6 +366,7 @@ class AioPikaMicroserviceConsumer(MessageBusConsumer):
                     queue_name=queue_name,
                     routing_key=routing_key,
                     message_handler=handler,
+                    channel_id=channel_id,
                 ),
                 # no_ack=handler.spec.auto_ack,
             )
@@ -338,6 +447,7 @@ class AioPikaMicroserviceConsumer(MessageBusConsumer):
                     queue_name=queue_name,
                     routing_key=routing_key,
                     scheduled_action=scheduled_action,
+                    channel_id=channel_id,
                 ),
                 no_ack=True,
             )
@@ -570,16 +680,14 @@ class AioPikaMicroserviceConsumer(MessageBusConsumer):
         logger.debug("Creating channel for queue %s", channel_id)
         channel = await self.connection.channel()
 
-        channel_prefetch_count = self.config.prefetch_by_channel_id.get(
-            channel_id, self.config.default_prefetch_count
-        )
+        channel_prefetch_count = self.get_channel_prefetch_count(channel_id)
         await channel.set_qos(
             prefetch_count=channel_prefetch_count, global_=self.config.qos_global
         )
         logger.debug(
             "Created channel for queue %s with prefetch %s (%s)",
             channel_id,
-            channel_prefetch_count,
+            channel_prefetch_count or "unlimited",
             "channel wide" if self.config.qos_global else "per consumer",
         )
         return channel
@@ -987,12 +1095,34 @@ class ScheduledMessageHandlerCallback:
         queue_name: str,
         routing_key: str,
         scheduled_action: ScheduledActionData,
+        channel_id: str = DEFAULT_CHANNEL_ID,
     ):
         self.consumer = consumer
         self.queue_name = queue_name
         self.routing_key = routing_key
         self.scheduled_action = scheduled_action
+        self.channel_id = channel_id
         self._current_task: asyncio.Task[Any] | None = None
+
+    async def run_within_processing_slot(
+        self, aio_pika_message: aio_pika.abc.AbstractIncomingMessage
+    ) -> None:
+        """
+        Scheduled actions consume with `no_ack=True`, and auto-ack consumers are exempt
+        from `basic.qos` — so without this the channel's prefetch does not bound them at
+        all.
+        """
+        async with self.consumer.processing_slot(self.channel_id) as slot_wait_seconds:
+            self.consumer.report_slot_wait(
+                topic=self.scheduled_action.spec.name
+                or self.scheduled_action.callable.__qualname__,
+                queue_name=self.queue_name,
+                channel_id=self.channel_id,
+                waited_seconds=slot_wait_seconds,
+            )
+            await self.handle_message(
+                aio_pika_message, slot_wait_seconds=slot_wait_seconds
+            )
 
     async def __call__(
         self, aio_pika_message: aio_pika.abc.AbstractIncomingMessage
@@ -1052,7 +1182,7 @@ class ScheduledMessageHandlerCallback:
                 return
 
             task = asyncio.create_task(
-                self.handle_message(aio_pika_message),
+                self.run_within_processing_slot(aio_pika_message),
                 name=f"ScheduledAction-{self.queue_name}-handle-message-{aio_pika_message.message_id}",
             )
             self._current_task = task
@@ -1071,7 +1201,9 @@ class ScheduledMessageHandlerCallback:
             )
 
     async def handle_message(
-        self, aio_pika_message: aio_pika.abc.AbstractIncomingMessage
+        self,
+        aio_pika_message: aio_pika.abc.AbstractIncomingMessage,
+        slot_wait_seconds: float = 0.0,
     ) -> None:
 
         if self.consumer.shutdown_event.is_set():
@@ -1126,7 +1258,9 @@ class ScheduledMessageHandlerCallback:
             return
 
         try:
-            await self.run_with_context(self.scheduled_action, args, {})
+            await self.run_with_context(
+                self.scheduled_action, args, {}, slot_wait_seconds=slot_wait_seconds
+            )
         except Exception as e:
             logger.exception(
                 "Error processing scheduled action %s: %s", self.queue_name, e
@@ -1137,6 +1271,7 @@ class ScheduledMessageHandlerCallback:
         scheduled_action: ScheduledActionData,
         args: tuple[Any, ...],
         kwargs: dict[str, Any],
+        slot_wait_seconds: float = 0.0,
     ) -> None:
 
         with provide_shutdown_state(self.consumer.shutdown_state):
@@ -1149,6 +1284,7 @@ class ScheduledMessageHandlerCallback:
                         scheduled_to=datetime.now(UTC),
                         cron_expression=scheduled_action.spec.cron,
                         triggered_at=datetime.now(UTC),
+                        slot_wait_seconds=slot_wait_seconds,
                     ),
                 )
             ):
@@ -1164,11 +1300,31 @@ class MessageHandlerCallback:
         queue_name: str,
         routing_key: str,
         message_handler: MessageHandlerData,
+        channel_id: str = DEFAULT_CHANNEL_ID,
     ):
         self.consumer = consumer
         self.queue_name = queue_name
         self.routing_key = routing_key
         self.message_handler = message_handler
+        self.channel_id = channel_id
+
+    async def run_within_processing_slot(
+        self, aio_pika_message: aio_pika.abc.AbstractIncomingMessage
+    ) -> None:
+        """
+        Keeps concurrent handler executions at or below the channel's prefetch count
+        even when the message is settled before the handler returns.
+        """
+        async with self.consumer.processing_slot(self.channel_id) as slot_wait_seconds:
+            self.consumer.report_slot_wait(
+                topic=self.message_handler.message_type.MESSAGE_TOPIC,
+                queue_name=self.queue_name,
+                channel_id=self.channel_id,
+                waited_seconds=slot_wait_seconds,
+            )
+            await self.handle_message(
+                aio_pika_message, slot_wait_seconds=slot_wait_seconds
+            )
 
     async def message_consumer(
         self, aio_pika_message: aio_pika.abc.AbstractIncomingMessage
@@ -1208,7 +1364,7 @@ class MessageHandlerCallback:
 
         async with self.consumer.lock:
             task = asyncio.create_task(
-                self.handle_message(aio_pika_message),
+                self.run_within_processing_slot(aio_pika_message),
                 name=f"MessageHandler-{self.queue_name}-handle-message-{aio_pika_message.message_id}",
             )
             self.consumer.tasks.add(task)
@@ -1444,7 +1600,9 @@ class MessageHandlerCallback:
         await self.consumer._wait_delay_or_shutdown(delay)
 
     async def handle_message(
-        self, aio_pika_message: aio_pika.abc.AbstractIncomingMessage
+        self,
+        aio_pika_message: aio_pika.abc.AbstractIncomingMessage,
+        slot_wait_seconds: float = 0.0,
     ) -> None:
 
         routing_key = self.queue_name
@@ -1493,6 +1651,7 @@ class MessageHandlerCallback:
                         message_type=message_type,
                         message=built_message,
                         topic=routing_key,
+                        slot_wait_seconds=slot_wait_seconds,
                     ),
                 )
             ):
@@ -1512,9 +1671,8 @@ class MessageHandlerCallback:
                 )
                 async with maybe_timeout_ctx:
                     try:
-                        with provide_bus_message_controller(
-                            AioPikaMessageBusController(aio_pika_message)
-                        ):
+                        controller = AioPikaMessageBusController(aio_pika_message)
+                        with provide_bus_message_controller(controller):
                             try:
                                 if mode == "WRAPPED":
                                     future = handler(built_message)
@@ -1541,17 +1699,23 @@ class MessageHandlerCallback:
 
                                 await future
 
-                                with suppress(aio_pika.MessageProcessError):
-                                    # Use channel context for acknowledgement with retry
-                                    try:
-                                        await aio_pika_message.ack()
-                                        set_span_status("OK")
-                                    except Exception as ack_error:
-                                        logger.warning(
-                                            "Failed to acknowledge message %s: %s",
-                                            aio_pika_message.message_id or "unknown",
-                                            ack_error,
-                                        )
+                                if controller.disposition is None:
+                                    with suppress(aio_pika.MessageProcessError):
+                                        # Use channel context for acknowledgement with retry
+                                        try:
+                                            await aio_pika_message.ack()
+                                            set_span_status("OK")
+                                        except Exception as ack_error:
+                                            logger.warning(
+                                                "Failed to acknowledge message %s: %s",
+                                                aio_pika_message.message_id
+                                                or "unknown",
+                                                ack_error,
+                                            )
+                                else:
+                                    # The handler already settled the message; acking
+                                    # again would only raise MessageProcessError.
+                                    set_span_status("OK")
                                 successfully = True
 
                                 # Record successful message processing metric
@@ -1564,6 +1728,28 @@ class MessageHandlerCallback:
                                     message_type=message_type.MESSAGE_TYPE,
                                     message_category=message_type.MESSAGE_CATEGORY,
                                     success=True,
+                                )
+                            except MessageDisposed as disposed:
+                                # The handler handed the message back on purpose
+                                # (retry/nack/reject). It is already settled, so the
+                                # automatic retry path must not touch it again.
+                                successfully = False
+                                set_span_status("ERROR")
+                                logger.debug(
+                                    "Message %s on %s disposed by the handler (%s)",
+                                    aio_pika_message.message_id or "unknown",
+                                    routing_key,
+                                    disposed.disposition,
+                                )
+                                record_message_processed(
+                                    topic=message_type.MESSAGE_TOPIC,
+                                    broker_topic=routing_key,
+                                    handler_name=handler_data.spec.name
+                                    or handler_method.__qualname__,
+                                    handler_method_name=handler_method.__name__,
+                                    message_type=message_type.MESSAGE_TYPE,
+                                    message_category=message_type.MESSAGE_CATEGORY,
+                                    success=False,
                                 )
                             except Exception as base_exc:
                                 set_span_status("ERROR")
@@ -1858,6 +2044,11 @@ class AioPikaMessageBusController(BusMessageController):
         self.aio_pika_message = aio_pika_message
         # We access consumer callback through context if available
         self._callback: Optional[MessageHandlerCallback] = None
+        self._disposition: MessageDisposition | None = None
+
+    @property
+    def disposition(self) -> MessageDisposition | None:
+        return self._disposition
 
     def _get_callback(self) -> MessageHandlerCallback:
         """
@@ -1892,15 +2083,28 @@ class AioPikaMessageBusController(BusMessageController):
         return self._callback
 
     async def ack(self) -> None:
+        """
+        Confirm the message now instead of waiting for the handler to return.
+
+        Unlike the other dispositions this one does not unwind the handler: the message
+        is settled, so whatever runs afterwards cannot race a redelivery. The worker
+        records the disposition so it does not try to acknowledge the message a second
+        time when the handler returns.
+        """
         await self.aio_pika_message.ack()
+        self._disposition = "ack"
 
-    async def nack(self) -> None:
+    async def nack(self) -> NoReturn:
+        """Return the message to the broker. Raises `MessageDisposed` to stop the handler."""
         await self.aio_pika_message.nack()
+        self._dispose("nack")
 
-    async def reject(self) -> None:
+    async def reject(self) -> NoReturn:
+        """Reject the message. Raises `MessageDisposed` to stop the handler."""
         await self.aio_pika_message.reject()
+        self._dispose("reject")
 
-    async def retry(self, delay: float = 5) -> None:
+    async def retry(self, delay: float = 5) -> NoReturn:
         """
         Retry the message after `delay` seconds, counting against the retry budget.
 
@@ -1909,17 +2113,26 @@ class AioPikaMessageBusController(BusMessageController):
         reached. Requeueing the original delivery instead would replay the original
         headers, so the attempt counter would never advance and a permanently failing
         message would cycle forever while holding a prefetch slot.
+
+        Raises `MessageDisposed` to stop the handler, since a copy of this message is
+        now scheduled and would otherwise run concurrently with the rest of this call.
         """
         await self._schedule_retry(delay=delay)
+        self._dispose("retry")
 
-    async def retry_later(self, delay: int) -> None:
+    async def retry_later(self, delay: int) -> NoReturn:
         """
         Retry the message after a specified delay by handing it to the broker
         backend; the beat worker will redispatch it once the delay elapses.
 
-        Counts against the retry budget, like `retry`.
+        Counts against the retry budget and stops the handler, like `retry`.
         """
         await self._schedule_retry(delay=float(delay))
+        self._dispose("retry")
+
+    def _dispose(self, disposition: MessageDisposition) -> NoReturn:
+        self._disposition = disposition
+        raise MessageDisposed(disposition)
 
     async def _schedule_retry(self, *, delay: float) -> None:
         try:

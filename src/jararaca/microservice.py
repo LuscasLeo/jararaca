@@ -45,6 +45,9 @@ class SchedulerTransactionData:
     triggered_at: datetime
     scheduled_to: datetime
     cron_expression: str
+    # Seconds spent held in memory waiting for a free processing slot before the
+    # transaction started. See `AioPikaMicroserviceConsumer.processing_slot`.
+    slot_wait_seconds: float = field(default=0.0)
     context_type: Literal["scheduler"] = "scheduler"
 
 
@@ -62,6 +65,9 @@ class MessageBusTransactionData:
     message_type: Type[Message]
     message_id: str | None = field(default=None)
     processing_attempt: int = field(default=0)
+    # Seconds the delivery sat in memory waiting for a free processing slot before this
+    # transaction started. See `AioPikaMicroserviceConsumer.processing_slot`.
+    slot_wait_seconds: float = field(default=0.0)
     context_type: Literal["message_bus"] = "message_bus"
 
 

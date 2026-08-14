@@ -220,6 +220,37 @@ def record_message_inflight(
         pass
 
 
+def record_message_slot_wait(
+    topic: str,
+    queue_name: str,
+    duration_seconds: float,
+) -> None:
+    """
+    Record how long a delivery waited in memory for a free processing slot.
+
+    A rising value means the channel is saturated: the broker keeps handing deliveries
+    over faster than the handlers can retire them, and the surplus is sitting in the
+    worker's memory rather than in the queue.
+
+    Args:
+        topic: The message topic, or the task name for scheduled actions
+        queue_name: The broker queue the delivery came from
+        duration_seconds: Time spent waiting for the slot
+    """
+    try:
+        if metrics := use_message_bus_metrics():
+            metrics.messages_slot_wait_time_histogram.record(
+                duration_seconds,
+                {
+                    "topic": topic,
+                    "queue_name": queue_name,
+                },
+            )
+    except Exception:
+        # Silently ignore metrics errors to not break functionality
+        pass
+
+
 def record_message_sent(topic: str, message_type: str, message_category: str) -> None:
     """
     Record a message sent to the message bus.
