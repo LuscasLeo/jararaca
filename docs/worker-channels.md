@@ -79,6 +79,7 @@ absent from the URL.
 | `prefetch_count` | `AMQP_PREFETCH_COUNT` | `int` | **required** | Default prefetch applied to any channel without a specific value. |
 | `shared_default_channel` | `AMQP_SHARED_DEFAULT_CHANNEL` | `bool` (`"true"`) | `false` | When true, every handler without an explicit `channel_id` shares one channel. |
 | `prefetch_count_by_channel_id` | `AMQP_PREFETCH_COUNT_BY_CHANNEL` | `ch:n,ch2:n2` | `{}` | Per-channel prefetch overrides. |
+| — | `AMQP_QOS_GLOBAL` | `bool` | `true` | Apply the prefetch count channel-wide (`basic.qos` with `global=true`) instead of per consumer. See [QoS scope](#qos-scope). |
 | `connection_retry_max` | — | `int` | `5` | Connection retry attempts. |
 | `connection_retry_delay` | — | `float` | `1.0` | Initial connection retry delay (s). |
 | `connection_retry_max_delay` | — | `float` | `60.0` | Max connection retry delay (s). |
@@ -94,6 +95,29 @@ absent from the URL.
     `shared_channel` → `shared_default_channel` and `AMQP_SHARED_CHANNEL` → `AMQP_SHARED_DEFAULT_CHANNEL`.
     `prefetch_by_channel_id` → `prefetch_count_by_channel_id` and `AMQP_PREFETCH_BY_CHANNEL_ID` → `AMQP_PREFETCH_COUNT_BY_CHANNEL`.
     Update existing deployments — the old names are silently ignored.
+
+### QoS scope
+
+The prefetch count is applied with `basic.qos` and `global=true`, which caps the **whole
+channel**. That is what makes a shared channel behave predictably: no matter how many
+handlers consume from it, the in-flight total stays at `prefetch_count`. With the per
+consumer form the same setting would allow `prefetch_count × number of consumers` messages
+in flight at once.
+
+Not every broker honours the channel-wide form. **LavinMQ accepts the frame but does not
+apply the limit**, so the channel ends up with no bound at all and the configured value is
+silently ignored. On those brokers set:
+
+```bash
+export AMQP_QOS_GLOBAL=false
+```
+
+which falls back to per consumer QoS. Accepted values follow the usual boolean parsing
+(`1`/`true`/`yes`/`on` and `0`/`false`/`no`/`off`); anything else raises at startup.
+
+With `AMQP_QOS_GLOBAL=false` and `shared_default_channel=true`, remember the multiplication
+above — either give the shared channel a lower `prefetch_count`, or split the busy handlers
+onto their own `channel_id`.
 
 ### Environment variables affecting the decorators
 
