@@ -13,8 +13,11 @@ from typing import (
     Generator,
     Literal,
     Protocol,
+    cast,
 )
 
+from opentelemetry import baggage
+from opentelemetry import context as context_api
 from opentelemetry import metrics, trace
 from opentelemetry._logs import set_logger_provider
 from opentelemetry.baggage.propagation import W3CBaggagePropagator
@@ -37,6 +40,9 @@ from opentelemetry.sdk.trace.export import BatchSpanProcessor
 from opentelemetry.trace.propagation.tracecontext import TraceContextTextMapPropagator
 
 from jararaca.const import (
+    OBSERVABILITY_TRACE_ASYNC_BOUNDARY,
+    OBSERVABILITY_TRACE_ASYNC_BOUNDARY_ON_RETRY,
+    OBSERVABILITY_TRACE_MESSAGEBUS_SPAN_NAME_STYLE,
     OBSERVABILITY_TRACE_SPAN_HTTP_REQUEST_MAX_BODY_SIZE_ATTRIBUTE_VALUE,
     OBSERVABILITY_TRACE_SPAN_HTTP_REQUEST_USE_ABSOLUTE_PATH_ON_TITLE,
 )
@@ -48,7 +54,9 @@ from jararaca.messagebus.implicit_headers import (
 from jararaca.microservice import (
     AppTransactionContext,
     Container,
+    MessageBusTransactionData,
     Microservice,
+    TransactionData,
     use_app_transaction_context,
 )
 from jararaca.observability.constants import TRACEPARENT_KEY
@@ -67,6 +75,72 @@ if TYPE_CHECKING:
     from typing_extensions import TypeIs
 
 tracer: trace.Tracer = trace.get_tracer(__name__)
+
+FLOW_ID_ATTRIBUTE = "flow.id"
+"""
+Span attribute holding the id shared by every trace of the same logical flow.
+
+When a boundary is crossed with the "link" policy the arc is split into several traces,
+so this attribute is what stitches them back together. Query the whole arc with the
+TraceQL expression ``{ .flow.id = "<id>" }``.
+"""
+
+FLOW_ID_BAGGAGE_KEY = "flow.id"
+"""W3C baggage key used to carry :data:`FLOW_ID_ATTRIBUTE` across process boundaries."""
+
+FLOW_PARENT_TRACE_ID_ATTRIBUTE = "flow.parent_trace_id"
+
+FLOW_PARENT_SPAN_ID_ATTRIBUTE = "flow.parent_span_id"
+
+TraceBoundary = Literal["child", "link"]
+
+_flow_id_ctx = ContextVar[str | None]("flow_id_ctx", default=None)
+
+
+@contextmanager
+def provide_flow_id(flow_id: str) -> Generator[None, Any, None]:
+    token = _flow_id_ctx.set(flow_id)
+    try:
+        yield
+    finally:
+        with suppress(ValueError):
+            _flow_id_ctx.reset(token)
+
+
+def use_flow_id() -> str | None:
+    """Get the flow id of the current transaction, if tracing is active."""
+    return _flow_id_ctx.get()
+
+
+def resolve_trace_boundary(tx_data: TransactionData) -> TraceBoundary:
+    """
+    Decide whether the root span of this transaction continues the incoming trace
+    ("child") or starts a new trace linked back to it ("link").
+
+    Only the message bus is treated as an async boundary. HTTP and WebSocket are
+    synchronous handoffs, and the scheduler never has an incoming parent to begin with.
+    """
+    if not isinstance(tx_data, MessageBusTransactionData):
+        return "child"
+
+    policy = getattr(tx_data.message_type, "TRACE_BOUNDARY", "default")
+
+    if policy in ("child", "link"):
+        return cast(TraceBoundary, policy)
+
+    if tx_data.processing_attempt > 1:
+        return cast(TraceBoundary, OBSERVABILITY_TRACE_ASYNC_BOUNDARY_ON_RETRY)
+
+    return cast(TraceBoundary, OBSERVABILITY_TRACE_ASYNC_BOUNDARY)
+
+
+def build_message_bus_span_name(tx_data: MessageBusTransactionData) -> str:
+    if OBSERVABILITY_TRACE_MESSAGEBUS_SPAN_NAME_STYLE == "compact":
+        # Attempt and broker topic stay available as span attributes; keeping them out
+        # of the name keeps the Grafana trace list readable and low cardinality.
+        return f"{tx_data.message_type.MESSAGE_TYPE.upper()} {tx_data.message_type.MESSAGE_TOPIC}"
+
+    return f"Att#{tx_data.processing_attempt} Message Bus {tx_data.topic}"
 
 
 class MessageBusMetrics:
@@ -158,6 +232,7 @@ def extract_context_attributes(ctx: AppTransactionContext) -> dict[str, Any]:
             "bus.message.category": tx_data.message_type.MESSAGE_CATEGORY,
             "bus.message.type": tx_data.message_type.MESSAGE_TYPE,
             "bus.message.topic": tx_data.message_type.MESSAGE_TOPIC,
+            "bus.message.broker_topic": tx_data.topic,
             "bus.message.processing_attempt": tx_data.processing_attempt,
         }
     elif tx_data.context_type == "websocket":
@@ -282,7 +357,7 @@ class OtelTracingContextProviderFactory(TracingContextProviderFactory):
                 ].decode(errors="ignore")
 
         elif tx_data.context_type == "message_bus":
-            title = f"Att#{tx_data.processing_attempt} Message Bus {tx_data.topic}"
+            title = build_message_bus_span_name(tx_data)
             headers = use_implicit_headers() or {}
 
         elif tx_data.context_type == "websocket":
@@ -309,15 +384,49 @@ class OtelTracingContextProviderFactory(TracingContextProviderFactory):
 
         ctx2 = W3CBaggagePropagator().extract(b2, context=ctx)
 
+        incoming_span_context = trace.get_current_span(ctx2).get_span_context()
+        boundary = resolve_trace_boundary(tx_data)
+
+        links: list[trace.Link] = []
+        start_context = ctx2
+
+        if boundary == "link" and incoming_span_context.is_valid:
+            links.append(
+                trace.Link(
+                    incoming_span_context,
+                    attributes={"boundary.kind": tx_data.context_type},
+                )
+            )
+            extra_attributes[FLOW_PARENT_TRACE_ID_ATTRIBUTE] = trace.format_trace_id(
+                incoming_span_context.trace_id
+            )
+            extra_attributes[FLOW_PARENT_SPAN_ID_ATTRIBUTE] = trace.format_span_id(
+                incoming_span_context.span_id
+            )
+            # Drops the remote parent so a fresh trace root is started, while keeping the
+            # extracted baggage (and with it the flow id) available for propagation.
+            start_context = trace.set_span_in_context(trace.INVALID_SPAN, ctx2)
+
+        incoming_flow_id = baggage.get_baggage(FLOW_ID_BAGGAGE_KEY, ctx2)
+
         with tracer.start_as_current_span(
             name=title,
-            context=ctx2,
+            context=start_context,
+            links=links,
             attributes={
                 **extra_attributes,
             },
         ) as root_span:
             cx = root_span.get_span_context()
-            span_traceparent_id = hex(cx.trace_id)[2:].rjust(32, "0")
+            span_traceparent_id = trace.format_trace_id(cx.trace_id)
+
+            flow_id = (
+                str(incoming_flow_id)
+                if incoming_flow_id is not None
+                else span_traceparent_id
+            )
+            root_span.set_attribute(FLOW_ID_ATTRIBUTE, flow_id)
+
             if app_context.transaction_data.context_type == "http":
                 app_context.transaction_data.request.scope[TRACEPARENT_KEY] = (
                     span_traceparent_id
@@ -326,10 +435,25 @@ class OtelTracingContextProviderFactory(TracingContextProviderFactory):
                 app_context.transaction_data.websocket.scope[TRACEPARENT_KEY] = (
                     span_traceparent_id
                 )
+
+            # The baggage extracted into `ctx2` is not attached to the ambient context by
+            # `start_as_current_span`, so the outgoing context is rebuilt explicitly.
+            # Otherwise incoming baggage (flow id included) would be dropped at this hop.
+            outgoing_context = context_api.get_current()
+            for baggage_key, baggage_value in baggage.get_all(ctx2).items():
+                outgoing_context = baggage.set_baggage(
+                    baggage_key, baggage_value, context=outgoing_context
+                )
+            outgoing_context = baggage.set_baggage(
+                FLOW_ID_BAGGAGE_KEY, flow_id, context=outgoing_context
+            )
+
             tracing_headers: ImplicitHeaders = {}
-            TraceContextTextMapPropagator().inject(tracing_headers)
-            W3CBaggagePropagator().inject(tracing_headers)
-            with provide_implicit_headers(tracing_headers):
+            TraceContextTextMapPropagator().inject(
+                tracing_headers, context=outgoing_context
+            )
+            W3CBaggagePropagator().inject(tracing_headers, context=outgoing_context)
+            with provide_implicit_headers(tracing_headers), provide_flow_id(flow_id):
                 yield
 
 
@@ -361,9 +485,12 @@ class CustomLoggingHandler(LoggingHandler):
 
             current_span: "_Span" = trace.get_current_span()
 
+            flow_id = use_flow_id()
+
             data["attributes"] = {
                 **data.get("attributes", {}),
                 **extra_attributes,
+                **({FLOW_ID_ATTRIBUTE: flow_id} if flow_id is not None else {}),
                 **(
                     {
                         "span_name": (

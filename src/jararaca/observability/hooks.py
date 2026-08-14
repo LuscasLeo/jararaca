@@ -16,9 +16,13 @@ from jararaca.observability.decorators import (
 )
 
 try:
-    from jararaca.observability.providers.otel import use_message_bus_metrics
+    from jararaca.observability.providers.otel import (
+        use_flow_id,
+        use_message_bus_metrics,
+    )
 except ImportError:
     use_message_bus_metrics = lambda: None
+    use_flow_id = lambda: None
 
 
 @contextmanager
@@ -91,6 +95,20 @@ def set_span_attribute(
 
 def get_tracing_provider() -> TracingContextProvider | None:
     return get_tracing_ctx_provider()
+
+
+def get_flow_id() -> str | None:
+    """
+    Get the id shared by every trace belonging to the current logical flow.
+
+    When the message bus boundary is crossed with the "link" policy the arc is split
+    into several traces; this id is what stitches them back together. Use it to
+    correlate application level records (tickets, jobs, external ids) with the whole
+    arc, or to query it in Grafana with ``{ .flow.id = "<id>" }``.
+
+    Returns None when tracing is not active.
+    """
+    return use_flow_id()
 
 
 def get_current_span_context() -> TracingSpanContext | None:

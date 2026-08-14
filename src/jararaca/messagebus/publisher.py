@@ -10,6 +10,20 @@ from typing import Any, ClassVar, Generator, Literal
 
 from pydantic import BaseModel
 
+TraceBoundaryPolicy = Literal["default", "child", "link"]
+"""
+    TraceBoundaryPolicy defines how a message handler execution is attached to the trace
+    of whoever published the message.
+    - "child": the handler root span becomes a child of the publisher span, keeping the
+      whole flow inside a single trace. The trace duration then includes the broker
+      queue time, and every retry piles up on the same trace.
+    - "link": the handler execution starts its own trace, carrying an OTEL span link back
+      to the publisher span plus a shared ``flow.id`` attribute. Each execution gets its
+      own name and duration while the whole arc stays queryable.
+    - "default": defer to ``jararaca.const.OBSERVABILITY_TRACE_ASYNC_BOUNDARY`` (and to
+      ``OBSERVABILITY_TRACE_ASYNC_BOUNDARY_ON_RETRY`` when the message is being retried).
+"""
+
 
 class IMessage(BaseModel):
     """
@@ -24,6 +38,13 @@ class IMessage(BaseModel):
     MESSAGE_TYPE: ClassVar[Literal["task", "event"]] = "task"
 
     MESSAGE_CATEGORY: ClassVar[str] = "uncategorized"
+
+    TRACE_BOUNDARY: ClassVar[TraceBoundaryPolicy] = "default"
+    """
+    Per message override for how tracing crosses the message bus boundary.
+    An explicit "child"/"link" wins over the environment defaults, including the
+    retry rule. See :data:`TraceBoundaryPolicy`.
+    """
 
 
 DelayedMessageIdempotencyPayloadPolicy = Literal["ignore", "replace"]

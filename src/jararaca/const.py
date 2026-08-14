@@ -273,6 +273,50 @@ OBSERVABILITY_TRACE_SPAN_HTTP_REQUEST_USE_ABSOLUTE_PATH_ON_TITLE: bool = get_env
     default=False,
 )
 
+
+def _get_env_choice(var_name: str, default: str, choices: set[str]) -> str:
+    value = get_env_str(var_name, default=default)
+    if value not in choices:
+        raise ValueError(
+            f"Environment variable '{var_name}' has an invalid value: '{value}'. "
+            f"Try one of {sorted(choices)}."
+        )
+    return value
+
+
+_TRACE_ASYNC_BOUNDARY_CHOICES = {"child", "link"}
+
+# How tracing crosses the message bus boundary when a worker picks up a message.
+# - "child": the handler root span is a child of the publisher span (single trace for the
+#   whole arc, but trace duration includes queue time and retries pile up).
+# - "link": the handler execution starts its own trace, linked back to the publisher span
+#   and correlated through the `flow.id` attribute propagated via W3C baggage.
+# Individual messages can override this through `IMessage.TRACE_BOUNDARY`.
+OBSERVABILITY_TRACE_ASYNC_BOUNDARY: str = _get_env_choice(
+    "JARARACA_OBSERVABILITY_TRACE_ASYNC_BOUNDARY",
+    default="link",
+    choices=_TRACE_ASYNC_BOUNDARY_CHOICES,
+)
+
+# Same as above, but applied when the message is being reprocessed
+# (`processing_attempt > 1`). Defaults to "link" so that retries and dead letter
+# redeliveries never keep the original trace open for hours.
+OBSERVABILITY_TRACE_ASYNC_BOUNDARY_ON_RETRY: str = _get_env_choice(
+    "JARARACA_OBSERVABILITY_TRACE_ASYNC_BOUNDARY_ON_RETRY",
+    default="link",
+    choices=_TRACE_ASYNC_BOUNDARY_CHOICES,
+)
+
+# Naming style for the message bus root span.
+# - "legacy": "Att#1 Message Bus <broker_topic>" (broker topic includes the handler path).
+# - "compact": "TASK <message_topic>", with attempt and handler kept as span attributes,
+#   which keeps the trace list in Grafana readable and low cardinality.
+OBSERVABILITY_TRACE_MESSAGEBUS_SPAN_NAME_STYLE: str = _get_env_choice(
+    "JARARACA_OBSERVABILITY_TRACE_MESSAGEBUS_SPAN_NAME_STYLE",
+    default="compact",
+    choices={"legacy", "compact"},
+)
+
 # ==========================================
 # General Configuration
 # ==========================================
@@ -342,6 +386,11 @@ __all__ = [
     # Observability
     "OBSERVABILITY_TRACING_ENABLED",
     "OBSERVABILITY_TRACE_SAMPLE_RATE",
+    "OBSERVABILITY_TRACE_SPAN_HTTP_REQUEST_MAX_BODY_SIZE_ATTRIBUTE_VALUE",
+    "OBSERVABILITY_TRACE_SPAN_HTTP_REQUEST_USE_ABSOLUTE_PATH_ON_TITLE",
+    "OBSERVABILITY_TRACE_ASYNC_BOUNDARY",
+    "OBSERVABILITY_TRACE_ASYNC_BOUNDARY_ON_RETRY",
+    "OBSERVABILITY_TRACE_MESSAGEBUS_SPAN_NAME_STYLE",
     # General
     "APP_ENVIRONMENT",
     "DEBUG",
