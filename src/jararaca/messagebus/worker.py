@@ -72,6 +72,7 @@ from jararaca.observability.hooks import (
 )
 from jararaca.scheduler.decorators import ScheduledActionData
 from jararaca.scheduler.types import DelayedMessageData
+from jararaca.utils.env_parse_utils import get_env_bool
 from jararaca.utils.rabbitmq_utils import RabbitmqUtils
 from jararaca.utils.retry import RetryPolicy, retry_with_backoff
 
@@ -85,6 +86,10 @@ class AioPikaWorkerConfig:
     default_prefetch_count: int
     shared_default_channel: bool
     prefetch_by_channel_id: dict[str, int]
+    # True applies the prefetch count channel wide, False applies it per consumer.
+    # Some brokers (LavinMQ) accept the channel wide form without honouring it, which
+    # leaves the channel effectively unbounded; set this to False there.
+    qos_global: bool = True
     connection_retry_config: RetryPolicy = field(
         default_factory=lambda: RetryPolicy(
             max_retries=15,
@@ -568,8 +573,15 @@ class AioPikaMicroserviceConsumer(MessageBusConsumer):
         channel_prefetch_count = self.config.prefetch_by_channel_id.get(
             channel_id, self.config.default_prefetch_count
         )
-        await channel.set_qos(prefetch_count=channel_prefetch_count, global_=True)
-        logger.debug("Created channel for queue %s", channel_id)
+        await channel.set_qos(
+            prefetch_count=channel_prefetch_count, global_=self.config.qos_global
+        )
+        logger.debug(
+            "Created channel for queue %s with prefetch %s (%s)",
+            channel_id,
+            channel_prefetch_count,
+            "channel wide" if self.config.qos_global else "per consumer",
+        )
         return channel
 
     async def retrieve_channel(self, channel_id: str) -> aio_pika.abc.AbstractChannel:
@@ -749,6 +761,8 @@ PREFETCH_COUNT_ENV_VAR = "AMQP_PREFETCH_COUNT"
 PREFETCH_COUNT_BY_CHANNEL_QUERY_PARAMETER = "prefetch_count_by_channel_id"
 PREFETCH_COUNT_BY_CHANNEL_ENV_VAR = "AMQP_PREFETCH_COUNT_BY_CHANNEL"
 
+QOS_GLOBAL_ENV_VAR = "AMQP_QOS_GLOBAL"
+
 CONNECTION_RETRY_MAX_QUERY_PARAMETER = "connection_retry_max"
 CONNECTION_RETRY_DELAY_QUERY_PARAMETER = "connection_retry_delay"
 CONNECTION_RETRY_MAX_DELAY_QUERY_PARAMETER = "connection_retry_max_delay"
@@ -849,6 +863,9 @@ def create_message_bus_consumer(
                         "Invalid format for 'AMQP_PREFETCH_COUNT_BY_CHANNEL'. Expected format: 'channel1:count1,channel2:count2'"
                     ) from e
 
+        # Whether the prefetch count is applied channel wide or per consumer.
+        qos_global = get_env_bool(QOS_GLOBAL_ENV_VAR, default=True)
+
         # Parse optional retry configuration parameters
         connection_retry_config = RetryPolicy()
         consumer_retry_config = RetryPolicy(
@@ -948,6 +965,7 @@ def create_message_bus_consumer(
             shared_default_channel=shared_default_channel,
             default_prefetch_count=prefetch_count,
             prefetch_by_channel_id=prefetch_count_by_channel_id,
+            qos_global=qos_global,
             connection_retry_config=connection_retry_config,
             consumer_retry_policy=consumer_retry_config,
             connection_heartbeat_interval=connection_heartbeat_interval,
