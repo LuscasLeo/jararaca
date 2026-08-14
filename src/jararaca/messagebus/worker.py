@@ -568,7 +568,7 @@ class AioPikaMicroserviceConsumer(MessageBusConsumer):
         channel_prefetch_count = self.config.prefetch_by_channel_id.get(
             channel_id, self.config.default_prefetch_count
         )
-        await channel.set_qos(prefetch_count=channel_prefetch_count)
+        await channel.set_qos(prefetch_count=channel_prefetch_count, global_=True)
         logger.debug("Created channel for queue %s", channel_id)
         return channel
 
