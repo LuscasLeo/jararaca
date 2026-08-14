@@ -38,17 +38,18 @@ variables:
 
 ## Trace Boundaries
 
-By default, a message handler execution is recorded as a **child** of the span that
-published the message, so an HTTP request and every task it triggers live inside a single
-trace. That keeps the whole arc in one timeline, but it has a cost: the trace duration
-includes the time the message spent waiting in the broker, every retry piles onto the same
-trace (which may stay open for hours after a dead letter redelivery), and in Grafana every
-trace is listed under the name of whatever started it — almost always the HTTP span.
+With the **child** policy, a message handler execution is recorded as a child of the span
+that published the message, so an HTTP request and every task it triggers live inside a
+single trace. That keeps the whole arc in one timeline, but it has a cost: the trace
+duration includes the time the message spent waiting in the broker, every retry piles onto
+the same trace (which may stay open for hours after a dead letter redelivery), and in
+Grafana every trace is listed under the name of whatever started it — almost always the
+HTTP span.
 
-The alternative is the **link** policy: the handler execution starts its own trace, so it
-gets its own name and its own duration, while the arc stays reconstructable through:
+The default is the **link** policy: the handler execution starts its own trace, so it gets
+its own name and its own duration, while the arc stays reconstructable through:
 
-- an OTEL **span link** back to the publisher span (plus the `flow.parent_trace_id` and
+- an OTEL **span link** back to the publish span (plus the `flow.parent_trace_id` and
   `flow.parent_span_id` attributes), and
 - a **`flow.id`** attribute shared by every trace of the arc, propagated across processes
   via W3C baggage.
@@ -56,13 +57,34 @@ gets its own name and its own duration, while the arc stays reconstructable thro
 In Grafana, `{ .flow.id = "<id>" }` returns the whole arc as a list of traces, and
 `{ .bus.message.topic = "<topic>" && duration > 5s }` finally means what it says.
 
+### The publish span
+
+Handing a message to the broker is recorded as its own `PRODUCER` span named
+`PUBLISH <topic>`, and it is *that* span the consumer attaches to — as the link target
+under the `link` policy, or as the parent under `child`.
+
+This matters because of the transactional outbox: `message.publish()` only stages the
+message, and the actual dispatch happens when the interceptor commits the transaction. The
+span that was current at staging time says nothing about when the broker actually received
+the message, whereas the publish span pins that moment down with its own start and
+duration. It also survives the delay path — a message sent with `delay()` or `schedule()`
+carries the publish context in its broker headers, so when the beat worker redispatches it
+hours later the consumer still links back to the original publication, not to the beat
+dispatch that merely relayed it.
+
+The span carries `bus.message.topic`, `bus.message.name`, `bus.message.module`,
+`bus.message.type`, `bus.message.category`, `bus.message.routing_key`,
+`messaging.destination.name`, `flow.id`, and `bus.publish.mode` (`immediate` or
+`delayed`, with `bus.publish.dispatch_time` for the latter).
+
 ### Choosing the policy
 
 | Environment Variable | Type | Default | Description |
 |---------------------|------|---------|-------------|
-| `JARARACA_OBSERVABILITY_TRACE_ASYNC_BOUNDARY` | `child` \| `link` | `child` | Policy used when a worker picks up a message. |
+| `JARARACA_OBSERVABILITY_TRACE_ASYNC_BOUNDARY` | `child` \| `link` | `link` | Policy used when a worker picks up a message. |
 | `JARARACA_OBSERVABILITY_TRACE_ASYNC_BOUNDARY_ON_RETRY` | `child` \| `link` | `link` | Policy used when the message is being reprocessed (`processing_attempt > 1`), so retries never keep the original trace open. |
-| `JARARACA_OBSERVABILITY_TRACE_MESSAGEBUS_SPAN_NAME_STYLE` | `legacy` \| `compact` | `legacy` | `legacy` names the root span `Att#1 Message Bus <broker_topic>`; `compact` names it `TASK <message_topic>`, keeping attempt and broker topic as attributes only. |
+| `JARARACA_OBSERVABILITY_TRACE_MESSAGEBUS_SPAN_NAME_STYLE` | `legacy` \| `compact` | `compact` | `legacy` names the root span `Att#1 Message Bus <broker_topic>`; `compact` names it `TASK <message_topic>`, keeping attempt and broker topic as attributes only. |
+| `JARARACA_OBSERVABILITY_TRACE_PUBLISH_SPAN` | `bool` | `true` | Record the `PUBLISH <topic>` span and propagate it as the consumer's trace context. When disabled, consumers attach to the producing transaction's root span, as before. |
 
 Individual messages can override the environment defaults, including the retry rule:
 
@@ -99,6 +121,26 @@ from jararaca import get_flow_id
 async def handle(self, message: MessageOf[SendCampaignMessage]) -> None:
     # Store it alongside your own records to jump straight to the whole arc later.
     execution.trace_flow_id = get_flow_id()
+```
+
+### Instrumenting a custom publisher
+
+If you publish to a broker jararaca does not manage, wrap the dispatch with
+`start_message_publish_span` so consumers get the same handoff point. It yields the
+headers to attach to the outgoing message, preserving any application implicit header and
+the incoming baggage.
+
+```python
+from jararaca import start_message_publish_span
+
+with start_message_publish_span(
+    topic=message.MESSAGE_TOPIC,
+    destination=exchange_name,
+    routing_key=routing_key,
+) as headers:
+    await exchange.publish(
+        aio_pika.Message(body=body, headers={**headers}), routing_key=routing_key
+    )
 ```
 
 ## Context Attributes

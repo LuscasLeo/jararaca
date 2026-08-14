@@ -6,6 +6,7 @@ import typing
 from contextlib import contextmanager
 from typing import Any, Generator, Literal
 
+from jararaca.messagebus.implicit_headers import ImplicitHeaders, use_implicit_headers
 from jararaca.observability.decorators import (
     AttributeMap,
     AttributeValue,
@@ -17,12 +18,23 @@ from jararaca.observability.decorators import (
 
 try:
     from jararaca.observability.providers.otel import (
+        PublishMode,
+        trace_message_publish,
         use_flow_id,
         use_message_bus_metrics,
     )
 except ImportError:
     use_message_bus_metrics = lambda: None
     use_flow_id = lambda: None
+
+    PublishMode = Literal["immediate", "delayed"]  # type: ignore[misc]
+
+    @contextmanager
+    def trace_message_publish(
+        *args: Any,
+        **kwargs: Any,
+    ) -> Generator[ImplicitHeaders, None, None]:
+        yield dict(use_implicit_headers())
 
 
 @contextmanager
@@ -95,6 +107,50 @@ def set_span_attribute(
 
 def get_tracing_provider() -> TracingContextProvider | None:
     return get_tracing_ctx_provider()
+
+
+@contextmanager
+def start_message_publish_span(
+    *,
+    topic: str,
+    destination: str | None = None,
+    routing_key: str | None = None,
+    message_name: str | None = None,
+    message_module: str | None = None,
+    message_type: str | None = None,
+    message_category: str | None = None,
+    message_id: str | None = None,
+    mode: Literal["immediate", "delayed"] = "immediate",
+    dispatch_time: int | None = None,
+) -> Generator[ImplicitHeaders, None, None]:
+    """
+    Record the handoff of a message to the broker as a PRODUCER span, yielding the
+    headers that must be attached to the outgoing message.
+
+    Those headers carry the trace context of the publish span itself, so consumers link
+    back to the moment the broker actually received the message instead of to whatever
+    span was active when the message was staged.
+
+    ```python
+    with start_message_publish_span(topic=message.MESSAGE_TOPIC) as headers:
+        await exchange.publish(aio_pika.Message(body=body, headers={**headers}), ...)
+    ```
+
+    Yields the inherited implicit headers unchanged when tracing is not active.
+    """
+    with trace_message_publish(
+        topic=topic,
+        destination=destination,
+        routing_key=routing_key,
+        message_name=message_name,
+        message_module=message_module,
+        message_type=message_type,
+        message_category=message_category,
+        message_id=message_id,
+        mode=mode,
+        dispatch_time=dispatch_time,
+    ) as headers:
+        yield headers
 
 
 def get_flow_id() -> str | None:
