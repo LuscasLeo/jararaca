@@ -2,22 +2,79 @@
 #
 # SPDX-License-Identifier: GPL-3.0-or-later
 
+import asyncio
 import logging
 import time
 from contextlib import asynccontextmanager
-from typing import AsyncGenerator, Iterable
+from typing import Any, AsyncGenerator, Iterable
 from uuid import uuid4
 
 import redis.asyncio
 
-from jararaca.broker_backend import MessageBrokerBackend
+from jararaca.broker_backend import BrokerBackendLockNotAcquired, MessageBrokerBackend
 from jararaca.scheduler.types import DelayedMessageData
 
 logger = logging.getLogger(__name__)
 
+DEFAULT_DELAYED_MESSAGES_BATCH_SIZE = 500
+DEFAULT_LOCK_TTL_SECONDS = 30.0
+DEFAULT_LOCK_BLOCKING_TIMEOUT_SECONDS = 5.0
+
+_DEQUEUE_DELAYED_MESSAGES_SCRIPT = """
+local zset_key = KEYS[1]
+local metadata_prefix = ARGV[1]
+local max_score = ARGV[2]
+local batch_size = tonumber(ARGV[3])
+
+local task_ids = redis.call('ZRANGEBYSCORE', zset_key, '-inf', max_score,
+                            'LIMIT', 0, batch_size)
+if #task_ids == 0 then
+    return {}
+end
+
+local payloads = {}
+for i = 1, #task_ids do
+    local metadata_key = metadata_prefix .. task_ids[i]
+    local payload = redis.call('GET', metadata_key)
+    if payload then
+        payloads[#payloads + 1] = payload
+    end
+    redis.call('ZREM', zset_key, task_ids[i])
+    redis.call('DEL', metadata_key)
+end
+
+return payloads
+"""
+"""
+Claims a bounded batch of due delayed messages.
+
+Read and removal happen inside a single Lua invocation, so concurrent beat workers can
+never observe the same task id: whoever runs the script first takes the batch. The
+batch size bound keeps a backlog of retries from being materialised in memory all at
+once, and reading the payloads inside the script removes the round trip per message.
+
+Note: the metadata keys are derived inside the script, which is fine on a standalone
+Redis but would be a cross-slot access on Redis Cluster.
+"""
+
+_RELEASE_LOCK_SCRIPT = """
+if redis.call('GET', KEYS[1]) == ARGV[1] then
+    return redis.call('DEL', KEYS[1])
+end
+return 0
+"""
+"""Releases the lock only if this instance still owns it (compare and delete)."""
+
 
 class RedisMessageBrokerBackend(MessageBrokerBackend):
-    def __init__(self, url: str) -> None:
+    def __init__(
+        self,
+        url: str,
+        *,
+        delayed_messages_batch_size: int = DEFAULT_DELAYED_MESSAGES_BATCH_SIZE,
+        lock_ttl_seconds: float = DEFAULT_LOCK_TTL_SECONDS,
+        lock_blocking_timeout_seconds: float = DEFAULT_LOCK_BLOCKING_TIMEOUT_SECONDS,
+    ) -> None:
         self.redis = redis.asyncio.Redis.from_url(url)
         self.last_dispatch_time_key = "last_dispatch_time:{action_name}"
         self.last_execution_time_key = "last_execution_time:{action_name}"
@@ -25,10 +82,55 @@ class RedisMessageBrokerBackend(MessageBrokerBackend):
         self.execution_indicator_expiration = 60 * 5
         self.delayed_messages_key = "delayed_messages"
         self.delayed_messages_metadata_key = "delayed_messages_metadata:{task_id}"
+        self.beat_lock_key = "beat_lock"
+
+        self.delayed_messages_batch_size = delayed_messages_batch_size
+        self.lock_ttl_seconds = lock_ttl_seconds
+        self.lock_blocking_timeout_seconds = lock_blocking_timeout_seconds
+
+        self._dequeue_delayed_messages_script = self.redis.register_script(
+            _DEQUEUE_DELAYED_MESSAGES_SCRIPT
+        )
+        self._release_lock_script = self.redis.register_script(_RELEASE_LOCK_SCRIPT)
 
     @asynccontextmanager
     async def lock(self) -> AsyncGenerator[None, None]:
-        yield
+        """
+        Acquire the beat lock so that only one beat worker dispatches a given cycle.
+
+        The lock carries a TTL, so a beat worker that dies while holding it does not
+        block the others forever; and it is released with a compare and delete, so a
+        holder whose TTL already expired cannot release someone else's lock.
+        """
+        token = str(uuid4()).encode()
+        deadline = time.monotonic() + self.lock_blocking_timeout_seconds
+
+        while True:
+            acquired = await self.redis.set(
+                self.beat_lock_key,
+                token,
+                nx=True,
+                px=int(self.lock_ttl_seconds * 1000),
+            )
+            if acquired:
+                break
+
+            if time.monotonic() >= deadline:
+                raise BrokerBackendLockNotAcquired(
+                    f"Could not acquire '{self.beat_lock_key}' within "
+                    f"{self.lock_blocking_timeout_seconds}s; another instance holds it"
+                )
+
+            await asyncio.sleep(0.05)
+
+        try:
+            yield
+        finally:
+            try:
+                await self._release_lock_script(keys=[self.beat_lock_key], args=[token])
+            except Exception as release_error:
+                # The TTL still guarantees the lock is eventually freed.
+                logger.warning("Failed to release beat lock: %s", release_error)
 
     async def get_last_dispatch_time(self, action_name: str) -> int | None:
 
@@ -118,60 +220,34 @@ class RedisMessageBrokerBackend(MessageBrokerBackend):
         self, start_timestamp: int
     ) -> Iterable[DelayedMessageData]:
         """
-        Dequeue the next delayed messages from the message broker.
-        This is used to trigger the scheduled action.
+        Claim the next batch of due delayed messages.
+
+        At most `delayed_messages_batch_size` messages are returned per call. A backlog
+        larger than that is drained across successive beat cycles instead of being read
+        into memory and republished in one burst, which is what a retry storm produces.
         """
-        tasks_ids = await self.redis.zrangebyscore(
-            name=self.delayed_messages_key,
-            max=start_timestamp,
-            min="-inf",
-            withscores=False,
+        metadata_prefix = self.delayed_messages_metadata_key.format(task_id="")
+
+        payloads: list[Any] = await self._dequeue_delayed_messages_script(
+            keys=[self.delayed_messages_key],
+            args=[
+                metadata_prefix,
+                start_timestamp,
+                self.delayed_messages_batch_size,
+            ],
         )
 
-        if not tasks_ids:
+        if not payloads:
             return []
-
-        tasks_bytes_data: list[bytes] = []
-
-        for task_id_bytes in tasks_ids:
-            metadata = await self.redis.get(
-                self.delayed_messages_metadata_key.format(
-                    task_id=task_id_bytes.decode()
-                )
-            )
-            if metadata is None:
-                logger.warning(
-                    f"Delayed message metadata not found for task_id: {task_id_bytes.decode()}"
-                )
-
-                continue
-
-            tasks_bytes_data.append(metadata)
-
-        async with self.redis.pipeline() as pipe:
-            for task_id_bytes in tasks_ids:
-                pipe.zrem(self.delayed_messages_key, task_id_bytes.decode())
-                pipe.delete(
-                    self.delayed_messages_metadata_key.format(
-                        task_id=task_id_bytes.decode()
-                    )
-                )
-            await pipe.execute()
 
         delayed_messages: list[DelayedMessageData] = []
 
-        for task_bytes_data in tasks_bytes_data:
+        for payload in payloads:
+            raw = payload.decode() if isinstance(payload, bytes) else str(payload)
             try:
-                delayed_message = DelayedMessageData.model_validate_json(
-                    task_bytes_data.decode()
-                )
-                delayed_messages.append(delayed_message)
+                delayed_messages.append(DelayedMessageData.model_validate_json(raw))
             except Exception:
-                if logger.isEnabledFor(logging.ERROR):
-                    logger.error(
-                        "Error parsing delayed message: %s",
-                        task_bytes_data.decode(),
-                    )
+                logger.error("Error parsing delayed message: %s", raw)
                 continue
 
         return delayed_messages

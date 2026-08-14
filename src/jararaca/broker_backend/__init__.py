@@ -9,12 +9,25 @@ from typing import AsyncContextManager, AsyncGenerator, Iterable
 from jararaca.scheduler.types import DelayedMessageData
 
 
+class BrokerBackendLockNotAcquired(RuntimeError):
+    """
+    Raised by `MessageBrokerBackend.lock()` when the lock is held by another instance
+    and could not be acquired within the blocking timeout.
+
+    Callers are expected to skip the guarded work for this cycle: another instance is
+    already doing it.
+    """
+
+
 class MessageBrokerBackend(ABC):
 
     def lock(self) -> AsyncContextManager[None]:
         """
         Acquire a lock for the message broker backend.
         This is used to ensure that only one instance of the scheduler is running at a time.
+
+        Raises:
+            BrokerBackendLockNotAcquired: when another instance holds the lock.
         """
         raise NotImplementedError(f"lock() is not implemented by {self.__class__}.")
 
