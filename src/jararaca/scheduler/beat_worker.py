@@ -31,7 +31,7 @@ from aio_pika.pool import Pool
 from aiormq.exceptions import ChannelInvalidStateError
 
 from jararaca import const
-from jararaca.broker_backend import MessageBrokerBackend
+from jararaca.broker_backend import BrokerBackendLockNotAcquired, MessageBrokerBackend
 from jararaca.broker_backend.mapper import get_message_broker_backend_from_url
 from jararaca.core.uow import UnitOfWorkContextProvider
 from jararaca.di import Container
@@ -48,6 +48,9 @@ from jararaca.utils.rabbitmq_utils import RabbitmqUtils
 from jararaca.utils.retry import RetryPolicy, retry_with_backoff
 
 logger = logging.getLogger(__name__)
+
+# How long to hold a delayed message back after a failed dispatch before trying again.
+FAILED_DISPATCH_REQUEUE_DELAY_SECONDS = 10
 
 
 def _extract_scheduled_actions(
@@ -699,6 +702,16 @@ class BeatWorker:
                             # Continue with other scheduled actions even if one fails
                             continue
 
+                except BrokerBackendLockNotAcquired:
+                    # Another beat worker is dispatching this cycle; skipping is the
+                    # correct outcome, not an error.
+                    logger.debug(
+                        "Beat lock held elsewhere, skipping %s.%s this cycle",
+                        func.__module__,
+                        func.__qualname__,
+                    )
+                    continue
+
                 except Exception as e:
                     logger.error(
                         "Error processing scheduled action %s.%s: %s",
@@ -729,7 +742,26 @@ class BeatWorker:
                         )
                     except Exception as e:
                         logger.error("Failed to dispatch delayed message: %s", e)
-                        # Continue with other delayed messages even if one fails
+                        # The claim already removed it from the backend, so putting it
+                        # back is the only thing standing between a failed dispatch and
+                        # a silently dropped retry.
+                        try:
+                            await self.backend.enqueue_delayed_message(
+                                delayed_message_data.model_copy(
+                                    update={
+                                        "dispatch_time": int(time.time())
+                                        + FAILED_DISPATCH_REQUEUE_DELAY_SECONDS
+                                    }
+                                )
+                            )
+                        except Exception as requeue_error:
+                            logger.critical(
+                                "Lost delayed message for topic %s: dispatch failed "
+                                "(%s) and it could not be put back (%s)",
+                                delayed_message_data.message_topic,
+                                e,
+                                requeue_error,
+                            )
                         continue
             except Exception as e:
                 logger.error("Error processing delayed messages: %s", e)
