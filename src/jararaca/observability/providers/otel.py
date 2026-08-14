@@ -254,6 +254,14 @@ class MessageBusMetrics:
             description="Number of messages currently being processed by the worker",
             unit="1",
         )
+        self.messages_slot_wait_time_histogram = meter.create_histogram(
+            name="messagebus.messages.slot_wait_time",
+            description=(
+                "Time a delivery spent held in memory waiting for a free processing "
+                "slot on its channel"
+            ),
+            unit="s",
+        )
 
 
 _message_bus_metrics_ctx = ContextVar[MessageBusMetrics | None](
@@ -316,6 +324,7 @@ def extract_context_attributes(ctx: AppTransactionContext) -> dict[str, Any]:
             "bus.message.topic": tx_data.message_type.MESSAGE_TOPIC,
             "bus.message.broker_topic": tx_data.topic,
             "bus.message.processing_attempt": tx_data.processing_attempt,
+            "bus.message.slot_wait_seconds": tx_data.slot_wait_seconds,
         }
     elif tx_data.context_type == "websocket":
         extra_attributes = {
@@ -327,6 +336,7 @@ def extract_context_attributes(ctx: AppTransactionContext) -> dict[str, Any]:
             "sched.scheduled_to": tx_data.scheduled_to.isoformat(),
             "sched.cron_expression": tx_data.cron_expression,
             "sched.triggered_at": tx_data.triggered_at.isoformat(),
+            "sched.slot_wait_seconds": tx_data.slot_wait_seconds,
         }
     return {
         "app.context_type": tx_data.context_type,

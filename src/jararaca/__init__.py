@@ -9,6 +9,7 @@ if TYPE_CHECKING:
     from jararaca import const
     from jararaca.broker_backend.redis_broker_backend import RedisMessageBrokerBackend
     from jararaca.messagebus.bus_message_controller import (
+        MessageDisposed,
         ack,
         nack,
         reject,
@@ -235,6 +236,7 @@ if TYPE_CHECKING:
         "FilterRuleApplier",
         "SortRuleApplier",
         "use_bus_message_controller",
+        "MessageDisposed",
         "ack",
         "nack",
         "reject",
@@ -434,6 +436,11 @@ _dynamic_imports: "dict[str, tuple[str, str, str | None]]" = {
     ),
     "FilterRuleApplier": (__SPEC_PARENT__, "persistence.sort_filter", None),
     "SortRuleApplier": (__SPEC_PARENT__, "persistence.sort_filter", None),
+    "MessageDisposed": (
+        __SPEC_PARENT__,
+        "messagebus.bus_message_controller",
+        None,
+    ),
     "use_bus_message_controller": (
         __SPEC_PARENT__,
         "messagebus.bus_message_controller",

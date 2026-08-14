@@ -8,19 +8,30 @@ wait helper.
 """
 
 import asyncio
+import logging
 import time
-from typing import Any
-from unittest.mock import AsyncMock, MagicMock
+from contextlib import asynccontextmanager
+from typing import Any, AsyncGenerator, cast
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from aio_pika.abc import AbstractIncomingMessage
 
+from jararaca.messagebus import bus_message_controller as bus_message_controller_hooks
+from jararaca.messagebus.bus_message_controller import (
+    MessageDisposed,
+    provide_bus_message_controller,
+)
+from jararaca.messagebus.decorators import MessageHandler
 from jararaca.messagebus.message import Message
 from jararaca.messagebus.worker import (
+    SLOT_WAIT_WARNING_THRESHOLD_SECONDS,
     AioPikaMessageBusController,
     AioPikaMicroserviceConsumer,
     AioPikaWorkerConfig,
     MessageHandlerCallback,
 )
+from jararaca.microservice import AppTransactionContext, MessageBusTransactionData
 from jararaca.utils.retry import RetryPolicy
 
 
@@ -85,6 +96,7 @@ def build_message(retry_count: int = 0) -> MagicMock:
     message.content_type = None
     message.content_encoding = None
     message.ack = AsyncMock()
+    message.nack = AsyncMock()
     message.reject = AsyncMock()
     return message
 
@@ -187,7 +199,8 @@ class TestControllerRetryBudget:
         callback, scheduled = build_callback()
         message = build_message(retry_count=1)
 
-        await build_controller(callback, message).retry(delay=5)
+        with pytest.raises(MessageDisposed):
+            await build_controller(callback, message).retry(delay=5)
 
         assert scheduled[0].headers["x-retry-count"] == 2
 
@@ -195,7 +208,8 @@ class TestControllerRetryBudget:
         callback, scheduled = build_callback(max_retries=3)
         message = build_message(retry_count=3)
 
-        await build_controller(callback, message).retry(delay=5)
+        with pytest.raises(MessageDisposed):
+            await build_controller(callback, message).retry(delay=5)
 
         assert scheduled == []
         message.reject.assert_awaited_once_with(requeue=False)
@@ -204,7 +218,8 @@ class TestControllerRetryBudget:
         callback, scheduled = build_callback()
         message = build_message(retry_count=1)
 
-        await build_controller(callback, message).retry_later(60)
+        with pytest.raises(MessageDisposed):
+            await build_controller(callback, message).retry_later(60)
 
         assert scheduled[0].headers["x-retry-count"] == 2
 
@@ -212,10 +227,175 @@ class TestControllerRetryBudget:
         callback, scheduled = build_callback(max_retries=3)
         message = build_message(retry_count=3)
 
-        await build_controller(callback, message).retry_later(60)
+        with pytest.raises(MessageDisposed):
+            await build_controller(callback, message).retry_later(60)
 
         assert scheduled == []
         message.reject.assert_awaited_once_with(requeue=False)
+
+
+class TestDisposition:
+    """
+    A handler that hands the message back must stop there: whatever runs afterwards
+    races the redelivery of that very message.
+    """
+
+    @pytest.mark.parametrize(
+        "disposition,invoke",
+        [
+            ("retry", lambda controller: controller.retry(delay=5)),
+            ("retry", lambda controller: controller.retry_later(60)),
+            ("nack", lambda controller: controller.nack()),
+            ("reject", lambda controller: controller.reject()),
+        ],
+    )
+    async def test_handing_the_message_back_unwinds_the_handler(
+        self,
+        disposition: str,
+        invoke: Any,
+    ) -> None:
+        callback, _ = build_callback()
+        message = build_message()
+        controller = build_controller(callback, message)
+
+        with pytest.raises(MessageDisposed) as raised:
+            await invoke(controller)
+
+        assert raised.value.disposition == disposition
+        assert controller.disposition == disposition
+
+    async def test_ack_settles_without_unwinding_the_handler(self) -> None:
+        callback, _ = build_callback()
+        message = build_message()
+        controller = build_controller(callback, message)
+
+        # Acking is safe to continue after: the message is settled, so nothing can
+        # be redelivered to race the rest of the handler.
+        await controller.ack()
+
+        assert controller.disposition == "ack"
+        assert message.ack.await_count == 1
+
+    async def test_is_not_swallowed_by_a_broad_except_clause(self) -> None:
+        callback, _ = build_callback()
+        message = build_message()
+        controller = build_controller(callback, message)
+
+        swallowed = False
+
+        with pytest.raises(MessageDisposed):
+            try:
+                await controller.retry(delay=5)
+            except Exception:  # noqa: BLE001 - deliberately broad, as user code is
+                swallowed = True
+
+        assert not swallowed
+
+    async def test_module_level_hook_propagates_the_disposition(self) -> None:
+        callback, _ = build_callback()
+        message = build_message()
+        controller = build_controller(callback, message)
+
+        with provide_bus_message_controller(controller):
+            with pytest.raises(MessageDisposed):
+                await bus_message_controller_hooks.retry()
+
+    async def test_undecided_message_reports_no_disposition(self) -> None:
+        callback, _ = build_callback()
+        controller = build_controller(callback, build_message())
+
+        assert controller.disposition is None
+
+
+class TestProcessingSlots:
+    """
+    `prefetch_count` stops bounding concurrency as soon as a message is settled before
+    its handler returns, so the worker enforces the bound itself.
+    """
+
+    async def test_concurrent_handlers_stay_within_the_prefetch_count(self) -> None:
+        callback, _ = build_callback()
+        callback.consumer.config.default_prefetch_count = 3
+
+        live = 0
+        peak = 0
+
+        async def slow_handler(
+            aio_pika_message: AbstractIncomingMessage,
+            slot_wait_seconds: float = 0.0,
+        ) -> None:
+            nonlocal live, peak
+            live += 1
+            peak = max(peak, live)
+            await asyncio.sleep(0.01)
+            live -= 1
+
+        callback.handle_message = slow_handler  # type: ignore[method-assign]
+
+        await asyncio.gather(
+            *[callback.run_within_processing_slot(MagicMock()) for _ in range(30)]
+        )
+
+        assert peak == 3
+
+    async def test_per_channel_prefetch_overrides_are_honoured(self) -> None:
+        callback, _ = build_callback()
+        consumer = callback.consumer
+        consumer.config.default_prefetch_count = 4
+        consumer.config.prefetch_by_channel_id = {"heavy": 1}
+
+        heavy = consumer.get_processing_slot("heavy")
+        other = consumer.get_processing_slot("other")
+
+        assert heavy is not None and heavy._value == 1
+        assert other is not None and other._value == 4
+
+    async def test_slot_is_released_when_the_handler_raises(self) -> None:
+        callback, _ = build_callback()
+        callback.consumer.config.default_prefetch_count = 2
+
+        async def failing_handler(
+            aio_pika_message: AbstractIncomingMessage,
+            slot_wait_seconds: float = 0.0,
+        ) -> None:
+            raise RuntimeError("boom")
+
+        callback.handle_message = failing_handler  # type: ignore[method-assign]
+
+        for _ in range(5):
+            with pytest.raises(RuntimeError):
+                await callback.run_within_processing_slot(MagicMock())
+
+        slot = callback.consumer.get_processing_slot(callback.channel_id)
+        assert slot is not None and slot._value == 2
+
+    async def test_zero_prefetch_means_unlimited(self) -> None:
+        """AMQP defines prefetch_count=0 as no limit; the worker must agree."""
+        callback, _ = build_callback()
+        callback.consumer.config.default_prefetch_count = 0
+
+        assert callback.consumer.get_processing_slot(callback.channel_id) is None
+
+        live = 0
+        peak = 0
+
+        async def slow_handler(
+            aio_pika_message: AbstractIncomingMessage,
+            slot_wait_seconds: float = 0.0,
+        ) -> None:
+            nonlocal live, peak
+            live += 1
+            peak = max(peak, live)
+            await asyncio.sleep(0.01)
+            live -= 1
+
+        callback.handle_message = slow_handler  # type: ignore[method-assign]
+
+        await asyncio.gather(
+            *[callback.run_within_processing_slot(MagicMock()) for _ in range(25)]
+        )
+
+        assert peak == 25, "a zero prefetch must not serialise the worker"
 
 
 class TestWaitDelayOrShutdown:
@@ -249,3 +429,126 @@ class TestWaitDelayOrShutdown:
         await consumer._wait_delay_or_shutdown(0.15)
 
         assert time.monotonic() - started >= 0.1
+
+
+class TestSlotWaitVisibility:
+    """
+    The time a delivery spends held in this process waiting for a slot is not queue
+    time in the broker, so it has to be reported explicitly or it is invisible.
+    """
+
+    async def test_wait_is_measured_and_handed_to_the_handler(self) -> None:
+        callback, _ = build_callback()
+        # One slot forces the deliveries to queue up behind each other.
+        callback.consumer.config.default_prefetch_count = 1
+
+        observed: list[float] = []
+
+        async def slow_handler(
+            aio_pika_message: AbstractIncomingMessage,
+            slot_wait_seconds: float = 0.0,
+        ) -> None:
+            observed.append(slot_wait_seconds)
+            await asyncio.sleep(0.05)
+
+        callback.handle_message = slow_handler  # type: ignore[method-assign]
+
+        await asyncio.gather(
+            *[callback.run_within_processing_slot(MagicMock()) for _ in range(3)]
+        )
+
+        # First runs straight away; the others wait for the ones ahead of them.
+        assert observed[0] == pytest.approx(0, abs=0.02)
+        assert observed[1] == pytest.approx(0.05, abs=0.03)
+        assert observed[2] == pytest.approx(0.10, abs=0.04)
+
+    async def test_wait_reaches_the_transaction_data(self) -> None:
+        callback, _ = build_callback()
+        callback.consumer.config.default_prefetch_count = 1
+
+        transaction_data: list[MessageBusTransactionData] = []
+
+        @asynccontextmanager
+        async def capture(
+            app_context: AppTransactionContext,
+        ) -> AsyncGenerator[None, None]:
+            assert isinstance(app_context.transaction_data, MessageBusTransactionData)
+            transaction_data.append(app_context.transaction_data)
+            yield
+
+        callback.consumer.uow_context_provider = capture  # type: ignore[assignment]
+
+        message = build_message()
+        message.headers = {}
+        handler_data = cast(Any, callback.message_handler)
+        handler_data.instance_callable = AsyncMock()
+        handler_data.controller_member.member_function = AsyncMock()
+
+        with patch.object(
+            MessageHandler,
+            "validate_decorated_fn",
+            return_value=("WRAPPED", SampleTaskMessage),
+        ), patch.object(
+            MessageHandler, "get_last", return_value=MagicMock(timeout=None)
+        ):
+            await callback.handle_message(message, slot_wait_seconds=1.25)
+
+        assert transaction_data[0].slot_wait_seconds == 1.25
+
+    async def test_metric_is_recorded_for_every_delivery(self) -> None:
+        callback, _ = build_callback()
+        callback.consumer.config.default_prefetch_count = 2
+
+        samples: list[dict[str, Any]] = []
+
+        with patch(
+            "jararaca.messagebus.worker.record_message_slot_wait",
+            side_effect=lambda **kwargs: samples.append(kwargs),
+        ):
+            callback.consumer.report_slot_wait(
+                topic="sample.task",
+                queue_name="sample-queue",
+                channel_id="DEFAULT",
+                waited_seconds=0.0,
+            )
+
+        # Zero is a meaningful sample: it is how "not saturated" looks on the histogram.
+        assert samples == [
+            {
+                "topic": "sample.task",
+                "queue_name": "sample-queue",
+                "duration_seconds": 0.0,
+            }
+        ]
+
+    async def test_saturation_is_logged_only_past_the_threshold(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        callback, _ = build_callback()
+
+        with caplog.at_level(logging.WARNING, logger="jararaca.messagebus.worker"):
+            callback.consumer.report_slot_wait(
+                topic="sample.task",
+                queue_name="sample-queue",
+                channel_id="DEFAULT",
+                waited_seconds=SLOT_WAIT_WARNING_THRESHOLD_SECONDS / 2,
+            )
+            assert caplog.records == []
+
+            callback.consumer.report_slot_wait(
+                topic="sample.task",
+                queue_name="sample-queue",
+                channel_id="DEFAULT",
+                waited_seconds=SLOT_WAIT_WARNING_THRESHOLD_SECONDS + 1,
+            )
+
+        assert len(caplog.records) == 1
+        assert "for a free processing slot" in caplog.records[0].getMessage()
+        assert "saturated" in caplog.records[0].getMessage()
+
+    async def test_unbounded_channel_reports_no_wait(self) -> None:
+        callback, _ = build_callback()
+        callback.consumer.config.default_prefetch_count = 0
+
+        async with callback.consumer.processing_slot("DEFAULT") as waited:
+            assert waited == 0.0

@@ -322,6 +322,11 @@ The following metrics are automatically collected:
 - **`messagebus.messages.processing_time`** *(histogram)*: Processing duration in seconds per message
   - Attributes: `topic`, `queue_name`, `message_type`, `message_category`, `success`
 
+- **`messagebus.messages.slot_wait_time`** *(histogram)*: Seconds a delivery sat in the worker's memory waiting for a free processing slot on its channel
+  - Recorded for every delivery, so zero samples are the "channel not saturated" signal
+  - Attributes: `topic`, `queue_name`
+  - See [Concurrency bound](messagebus.md#concurrency-bound)
+
 ### Example Queries
 
 With these metrics, you can create dashboards and alerts in your observability platform. For example:
@@ -331,6 +336,7 @@ With these metrics, you can create dashboards and alerts in your observability p
 - **Task vs Event Distribution**: Group by `message_type` attribute
 - **Current Concurrency**: Sum `messagebus.messages.inflight` grouped by `topic`
 - **P99 Processing Latency**: Use the `messagebus.messages.processing_time` histogram
+- **Channel Saturation**: P99 of `messagebus.messages.slot_wait_time` grouped by `queue_name` — anything consistently above zero means deliveries are queueing inside the worker
 
 ### Manual Metric Recording
 
@@ -338,10 +344,10 @@ While metrics are collected automatically, you can also manually record message 
 
 ```python
 from jararaca.observability.hooks import (
-    record_message_sent,
-    record_message_processed,
     record_message_inflight,
+    record_message_processed,
     record_message_processing_time,
+    record_message_sent,
 )
 
 # Record a sent message
@@ -394,6 +400,7 @@ Add `LoggerExtraInterceptor` to your root logger (or any specific logger):
 
 ```python
 import logging
+
 from jararaca import LoggerExtraInterceptor
 
 handler = LoggerExtraInterceptor()
@@ -407,6 +414,7 @@ You can also inject additional attributes dynamically at emit time via `inject_e
 ```python
 import logging
 from logging import LogRecord
+
 from jararaca import LoggerExtraInterceptor
 
 
@@ -423,8 +431,9 @@ logging.getLogger().addHandler(handler)
 Use `providing_logger_extra_attributes` as a context manager anywhere in your request or message handler:
 
 ```python
-from jararaca import providing_logger_extra_attributes
 import logging
+
+from jararaca import providing_logger_extra_attributes
 
 logger = logging.getLogger(__name__)
 

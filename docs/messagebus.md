@@ -420,7 +420,7 @@ sequenceDiagram
     C->>Q: Reject Message
 
     H->>C: retry()
-    C->>Q: Requeue Message
+    C->>Q: Schedule delayed copy, ack original
 ```
 
 ### Message Control Utilities
@@ -440,12 +440,78 @@ class TaskProcessor:
             # Manually acknowledge successful processing
             await ack()
         except TemporaryError:
-            # Request message retry
+            # Request message retry — does not return, see below
             await retry()
         except PermanentError:
-            # Reject the message
+            # Reject the message — does not return either
             await reject()
 ```
+
+### Handing the message back stops the handler
+
+`retry`, `retry_later`, `nack` and `reject` raise `MessageDisposed` instead of returning.
+Each of them gives the message back to the broker (or schedules a fresh copy of it), so
+any code that kept running afterwards would race a redelivery of that very message —
+possibly in another worker, at the same time.
+
+`MessageDisposed` derives from `BaseException` on purpose, so a broad `except Exception`
+around business logic cannot silently turn "give this message back" into "keep going".
+Catch it explicitly if you need cleanup:
+
+```python
+from jararaca import MessageDisposed, retry
+
+
+try:
+    await retry()
+except MessageDisposed:
+    await self.release_resources()
+    raise          # let the worker see the disposition
+```
+
+`ack` is the exception: it settles the message, so nothing can be redelivered to race
+the rest of the handler. It returns normally and the worker simply skips its own
+acknowledgement at the end.
+
+### Retry budget
+
+`retry` and `retry_later` schedule a copy of the message with `x-retry-count`
+incremented, and dead-letter it once the handler's `max_retries` is reached — the same
+budget the automatic `nack_on_exception` path uses. They rely on the beat worker to
+redispatch the copy once the delay elapses.
+
+### Concurrency bound
+
+At most `prefetch_count` handlers of a channel execute concurrently, enforced by the
+worker itself rather than inferred from acknowledgement timing. Without it, settling a
+message before the handler returns would let the broker push a replacement while the
+original task is still running, and the number of concurrent executions would drift
+above the configured prefetch. See
+[QoS scope](worker-channels.md#qos-scope) for the broker-side counterpart.
+
+A `prefetch_count` of 0 means unlimited, both to the broker and to this bound.
+
+### Seeing what the bound costs
+
+When the bound holds a delivery back, the message is already in the worker's memory —
+it is no longer queue time in the broker, and without explicit reporting it would show
+up nowhere. Three places surface it:
+
+| Where | What |
+| --- | --- |
+| Span attribute | `bus.message.slot_wait_seconds` on the message's root span (`sched.slot_wait_seconds` for scheduled actions), so it is queryable per message: `{ .bus.message.slot_wait_seconds > 1 }` |
+| Metric | `messagebus.messages.slot_wait_time` histogram, labelled by `topic` and `queue_name` — recorded for every delivery, so a flat zero is the "not saturated" signal |
+| Log | A warning once a single wait crosses one second, naming the channel and its prefetch |
+
+The attribute also lands on every log record of the transaction, since it flows through
+the same context attributes described in [Observability](observability.md#context-attributes).
+
+A rising `slot_wait_time` means the channel is saturated: the broker is handing
+deliveries over faster than the handlers retire them, and the surplus is sitting in this
+process rather than in the queue. The answers are the usual ones — raise the channel's
+`prefetch_count` if the handlers are IO-bound and the machine has room, lower it if the
+memory backlog is the problem, or move the slow handler to its own `channel_id` so it
+stops competing with the fast ones.
 
 ## Error Handling
 
