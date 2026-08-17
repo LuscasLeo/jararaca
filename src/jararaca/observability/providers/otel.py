@@ -427,6 +427,10 @@ class OtelTracingContextProviderFactory(TracingContextProviderFactory):
     ) -> TracingContextProvider:
         return OtelTracingContextProvider(app_context)
 
+    @contextmanager
+    def redundant_span_ctx(self, span: trace.Span) -> Generator[trace.Span, Any, None]:
+        yield span
+
     @asynccontextmanager
     async def root_setup(
         self, app_context: AppTransactionContext
@@ -466,29 +470,31 @@ class OtelTracingContextProviderFactory(TracingContextProviderFactory):
             or key.lower().startswith("tracestate")
         }
 
-        ctx = TraceContextTextMapPropagator().extract(carrier)
+        current_span_ctx = trace.get_current_span().get_span_context()
+        boundary_already_instrumented = (
+            current_span_ctx.is_valid and trace.get_current_span().is_recording()
+        )
 
-        b2 = {
-            key: value
-            for key, value in headers.items()
-            if key.lower().startswith("baggage")
-        }
+        if boundary_already_instrumented:
+            ctx2 = context_api.get_current()
+        else:
+            ctx = TraceContextTextMapPropagator().extract(carrier)
 
-        ctx2 = W3CBaggagePropagator().extract(b2, context=ctx)
+            b2 = {
+                key: value
+                for key, value in headers.items()
+                if key.lower().startswith("baggage")
+            }
+
+            ctx2 = W3CBaggagePropagator().extract(b2, context=ctx)
 
         incoming_span_context = trace.get_current_span(ctx2).get_span_context()
         boundary = resolve_trace_boundary(tx_data)
 
-        links: list[trace.Link] = []
         start_context = ctx2
 
         if boundary == "link" and incoming_span_context.is_valid:
-            links.append(
-                trace.Link(
-                    incoming_span_context,
-                    attributes={"boundary.kind": tx_data.context_type},
-                )
-            )
+
             extra_attributes[FLOW_PARENT_TRACE_ID_ATTRIBUTE] = trace.format_trace_id(
                 incoming_span_context.trace_id
             )
@@ -499,17 +505,32 @@ class OtelTracingContextProviderFactory(TracingContextProviderFactory):
             # extracted baggage (and with it the flow id) available for propagation.
             start_context = trace.set_span_in_context(trace.INVALID_SPAN, ctx2)
 
+        if boundary_already_instrumented:
+            span = trace.get_current_span()
+            start_span_context = self.redundant_span_ctx(span)
+            span.set_attributes(extra_attributes)
+            span.update_name(title)
+
+        else:
+            start_span_context = tracer.start_as_current_span(
+                name=title,
+                context=start_context,
+                links=[
+                    trace.Link(
+                        incoming_span_context,
+                        attributes={"boundary.kind": tx_data.context_type},
+                    )
+                ],
+                attributes={
+                    **extra_attributes,
+                },
+            )
+
         incoming_flow_id = baggage.get_baggage(FLOW_ID_BAGGAGE_KEY, ctx2)
 
-        with tracer.start_as_current_span(
-            name=title,
-            context=start_context,
-            links=links,
-            attributes={
-                **extra_attributes,
-            },
-        ) as root_span:
+        with start_span_context as root_span:
             cx = root_span.get_span_context()
+
             span_traceparent_id = trace.format_trace_id(cx.trace_id)
 
             flow_id = (
