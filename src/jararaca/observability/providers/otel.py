@@ -501,52 +501,82 @@ class OtelTracingContextProviderFactory(TracingContextProviderFactory):
 
         incoming_flow_id = baggage.get_baggage(FLOW_ID_BAGGAGE_KEY, ctx2)
 
-        with tracer.start_as_current_span(
-            name=title,
-            context=start_context,
-            links=links,
-            attributes={
-                **extra_attributes,
-            },
-        ) as root_span:
+        # Check if there's an active span created by auto-instrumentation (e.g., FastApiInstrumentor)
+        # For HTTP requests, we can reuse the existing span instead of creating a new one.
+        # This avoids duplicate traces and enriches the auto-instrumented span with our custom attributes.
+        active_span = trace.get_current_span()
+        should_reuse_active_span = (
+            active_span.is_recording()
+            and not active_span.get_span_context()
+            == trace.INVALID_SPAN.get_span_context()
+        )
+
+        if should_reuse_active_span:
+            # Reuse the existing span from auto-instrumentation
+            root_span = active_span
             cx = root_span.get_span_context()
-            span_traceparent_id = trace.format_trace_id(cx.trace_id)
 
-            flow_id = (
-                str(incoming_flow_id)
-                if incoming_flow_id is not None
-                else span_traceparent_id
+            # Update the span title with our enriched information
+            root_span.update_name(title)
+
+            # Add all collected attributes to the existing span
+            # for attr_key, attr_value in extra_attributes.items():
+            root_span.set_attributes(extra_attributes)
+        else:
+            # Create a new span as before (for non-HTTP contexts or when no active span exists)
+            root_span = tracer.start_as_current_span(
+                name=title,
+                context=start_context,
+                links=links,
+                attributes={
+                    **extra_attributes,
+                },
+            ).__enter__()
+            cx = root_span.get_span_context()
+
+        span_traceparent_id = trace.format_trace_id(cx.trace_id)
+
+        flow_id = (
+            str(incoming_flow_id)
+            if incoming_flow_id is not None
+            else span_traceparent_id
+        )
+        root_span.set_attribute(FLOW_ID_ATTRIBUTE, flow_id)
+
+        if app_context.transaction_data.context_type == "http":
+            app_context.transaction_data.request.scope[TRACEPARENT_KEY] = (
+                span_traceparent_id
             )
-            root_span.set_attribute(FLOW_ID_ATTRIBUTE, flow_id)
+        elif app_context.transaction_data.context_type == "websocket":
+            app_context.transaction_data.websocket.scope[TRACEPARENT_KEY] = (
+                span_traceparent_id
+            )
 
-            if app_context.transaction_data.context_type == "http":
-                app_context.transaction_data.request.scope[TRACEPARENT_KEY] = (
-                    span_traceparent_id
-                )
-            elif app_context.transaction_data.context_type == "websocket":
-                app_context.transaction_data.websocket.scope[TRACEPARENT_KEY] = (
-                    span_traceparent_id
-                )
-
-            # The baggage extracted into `ctx2` is not attached to the ambient context by
-            # `start_as_current_span`, so the outgoing context is rebuilt explicitly.
-            # Otherwise incoming baggage (flow id included) would be dropped at this hop.
-            outgoing_context = context_api.get_current()
-            for baggage_key, baggage_value in baggage.get_all(ctx2).items():
-                outgoing_context = baggage.set_baggage(
-                    baggage_key, baggage_value, context=outgoing_context
-                )
+        # The baggage extracted into `ctx2` is not attached to the ambient context by
+        # `start_as_current_span`, so the outgoing context is rebuilt explicitly.
+        # Otherwise incoming baggage (flow id included) would be dropped at this hop.
+        outgoing_context = context_api.get_current()
+        for baggage_key, baggage_value in baggage.get_all(ctx2).items():
             outgoing_context = baggage.set_baggage(
-                FLOW_ID_BAGGAGE_KEY, flow_id, context=outgoing_context
+                baggage_key, baggage_value, context=outgoing_context
             )
+        outgoing_context = baggage.set_baggage(
+            FLOW_ID_BAGGAGE_KEY, flow_id, context=outgoing_context
+        )
 
-            tracing_headers: ImplicitHeaders = {}
-            TraceContextTextMapPropagator().inject(
-                tracing_headers, context=outgoing_context
-            )
-            W3CBaggagePropagator().inject(tracing_headers, context=outgoing_context)
-            with provide_implicit_headers(tracing_headers), provide_flow_id(flow_id):
+        tracing_headers: ImplicitHeaders = {}
+        TraceContextTextMapPropagator().inject(
+            tracing_headers, context=outgoing_context
+        )
+        W3CBaggagePropagator().inject(tracing_headers, context=outgoing_context)
+        with provide_implicit_headers(tracing_headers), provide_flow_id(flow_id):
+            if should_reuse_active_span:
+                # When reusing existing span, just yield without creating a new context
                 yield
+            else:
+                # Use the context manager to properly manage the new span lifecycle
+                with root_span:
+                    yield
 
 
 class LoggerHandlerCallback(Protocol):
