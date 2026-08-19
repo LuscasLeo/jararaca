@@ -44,6 +44,10 @@ if TYPE_CHECKING:
         start_message_publish_span,
         start_span,
     )
+    from jararaca.observability.http_response_event import (
+        BodyRedactor,
+        HttpResponseEventMiddleware,
+    )
     from jararaca.observability.inbound_trace import (
         InboundTraceContextMiddleware,
         TrustPredicate,
@@ -296,6 +300,8 @@ __all__ = [
     "add_event",
     "setup_fastapi_exception_handler",
     "InboundTraceContextMiddleware",
+    "HttpResponseEventMiddleware",
+    "BodyRedactor",
     "TrustPredicate",
     "trust_any_of",
     "trust_no_one",
@@ -525,6 +531,12 @@ _dynamic_imports: "dict[str, tuple[str, str, str | None]]" = {
         "observability.fastapi_exception_handler",
         None,
     ),
+    "HttpResponseEventMiddleware": (
+        __SPEC_PARENT__,
+        "observability.http_response_event",
+        None,
+    ),
+    "BodyRedactor": (__SPEC_PARENT__, "observability.http_response_event", None),
     "InboundTraceContextMiddleware": (
         __SPEC_PARENT__,
         "observability.inbound_trace",
