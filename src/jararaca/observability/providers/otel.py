@@ -508,8 +508,19 @@ class OtelTracingContextProviderFactory(TracingContextProviderFactory):
         boundary = resolve_trace_boundary(tx_data)
 
         start_context = ctx2
+        links: list[trace.Link] = []
 
         if boundary == "link" and incoming_span_context.is_valid:
+            # Only "link" mode needs one. In "child" mode the parent already expresses
+            # the relationship, and an unconditional link cannot be relied on to vanish
+            # when there is no incoming context: the SDK keeps a link whose context is
+            # invalid as long as it carries attributes, which this one always does.
+            links.append(
+                trace.Link(
+                    incoming_span_context,
+                    attributes={"boundary.kind": tx_data.context_type},
+                )
+            )
 
             extra_attributes[FLOW_PARENT_TRACE_ID_ATTRIBUTE] = trace.format_trace_id(
                 incoming_span_context.trace_id
@@ -531,12 +542,7 @@ class OtelTracingContextProviderFactory(TracingContextProviderFactory):
             start_span_context = tracer.start_as_current_span(
                 name=title,
                 context=start_context,
-                links=[
-                    trace.Link(
-                        incoming_span_context,
-                        attributes={"boundary.kind": tx_data.context_type},
-                    )
-                ],
+                links=links,
                 attributes={
                     **extra_attributes,
                 },
