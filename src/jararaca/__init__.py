@@ -41,6 +41,14 @@ if TYPE_CHECKING:
         start_message_publish_span,
         start_span,
     )
+    from jararaca.observability.inbound_trace import (
+        InboundTraceContextMiddleware,
+        TrustPredicate,
+        trust_any_of,
+        trust_no_one,
+        trust_requests_without_origin,
+        trust_when_header_matches,
+    )
     from jararaca.observability.interceptor import ObservabilityInterceptor
     from jararaca.observability.providers.otel import OtelObservabilityProvider
     from jararaca.persistence.sort_filter import (
@@ -284,6 +292,12 @@ if TYPE_CHECKING:
         "set_span_attribute",
         "add_event",
         "setup_fastapi_exception_handler",
+        "InboundTraceContextMiddleware",
+        "TrustPredicate",
+        "trust_any_of",
+        "trust_no_one",
+        "trust_requests_without_origin",
+        "trust_when_header_matches",
         "set_span_status",
         "record_exception",
         "get_tracing_provider",
@@ -503,6 +517,24 @@ _dynamic_imports: "dict[str, tuple[str, str, str | None]]" = {
     "setup_fastapi_exception_handler": (
         __SPEC_PARENT__,
         "observability.fastapi_exception_handler",
+        None,
+    ),
+    "InboundTraceContextMiddleware": (
+        __SPEC_PARENT__,
+        "observability.inbound_trace",
+        None,
+    ),
+    "TrustPredicate": (__SPEC_PARENT__, "observability.inbound_trace", None),
+    "trust_any_of": (__SPEC_PARENT__, "observability.inbound_trace", None),
+    "trust_no_one": (__SPEC_PARENT__, "observability.inbound_trace", None),
+    "trust_requests_without_origin": (
+        __SPEC_PARENT__,
+        "observability.inbound_trace",
+        None,
+    ),
+    "trust_when_header_matches": (
+        __SPEC_PARENT__,
+        "observability.inbound_trace",
         None,
     ),
     "set_span_attribute": (__SPEC_PARENT__, "observability.hooks", None),

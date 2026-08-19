@@ -60,7 +60,7 @@ from jararaca.microservice import (
     TransactionData,
     use_app_transaction_context,
 )
-from jararaca.observability.constants import TRACEPARENT_KEY
+from jararaca.observability.constants import TRACE_ID_KEY, TRACEPARENT_KEY
 from jararaca.observability.decorators import (
     AttributeMap,
     AttributeValue,
@@ -111,6 +111,22 @@ def provide_flow_id(flow_id: str) -> Generator[None, Any, None]:
 def use_flow_id() -> str | None:
     """Get the flow id of the current transaction, if tracing is active."""
     return _flow_id_ctx.get()
+
+
+def format_traceparent(span_context: trace.SpanContext) -> str:
+    """
+    Render *span_context* as a W3C ``traceparent`` header value.
+
+    An invalid span context yields an empty string so that callers can treat "no trace"
+    and "no header" as the same case. The propagator does the formatting instead of an
+    f-string here so the version prefix stays tied to the spec implementation.
+    """
+    carrier: dict[str, str] = {}
+    TraceContextTextMapPropagator().inject(
+        carrier,
+        context=trace.set_span_in_context(trace.NonRecordingSpan(span_context)),
+    )
+    return carrier.get(TRACEPARENT_KEY, "")
 
 
 def resolve_trace_boundary(tx_data: TransactionData) -> TraceBoundary:
@@ -531,22 +547,29 @@ class OtelTracingContextProviderFactory(TracingContextProviderFactory):
         with start_span_context as root_span:
             cx = root_span.get_span_context()
 
-            span_traceparent_id = trace.format_trace_id(cx.trace_id)
+            span_trace_id = trace.format_trace_id(cx.trace_id)
 
             flow_id = (
-                str(incoming_flow_id)
-                if incoming_flow_id is not None
-                else span_traceparent_id
+                str(incoming_flow_id) if incoming_flow_id is not None else span_trace_id
             )
             root_span.set_attribute(FLOW_ID_ATTRIBUTE, flow_id)
 
+            # A full W3C `traceparent`, not the bare trace id: this value is echoed back
+            # to the caller as a response header, so it has to be something a compliant
+            # propagator can parse.
+            response_traceparent = format_traceparent(cx)
+
             if app_context.transaction_data.context_type == "http":
                 app_context.transaction_data.request.scope[TRACEPARENT_KEY] = (
-                    span_traceparent_id
+                    response_traceparent
                 )
+                app_context.transaction_data.request.scope[TRACE_ID_KEY] = span_trace_id
             elif app_context.transaction_data.context_type == "websocket":
                 app_context.transaction_data.websocket.scope[TRACEPARENT_KEY] = (
-                    span_traceparent_id
+                    response_traceparent
+                )
+                app_context.transaction_data.websocket.scope[TRACE_ID_KEY] = (
+                    span_trace_id
                 )
 
             # The baggage extracted into `ctx2` is not attached to the ambient context by
