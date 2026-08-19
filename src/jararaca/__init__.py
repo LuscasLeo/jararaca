@@ -45,6 +45,8 @@ if TYPE_CHECKING:
         start_span,
     )
     from jararaca.observability.http_response_event import (
+        REDACTED_HEADER_VALUE,
+        SENSITIVE_HEADERS,
         BodyRedactor,
         HttpResponseEventMiddleware,
     )
@@ -302,6 +304,8 @@ __all__ = [
     "InboundTraceContextMiddleware",
     "HttpResponseEventMiddleware",
     "BodyRedactor",
+    "SENSITIVE_HEADERS",
+    "REDACTED_HEADER_VALUE",
     "TrustPredicate",
     "trust_any_of",
     "trust_no_one",
@@ -537,6 +541,16 @@ _dynamic_imports: "dict[str, tuple[str, str, str | None]]" = {
         None,
     ),
     "BodyRedactor": (__SPEC_PARENT__, "observability.http_response_event", None),
+    "SENSITIVE_HEADERS": (
+        __SPEC_PARENT__,
+        "observability.http_response_event",
+        None,
+    ),
+    "REDACTED_HEADER_VALUE": (
+        __SPEC_PARENT__,
+        "observability.http_response_event",
+        None,
+    ),
     "InboundTraceContextMiddleware": (
         __SPEC_PARENT__,
         "observability.inbound_trace",

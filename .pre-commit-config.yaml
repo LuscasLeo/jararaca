@@ -67,10 +67,11 @@ repos:
 
   # reuse - REUSE specification compliance check
   - repo: https://github.com/fsfe/reuse-tool
-    rev: v4.0.3
+    rev: v5.0.2  # check for the latest tag
     hooks:
-      - id: reuse
-
+      - id: reuse-lint-file
+        args: ["lint-file"]
+        pass_filenames: true
   # pyright
   - repo: local
     hooks:

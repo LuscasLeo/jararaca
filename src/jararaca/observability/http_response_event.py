@@ -30,6 +30,17 @@ DEFAULT_EVENT_NAME = "http.response"
 CAPTURABLE_CONTENT_TYPES = ("application/json", "text/")
 """Body capture is limited to textual payloads; binary ones are only ever measured."""
 
+SENSITIVE_HEADERS = ("set-cookie", "authorization", "proxy-authorization")
+"""
+Response headers recorded as :data:`REDACTED_HEADER_VALUE` instead of their real value.
+
+``set-cookie`` is the one that matters in practice: it is how session credentials leave
+the service, and a trace backend is rarely as access controlled as a session store.
+"""
+
+REDACTED_HEADER_VALUE = "[redacted]"
+"""Stand in value, so a sensitive header still shows up as present."""
+
 BodyRedactor = Callable[[Scope, bytes], bytes]
 """Rewrites a captured body before it reaches the span, for stripping secrets."""
 
@@ -61,6 +72,17 @@ class _ResponseRecord:
     def truncated(self) -> bool:
         return self.body_size > len(self.body)
 
+    def grouped_headers(self) -> dict[str, list[str]]:
+        """Header values by lowercased name. A header may legitimately repeat."""
+        grouped: dict[str, list[str]] = {}
+
+        for header_name, header_value in self.headers:
+            grouped.setdefault(
+                header_name.decode("latin-1", errors="ignore").lower(), []
+            ).append(header_value.decode("latin-1", errors="ignore"))
+
+        return grouped
+
     def header(self, name: str) -> str | None:
         wanted = name.encode("latin-1").lower()
 
@@ -87,10 +109,15 @@ class HttpResponseEventMiddleware:
         app.add_middleware(HttpResponseEventMiddleware, capture_body=True)
         FastAPIInstrumentor.instrument_app(app)
 
+    Every response header is recorded as ``http.response.header.<name>``, mirroring the
+    ``http.request.header.*`` attributes on the root span. Headers in *sensitive_headers*
+    are replaced by :data:`REDACTED_HEADER_VALUE`, and a non empty *capture_headers* acts
+    as an allowlist narrowing the set.
+
     Body capture is off by default. A response body is the single most sensitive thing a
     trace can hold: sign in responses carry freshly issued tokens, and traces are usually
-    readable by everyone with Grafana access. Turn it on per service, narrow it with
-    *capture_headers*, and pass a *redact* callable for anything that returns credentials.
+    readable by everyone with Grafana access. Turn it on per service and pass a *redact*
+    callable for anything that returns credentials.
     """
 
     def __init__(
@@ -103,6 +130,7 @@ class HttpResponseEventMiddleware:
             OBSERVABILITY_TRACE_SPAN_HTTP_RESPONSE_MAX_BODY_SIZE_ATTRIBUTE_VALUE
         ),
         capture_headers: Collection[str] = (),
+        sensitive_headers: Collection[str] = SENSITIVE_HEADERS,
         capturable_content_types: Sequence[str] = CAPTURABLE_CONTENT_TYPES,
         redact: BodyRedactor | None = None,
     ) -> None:
@@ -110,7 +138,8 @@ class HttpResponseEventMiddleware:
         self.event_name = event_name
         self.capture_body = capture_body
         self.max_body_size = max_body_size
-        self.capture_headers = tuple(capture_headers)
+        self.capture_headers = {name.lower() for name in capture_headers}
+        self.sensitive_headers = {name.lower() for name in sensitive_headers}
         self.capturable_content_types = tuple(capturable_content_types)
         self.redact = redact
 
@@ -159,11 +188,13 @@ class HttpResponseEventMiddleware:
         if record.status_code is not None:
             attributes["http.response.status_code"] = record.status_code
 
-        for header_name in self.capture_headers:
-            header_value = record.header(header_name)
+        for header_name, header_values in record.grouped_headers().items():
+            if self.capture_headers and header_name not in self.capture_headers:
+                continue
 
-            if header_value is not None:
-                attributes[f"http.response.header.{header_name.lower()}"] = header_value
+            attributes[f"http.response.header.{header_name}"] = self.header_value(
+                header_name, header_values
+            )
 
         if self.capture_body and self.is_capturable(record):
             body = bytes(record.body)
@@ -177,6 +208,16 @@ class HttpResponseEventMiddleware:
                 attributes["http.response.body.truncated"] = True
 
         return attributes
+
+    def header_value(self, name: str, values: list[str]) -> AttributeValue:
+        """
+        Redaction wins over the allowlist: explicitly asking for ``set-cookie`` is not
+        enough to get its value, the header has to be dropped from *sensitive_headers*.
+        """
+        if name in self.sensitive_headers:
+            values = [REDACTED_HEADER_VALUE for _ in values]
+
+        return values[0] if len(values) == 1 else values
 
     def is_capturable(self, record: _ResponseRecord) -> bool:
         content_type = record.header("content-type") or ""
@@ -192,4 +233,6 @@ __all__: list[str] = [
     "BodyRedactor",
     "DEFAULT_EVENT_NAME",
     "CAPTURABLE_CONTENT_TYPES",
+    "SENSITIVE_HEADERS",
+    "REDACTED_HEADER_VALUE",
 ]

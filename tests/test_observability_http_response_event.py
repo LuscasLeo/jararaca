@@ -21,6 +21,7 @@ from starlette.types import Receive, Scope, Send
 
 from jararaca.observability.http_response_event import (
     DEFAULT_EVENT_NAME,
+    REDACTED_HEADER_VALUE,
     HttpResponseEventMiddleware,
 )
 
@@ -61,6 +62,13 @@ def build_app(exporter: InMemorySpanExporter, **options: Any) -> FastAPI:
     @app.get("/binary")
     def binary_endpoint() -> PlainTextResponse:
         return PlainTextResponse(b"\x00\x01\x02", media_type="application/octet-stream")
+
+    @app.get("/cookies")
+    def cookies_endpoint() -> PlainTextResponse:
+        response = PlainTextResponse("ok")
+        response.set_cookie("session", "abc")
+        response.set_cookie("refresh", "def")
+        return response
 
     @app.get("/stream")
     def stream_endpoint() -> StreamingResponse:
@@ -157,17 +165,64 @@ def test_streaming_responses_emit_a_single_event_with_the_full_size(
     assert str(attributes["http.response.body"]).startswith("chunk-0;")
 
 
-def test_headers_are_captured_only_when_allowlisted(
-    exporter: InMemorySpanExporter,
-) -> None:
-    TestClient(build_app(exporter, capture_headers=["content-type"])).get("/json")
+class TestResponseHeaders:
 
-    attributes = dict(response_event(exporter).attributes or {})
+    def test_every_header_is_captured_by_default(
+        self, exporter: InMemorySpanExporter
+    ) -> None:
+        TestClient(build_app(exporter)).get("/json")
 
-    assert str(attributes["http.response.header.content-type"]).startswith(
-        "application/json"
-    )
-    assert "http.response.header.server" not in attributes
+        attributes = dict(response_event(exporter).attributes or {})
+
+        assert str(attributes["http.response.header.content-type"]).startswith(
+            "application/json"
+        )
+        assert "http.response.header.content-length" in attributes
+
+    def test_sensitive_headers_are_redacted(
+        self, exporter: InMemorySpanExporter
+    ) -> None:
+        TestClient(build_app(exporter)).get("/cookies")
+
+        attributes = dict(response_event(exporter).attributes or {})
+
+        assert attributes["http.response.header.set-cookie"] == (
+            REDACTED_HEADER_VALUE,
+            REDACTED_HEADER_VALUE,
+        )
+
+    def test_repeated_headers_are_recorded_as_a_sequence(
+        self, exporter: InMemorySpanExporter
+    ) -> None:
+        TestClient(build_app(exporter, sensitive_headers=())).get("/cookies")
+
+        attributes = dict(response_event(exporter).attributes or {})
+        cookies = attributes["http.response.header.set-cookie"]
+
+        assert isinstance(cookies, tuple) and len(cookies) == 2
+        assert any("session=abc" in cookie for cookie in cookies)
+
+    def test_allowlist_narrows_what_is_captured(
+        self, exporter: InMemorySpanExporter
+    ) -> None:
+        TestClient(build_app(exporter, capture_headers=["content-type"])).get("/json")
+
+        attributes = dict(response_event(exporter).attributes or {})
+
+        assert "http.response.header.content-type" in attributes
+        assert "http.response.header.content-length" not in attributes
+
+    def test_redaction_wins_over_the_allowlist(
+        self, exporter: InMemorySpanExporter
+    ) -> None:
+        TestClient(build_app(exporter, capture_headers=["set-cookie"])).get("/cookies")
+
+        attributes = dict(response_event(exporter).attributes or {})
+
+        assert attributes["http.response.header.set-cookie"] == (
+            REDACTED_HEADER_VALUE,
+            REDACTED_HEADER_VALUE,
+        )
 
 
 def test_redactor_can_rewrite_the_body(exporter: InMemorySpanExporter) -> None:
