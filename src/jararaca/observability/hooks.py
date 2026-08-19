@@ -105,6 +105,49 @@ def set_span_attribute(
         )
 
 
+def set_root_span_attribute(
+    key: str,
+    value: AttributeValue,
+) -> None:
+    """
+    Set an attribute on the root span of the current transaction.
+
+    The root span is the one a trace is listed and filtered by, so this is where
+    identifiers worth searching on belong (tenant, customer, external id, outcome).
+    :func:`set_span_attribute` writes to the innermost span instead, which is only
+    visible once the trace is already open.
+
+    Works from any depth: the root span stays open for the whole transaction, so nested
+    code can still enrich it after it stopped being the current span. Does nothing when
+    tracing is not active.
+
+    ```python
+    set_root_span_attribute("simulation.id", str(simulation.id))
+    ```
+    """
+    if trace_context_provider := get_tracing_ctx_provider():
+        trace_context_provider.set_root_span_attribute(key=key, value=value)
+
+
+def set_root_span_attributes(attributes: AttributeMap) -> None:
+    """Set several attributes on the root span at once."""
+    if trace_context_provider := get_tracing_ctx_provider():
+        for key, value in attributes.items():
+            trace_context_provider.set_root_span_attribute(key=key, value=value)
+
+
+def get_root_span() -> TracingSpan | None:
+    """
+    Get the root span of the current transaction, or None when tracing is not active.
+
+    Prefer :func:`set_root_span_attribute` for the common case; this is the escape hatch
+    for provider specific work.
+    """
+    if trace_context_provider := get_tracing_ctx_provider():
+        return trace_context_provider.get_root_span()
+    return None
+
+
 def get_tracing_provider() -> TracingContextProvider | None:
     return get_tracing_ctx_provider()
 

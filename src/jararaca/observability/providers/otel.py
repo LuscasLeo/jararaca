@@ -113,6 +113,29 @@ def use_flow_id() -> str | None:
     return _flow_id_ctx.get()
 
 
+_root_span_ctx = ContextVar["trace.Span | None"]("root_span_ctx", default=None)
+
+
+@contextmanager
+def provide_root_span(span: trace.Span) -> Generator[None, Any, None]:
+    token = _root_span_ctx.set(span)
+    try:
+        yield
+    finally:
+        with suppress(ValueError):
+            _root_span_ctx.reset(token)
+
+
+def use_root_span() -> "trace.Span | None":
+    """
+    The root span of the current transaction, if tracing is active.
+
+    It stays open for the whole transaction, so nested code can still enrich it long
+    after it stopped being the current span.
+    """
+    return _root_span_ctx.get()
+
+
 def format_traceparent(span_context: trace.SpanContext) -> str:
     """
     Render *span_context* as a W3C ``traceparent`` header value.
@@ -435,6 +458,22 @@ class OtelTracingContextProvider(TracingContextProvider):
     def get_current_span_context(self) -> TracingSpanContext | None:
         return OtelTracingSpanContext(trace.get_current_span().get_span_context())
 
+    def get_root_span(self) -> TracingSpan | None:
+        root_span = use_root_span()
+
+        if root_span is None:
+            return None
+
+        return OtelTracingSpan(root_span)
+
+    def set_root_span_attribute(self, key: str, value: AttributeValue) -> None:
+        root_span = use_root_span()
+
+        if root_span is None:
+            return
+
+        root_span.set_attribute(key, value)
+
 
 class OtelTracingContextProviderFactory(TracingContextProviderFactory):
 
@@ -595,7 +634,9 @@ class OtelTracingContextProviderFactory(TracingContextProviderFactory):
                 tracing_headers, context=outgoing_context
             )
             W3CBaggagePropagator().inject(tracing_headers, context=outgoing_context)
-            with provide_implicit_headers(tracing_headers), provide_flow_id(flow_id):
+            with provide_implicit_headers(tracing_headers), provide_flow_id(
+                flow_id
+            ), provide_root_span(root_span):
                 yield
 
 
