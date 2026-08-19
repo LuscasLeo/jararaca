@@ -6,6 +6,7 @@
 Tests for the lazy attribute loader of the top level ``jararaca`` package.
 """
 
+import typing
 from typing import Any
 
 import pytest
@@ -15,9 +16,10 @@ import jararaca
 REGISTRY: dict[str, tuple[str, str, str | None]] = jararaca._dynamic_imports
 
 
+@typing.no_type_check
 def cold_getattr(name: str) -> Any:
     """Read *name* off the package with every cached export evicted first."""
-    package_globals = dict(vars(jararaca))
+    package_globals = vars(jararaca)
 
     for cached in list(REGISTRY):
         package_globals.pop(cached, None)
