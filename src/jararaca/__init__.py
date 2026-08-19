@@ -52,7 +52,9 @@ if TYPE_CHECKING:
     )
     from jararaca.observability.inbound_trace import (
         InboundTraceContextMiddleware,
+        TrustAwareTextMapPropagator,
         TrustPredicate,
+        install_inbound_trace_boundary,
         trust_any_of,
         trust_no_one,
         trust_requests_without_origin,
@@ -307,6 +309,8 @@ __all__ = [
     "SENSITIVE_HEADERS",
     "REDACTED_HEADER_VALUE",
     "TrustPredicate",
+    "TrustAwareTextMapPropagator",
+    "install_inbound_trace_boundary",
     "trust_any_of",
     "trust_no_one",
     "trust_requests_without_origin",
@@ -557,6 +561,16 @@ _dynamic_imports: "dict[str, tuple[str, str, str | None]]" = {
         None,
     ),
     "TrustPredicate": (__SPEC_PARENT__, "observability.inbound_trace", None),
+    "TrustAwareTextMapPropagator": (
+        __SPEC_PARENT__,
+        "observability.inbound_trace",
+        None,
+    ),
+    "install_inbound_trace_boundary": (
+        __SPEC_PARENT__,
+        "observability.inbound_trace",
+        None,
+    ),
     "trust_any_of": (__SPEC_PARENT__, "observability.inbound_trace", None),
     "trust_no_one": (__SPEC_PARENT__, "observability.inbound_trace", None),
     "trust_requests_without_origin": (
