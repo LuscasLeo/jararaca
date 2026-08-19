@@ -11,11 +11,17 @@ from typing import Any
 import pytest
 from fastapi import FastAPI, Request
 from fastapi.testclient import TestClient
+from opentelemetry import trace
+from opentelemetry.propagate import get_global_textmap, set_global_textmap
+from opentelemetry.propagators.textmap import Getter, default_getter
+from opentelemetry.trace.propagation.tracecontext import TraceContextTextMapPropagator
 
 from jararaca.observability.inbound_trace import (
     CLAIMED_HEADER_PREFIX,
     InboundTraceContextMiddleware,
+    TrustAwareTextMapPropagator,
     TrustPredicate,
+    install_inbound_trace_boundary,
     trust_any_of,
     trust_no_one,
     trust_requests_without_origin,
@@ -199,3 +205,98 @@ class TestAgainstADownstreamPropagator:
         assert parent.is_valid is True
         assert trace.format_trace_id(parent.trace_id) == POISONED.split("-")[1]
         assert trace.format_span_id(parent.span_id) == POISONED.split("-")[2]
+
+
+class ScopeGetter(Getter[Any]):
+    """Reads headers out of an ASGI scope, like `opentelemetry.instrumentation.asgi`."""
+
+    def get(self, carrier: Any, key: str) -> list[str] | None:
+        wanted = key.lower().encode("latin-1")
+        values = [
+            value.decode("latin-1")
+            for name, value in carrier.get("headers") or []
+            if name.lower() == wanted
+        ]
+        return values or None
+
+    def keys(self, carrier: Any) -> list[str]:
+        return [name.decode("latin-1") for name, _ in carrier.get("headers") or []]
+
+
+class TestTrustAwarePropagator:
+    """
+    The middleware cannot cover `FastAPIInstrumentor`, which patches
+    `build_middleware_stack` so `OpenTelemetryMiddleware` wraps the whole stack. The
+    propagator is the order independent half of the boundary.
+    """
+
+    @staticmethod
+    def scope(**headers: str) -> dict[str, Any]:
+        return {
+            "type": "http",
+            "headers": [
+                (name.encode("latin-1"), value.encode("latin-1"))
+                for name, value in headers.items()
+            ],
+        }
+
+    @staticmethod
+    def extracted(
+        trust: TrustPredicate, carrier: Any, getter: Getter[Any] = default_getter
+    ) -> Any:
+        propagator = TrustAwareTextMapPropagator(trust, TraceContextTextMapPropagator())
+        context = propagator.extract(carrier, getter=getter)
+
+        return trace.get_current_span(context).get_span_context()
+
+    def test_distrusted_scope_yields_no_parent(self) -> None:
+        parent = self.extracted(
+            trust_no_one(), self.scope(traceparent=POISONED), ScopeGetter()
+        )
+
+        assert parent.is_valid is False
+
+    def test_trusted_scope_still_extracts(self) -> None:
+        parent = self.extracted(
+            trust_requests_without_origin(),
+            self.scope(traceparent=POISONED),
+            ScopeGetter(),
+        )
+
+        assert trace.format_trace_id(parent.trace_id) == POISONED.split("-")[1]
+
+    def test_browser_scope_is_distrusted(self) -> None:
+        parent = self.extracted(
+            trust_requests_without_origin(),
+            self.scope(traceparent=POISONED, origin="https://beta.datacred.net"),
+            ScopeGetter(),
+        )
+
+        assert parent.is_valid is False
+
+    def test_non_asgi_carriers_pass_through_untouched(self) -> None:
+        # Message bus headers travel through the same global propagator. Applying the
+        # boundary to them would silently break trace continuity across the bus.
+        parent = self.extracted(trust_no_one(), {"traceparent": POISONED})
+
+        assert trace.format_trace_id(parent.trace_id) == POISONED.split("-")[1]
+
+    def test_fields_are_delegated(self) -> None:
+        propagator = TrustAwareTextMapPropagator(
+            trust_no_one(), TraceContextTextMapPropagator()
+        )
+
+        assert propagator.fields == TraceContextTextMapPropagator().fields
+
+    def test_installing_twice_replaces_rather_than_stacks(self) -> None:
+        original = get_global_textmap()
+        try:
+            install_inbound_trace_boundary(trust_no_one())
+            install_inbound_trace_boundary(trust_requests_without_origin())
+            installed = get_global_textmap()
+
+            assert isinstance(installed, TrustAwareTextMapPropagator)
+            # The stricter first predicate must not survive underneath the second.
+            assert not isinstance(installed.wrapped, TrustAwareTextMapPropagator)
+        finally:
+            set_global_textmap(original)

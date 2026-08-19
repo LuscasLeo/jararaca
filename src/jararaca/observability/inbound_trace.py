@@ -15,8 +15,18 @@ before anything reads it, while leaving genuine service to service propagation a
 """
 
 import hmac
-from typing import Callable, Collection, Iterable
+from typing import Any, Callable, Collection, Iterable, Mapping, TypeGuard
 
+from opentelemetry.context import Context
+from opentelemetry.propagate import get_global_textmap, set_global_textmap
+from opentelemetry.propagators.textmap import (
+    CarrierT,
+    Getter,
+    Setter,
+    TextMapPropagator,
+    default_getter,
+    default_setter,
+)
 from starlette.types import ASGIApp, Receive, Scope, Send
 
 TRACE_CONTEXT_HEADERS = ("traceparent", "tracestate", "baggage")
@@ -130,6 +140,96 @@ def _disarm_trace_headers(
     ]
 
 
+def _is_asgi_connection_scope(carrier: Any) -> TypeGuard[Scope]:
+    """
+    Whether *carrier* is an inbound ASGI connection rather than an internal carrier.
+
+    The trust boundary only applies to connections arriving from outside. Message bus
+    headers and other internal carriers are propagated with the same global propagator,
+    and distrusting those would silently break trace continuity across the bus.
+    """
+    return (
+        isinstance(carrier, Mapping)
+        and carrier.get("type") in ("http", "websocket")
+        and "headers" in carrier
+    )
+
+
+class TrustAwareTextMapPropagator(TextMapPropagator):
+    """
+    A propagator that refuses to extract trace context from untrusted connections.
+
+    This is the order independent half of the trust boundary, and the only thing that
+    works against ``FastAPIInstrumentor``. ``instrument_app`` does not install its
+    middleware with ``add_middleware``: it replaces ``app.build_middleware_stack`` so
+    that ``OpenTelemetryMiddleware`` wraps the whole Starlette stack, including
+    ``ServerErrorMiddleware`` and every user middleware. No middleware can therefore run
+    before it. What it *does* use is the global propagator, with the ASGI scope as the
+    carrier, so replacing that propagator intercepts the extraction wherever it happens::
+
+        install_inbound_trace_boundary(trust=trust_requests_without_origin())
+        FastAPIInstrumentor.instrument_app(app)  # order no longer matters
+
+    Injection is delegated untouched: outbound propagation is never the untrusted side.
+    """
+
+    def __init__(
+        self,
+        trust: TrustPredicate,
+        wrapped: TextMapPropagator | None = None,
+    ) -> None:
+        self.trust = trust
+        self.wrapped = wrapped if wrapped is not None else get_global_textmap()
+
+    def extract(
+        self,
+        carrier: CarrierT,
+        context: Context | None = None,
+        getter: Getter[CarrierT] = default_getter,
+    ) -> Context:
+        if _is_asgi_connection_scope(carrier) and not self.trust(carrier):
+            # No remote parent, so the server span becomes a fresh trace root. The
+            # claimed value stays in the request headers and is still recorded as the
+            # `http.request.header.traceparent` span attribute.
+            return context if context is not None else Context()
+
+        return self.wrapped.extract(carrier, context, getter)
+
+    def inject(
+        self,
+        carrier: CarrierT,
+        context: Context | None = None,
+        setter: Setter[CarrierT] = default_setter,
+    ) -> None:
+        self.wrapped.inject(carrier, context, setter)
+
+    @property
+    def fields(self) -> "set[str]":
+        return self.wrapped.fields
+
+
+def install_inbound_trace_boundary(trust: TrustPredicate) -> TextMapPropagator:
+    """
+    Wrap the global propagator so untrusted connections cannot supply trace context.
+
+    Call it once at startup, before or after instrumenting the app; it does not care.
+    Returns the propagator that was replaced, so it can be restored in tests.
+
+    Calling it again replaces the previous boundary rather than stacking a second one on
+    top. Stacking would keep the earlier, possibly stricter, predicate in the chain and
+    make the new one look like it silently does nothing.
+    """
+    previous = get_global_textmap()
+    underlying = (
+        previous.wrapped
+        if isinstance(previous, TrustAwareTextMapPropagator)
+        else previous
+    )
+
+    set_global_textmap(TrustAwareTextMapPropagator(trust, underlying))
+    return previous
+
+
 class InboundTraceContextMiddleware:
     """
     Strip inbound trace context from untrusted callers.
@@ -137,12 +237,13 @@ class InboundTraceContextMiddleware:
     Pure ASGI rather than ``BaseHTTPMiddleware`` because it only rewrites the scope, and
     because it must be able to sit outside every other middleware.
 
-    **Ordering matters.** Starlette's ``add_middleware`` inserts at the front of the
-    stack, so the *last* middleware added is the outermost one. This must be added after
-    ``FastAPIInstrumentor.instrument_app(app)``, otherwise the ASGI instrumentation reads
-    the headers before they are rewritten::
+    This covers jararaca's own extraction, which reads the request headers from inside
+    the router. It does **not** cover ``FastAPIInstrumentor``: that patches
+    ``build_middleware_stack`` so ``OpenTelemetryMiddleware`` wraps the entire stack, and
+    no user middleware can run before it. Use
+    :func:`install_inbound_trace_boundary` for that, with the same predicate::
 
-        FastAPIInstrumentor.instrument_app(app)
+        install_inbound_trace_boundary(trust=trust_requests_without_origin())
         app.add_middleware(
             InboundTraceContextMiddleware,
             trust=trust_requests_without_origin(),
