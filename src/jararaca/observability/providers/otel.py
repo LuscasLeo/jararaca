@@ -498,7 +498,7 @@ class OtelTracingContextProviderFactory(TracingContextProviderFactory):
 
         elif tx_data.context_type == "websocket":
             headers = dict(tx_data.websocket.headers)
-            title = f"WebSocket {tx_data.websocket.url}"
+            title = f"WebSocket {tx_data.websocket.scope['route'].path if not OBSERVABILITY_TRACE_SPAN_HTTP_REQUEST_USE_ABSOLUTE_PATH_ON_TITLE else tx_data.websocket.url.path }"
 
         elif tx_data.context_type == "scheduler":
             title = f"Scheduler Task {tx_data.task_name}"
