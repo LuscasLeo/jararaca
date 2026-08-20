@@ -62,6 +62,7 @@ if TYPE_CHECKING:
     )
     from jararaca.observability.interceptor import ObservabilityInterceptor
     from jararaca.observability.providers.otel import OtelObservabilityProvider
+    from jararaca.observability.trace_response import TraceResponseHeaderMiddleware
     from jararaca.persistence.sort_filter import (
         FILTER_SORT_ENTITY_ATTR_MAP,
         FilterModel,
@@ -304,6 +305,7 @@ __all__ = [
     "add_event",
     "setup_fastapi_exception_handler",
     "InboundTraceContextMiddleware",
+    "TraceResponseHeaderMiddleware",
     "HttpResponseEventMiddleware",
     "BodyRedactor",
     "SENSITIVE_HEADERS",
@@ -553,6 +555,11 @@ _dynamic_imports: "dict[str, tuple[str, str, str | None]]" = {
     "REDACTED_HEADER_VALUE": (
         __SPEC_PARENT__,
         "observability.http_response_event",
+        None,
+    ),
+    "TraceResponseHeaderMiddleware": (
+        __SPEC_PARENT__,
+        "observability.trace_response",
         None,
     ),
     "InboundTraceContextMiddleware": (

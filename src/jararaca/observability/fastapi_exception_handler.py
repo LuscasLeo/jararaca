@@ -15,33 +15,14 @@ from fastapi.responses import PlainTextResponse
 from starlette.concurrency import run_in_threadpool
 from starlette.exceptions import HTTPException
 
-from jararaca.observability.constants import TRACEPARENT_KEY
+from jararaca.observability.trace_context import resolve_scope_traceparent
 
 ExceptionHandler = Callable[..., Any]
 
 
 def resolve_traceparent(request: Request) -> str:
-    """
-    W3C ``traceparent`` of the root span serving *request*, or an empty string.
-
-    The value is normally published into the ASGI scope by the observability
-    interceptor. The current span is consulted as a fallback so that failures raised
-    before the interceptor runs (in user middleware, for instance) still get a header
-    whenever a span exists at all.
-    """
-    scope_value = request.scope.get(TRACEPARENT_KEY)
-
-    if isinstance(scope_value, str) and scope_value:
-        return scope_value
-
-    try:
-        from opentelemetry import trace
-
-        from jararaca.observability.providers.otel import format_traceparent
-    except ImportError:
-        return ""
-
-    return format_traceparent(trace.get_current_span().get_span_context())
+    """W3C ``traceparent`` of the root span serving *request*, or an empty string."""
+    return resolve_scope_traceparent(request.scope)
 
 
 def apply_traceparent_header(
