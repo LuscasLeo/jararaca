@@ -70,6 +70,7 @@ from jararaca.observability.decorators import (
     TracingSpanContext,
 )
 from jararaca.observability.interceptor import ObservabilityProvider
+from jararaca.observability.trace_context import format_traceparent
 
 if TYPE_CHECKING:
     from opentelemetry.trace import Span as _Span
@@ -134,22 +135,6 @@ def use_root_span() -> "trace.Span | None":
     after it stopped being the current span.
     """
     return _root_span_ctx.get()
-
-
-def format_traceparent(span_context: trace.SpanContext) -> str:
-    """
-    Render *span_context* as a W3C ``traceparent`` header value.
-
-    An invalid span context yields an empty string so that callers can treat "no trace"
-    and "no header" as the same case. The propagator does the formatting instead of an
-    f-string here so the version prefix stays tied to the spec implementation.
-    """
-    carrier: dict[str, str] = {}
-    TraceContextTextMapPropagator().inject(
-        carrier,
-        context=trace.set_span_in_context(trace.NonRecordingSpan(span_context)),
-    )
-    return carrier.get(TRACEPARENT_KEY, "")
 
 
 def resolve_trace_boundary(tx_data: TransactionData) -> TraceBoundary:
