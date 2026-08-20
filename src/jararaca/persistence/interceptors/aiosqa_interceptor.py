@@ -112,7 +112,7 @@ async def providing_new_session(
     connection_name: str | None = None,
 ) -> AsyncGenerator[AsyncSession, None]:
     with start_span(
-        name="Providing Session for connection {}".format(ensure_name(connection_name)),
+        name="Providing Session for connection",
         attributes={
             "connection_name": ensure_name(connection_name),
             "name": "providing_new_session",
