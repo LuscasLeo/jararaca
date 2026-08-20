@@ -3,7 +3,9 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 
 from datetime import datetime, tzinfo
-from typing import Generic, Protocol, TypeVar
+from typing import Any, Generic, Protocol, TypeVar
+
+from pydantic import ValidationError
 
 from jararaca.messagebus.publisher import (
     DelayedMessageIdempotencyPayloadPolicy,
@@ -119,6 +121,34 @@ class Message(IMessage):
 INHERITS_MESSAGE_CO = TypeVar("INHERITS_MESSAGE_CO", bound=Message, covariant=True)
 
 
+class MessagePayloadValidationError(Exception):
+    """
+    Raised by `MessageOf.payload()` when the raw body does not validate as the handler's
+    message type.
+
+    The bytes on the wire are the same on every redelivery, so a message that fails this
+    validation can never succeed: the worker rejects it without requeue instead of
+    spending the retry budget on it. It wraps rather than subclasses `ValidationError`
+    so validation failures raised by the handler's own logic (an external API response,
+    say) keep their normal retry behaviour.
+    """
+
+    def __init__(self, message_type: type[Any], error: ValidationError) -> None:
+        self.message_type = message_type
+        self.error = error
+        super().__init__(
+            "Failed to validate message payload as %s: %s"
+            % (message_type.__name__, error)
+        )
+
+
 class MessageOf(Protocol, Generic[INHERITS_MESSAGE_CO]):
 
-    def payload(self) -> INHERITS_MESSAGE_CO: ...
+    def payload(self) -> INHERITS_MESSAGE_CO:
+        """
+        Parse the raw body as the handler's message type.
+
+        Raises:
+            MessagePayloadValidationError: If the body does not validate.
+        """
+        ...

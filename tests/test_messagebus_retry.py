@@ -16,6 +16,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from aio_pika.abc import AbstractIncomingMessage
+from pydantic import ValidationError
 
 from jararaca.messagebus import bus_message_controller as bus_message_controller_hooks
 from jararaca.messagebus.bus_message_controller import (
@@ -23,9 +24,14 @@ from jararaca.messagebus.bus_message_controller import (
     provide_bus_message_controller,
 )
 from jararaca.messagebus.decorators import MessageHandler
-from jararaca.messagebus.message import Message
+from jararaca.messagebus.message import (
+    Message,
+    MessageOf,
+    MessagePayloadValidationError,
+)
 from jararaca.messagebus.worker import (
     SLOT_WAIT_WARNING_THRESHOLD_SECONDS,
+    AioPikaMessage,
     AioPikaMessageBusController,
     AioPikaMicroserviceConsumer,
     AioPikaWorkerConfig,
@@ -552,3 +558,103 @@ class TestSlotWaitVisibility:
 
         async with callback.consumer.processing_slot("DEFAULT") as waited:
             assert waited == 0.0
+
+
+class TypedTaskMessage(Message):
+    MESSAGE_TOPIC = "typed.task"
+
+    required_field: str
+
+
+class TypedTaskController:
+    """Both handler shapes, so the parsing failure is covered on each of them."""
+
+    def __init__(self) -> None:
+        self.handled: list[TypedTaskMessage] = []
+
+    @MessageHandler(TypedTaskMessage)
+    async def direct(self, message: TypedTaskMessage) -> None:
+        self.handled.append(message)
+
+    @MessageHandler(TypedTaskMessage)
+    async def wrapped(self, message: MessageOf[TypedTaskMessage]) -> None:
+        self.handled.append(message.payload())
+
+    @MessageHandler(TypedTaskMessage, nack_on_exception=True)
+    async def validates_something_else(self, message: TypedTaskMessage) -> None:
+        # Stands in for a handler validating an external payload of its own.
+        TypedTaskMessage.model_validate({})
+
+
+def build_typed_callback(
+    handler_name: str,
+) -> tuple[MessageHandlerCallback, TypedTaskController, list[Any]]:
+    callback, scheduled = build_callback()
+    controller = TypedTaskController()
+    handler_method = getattr(TypedTaskController, handler_name)
+
+    # build_callback wires a MagicMock handler; point it at the real decorated method.
+    message_handler = cast(Any, callback.message_handler)
+    message_handler.instance_callable = getattr(controller, handler_name)
+    message_handler.controller_member.member_function = handler_method
+    message_handler.message_type = TypedTaskMessage
+    message_handler.spec = MessageHandler.get_last(handler_method)
+
+    return callback, controller, scheduled
+
+
+def build_typed_message(body: bytes) -> MagicMock:
+    message = build_message()
+    message.body = body
+    return message
+
+
+class TestUnparseablePayload:
+    """
+    A body that does not validate as the handler's message type will not validate on a
+    redelivery either, so it is dead-lettered instead of spending the retry budget.
+    """
+
+    def test_payload_wraps_the_validation_error(self) -> None:
+        message = build_typed_message(b'{"wrong_field": 1}')
+        built = AioPikaMessage(cast(AbstractIncomingMessage, message), TypedTaskMessage)
+
+        with pytest.raises(MessagePayloadValidationError) as raised:
+            built.payload()
+
+        assert raised.value.message_type is TypedTaskMessage
+        assert isinstance(raised.value.error, ValidationError)
+
+    @pytest.mark.parametrize("handler_name", ["direct", "wrapped"])
+    async def test_rejects_without_requeue(self, handler_name: str) -> None:
+        callback, controller, scheduled = build_typed_callback(handler_name)
+        message = build_typed_message(b'{"wrong_field": 1}')
+
+        await callback.handle_message(message)
+
+        message.reject.assert_awaited_once_with(requeue=False)
+        assert message.ack.await_count == 0
+        assert scheduled == []
+        assert controller.handled == []
+
+    @pytest.mark.parametrize("handler_name", ["direct", "wrapped"])
+    async def test_a_valid_body_is_still_acked(self, handler_name: str) -> None:
+        callback, controller, _ = build_typed_callback(handler_name)
+        message = build_typed_message(b'{"required_field": "ok"}')
+
+        await callback.handle_message(message)
+
+        assert message.ack.await_count == 1
+        assert message.reject.await_count == 0
+        assert [m.required_field for m in controller.handled] == ["ok"]
+
+    async def test_a_validation_error_from_the_handler_still_retries(self) -> None:
+        callback, _, scheduled = build_typed_callback("validates_something_else")
+        message = build_typed_message(b'{"required_field": "ok"}')
+
+        await callback.handle_message(message)
+
+        # Only the payload parsing is unrecoverable; the handler's own validation
+        # failures keep the normal retry behaviour.
+        assert len(scheduled) == 1
+        assert message.reject.await_count == 0
