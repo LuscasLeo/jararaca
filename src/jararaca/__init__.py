@@ -160,7 +160,7 @@ if TYPE_CHECKING:
     from .messagebus.interceptors.publisher_interceptor import (
         MessageBusPublisherInterceptor,
     )
-    from .messagebus.message import Message, MessageOf
+    from .messagebus.message import Message, MessageOf, MessagePayloadValidationError
     from .messagebus.publisher import use_publisher
     from .microservice import (
         Microservice,
@@ -344,6 +344,7 @@ __all__ = [
     "Identifiable",
     "IdentifiableEntity",
     "MessageOf",
+    "MessagePayloadValidationError",
     "Message",
     "StringCriteria",
     "DateCriteria",
@@ -620,6 +621,11 @@ _dynamic_imports: "dict[str, tuple[str, str, str | None]]" = {
     "Identifiable": (__SPEC_PARENT__, "persistence.utilities", None),
     "IdentifiableEntity": (__SPEC_PARENT__, "persistence.utilities", None),
     "MessageOf": (__SPEC_PARENT__, "messagebus.message", None),
+    "MessagePayloadValidationError": (
+        __SPEC_PARENT__,
+        "messagebus.message",
+        None,
+    ),
     "Message": (__SPEC_PARENT__, "messagebus.message", None),
     "StringCriteria": (__SPEC_PARENT__, "persistence.utilities", None),
     "DateCriteria": (__SPEC_PARENT__, "persistence.utilities", None),

@@ -63,7 +63,11 @@ from jararaca.messagebus.implicit_headers import (
     provide_implicit_headers,
     use_implicit_headers,
 )
-from jararaca.messagebus.message import Message, MessageOf
+from jararaca.messagebus.message import (
+    Message,
+    MessageOf,
+    MessagePayloadValidationError,
+)
 from jararaca.microservice import (
     AppTransactionContext,
     MessageBusTransactionData,
@@ -137,7 +141,10 @@ class AioPikaMessage(MessageOf[Message]):
         self.model_type = model_type
 
     def payload(self) -> Message:
-        return self.model_type.model_validate_json(self.aio_pika_message.body)
+        try:
+            return self.model_type.model_validate_json(self.aio_pika_message.body)
+        except ValidationError as exc:
+            raise MessagePayloadValidationError(self.model_type, exc) from exc
 
 
 class MessageProcessingLocker:
@@ -1677,25 +1684,7 @@ class MessageHandlerCallback:
                                 if mode == "WRAPPED":
                                     future = handler(built_message)
                                 else:
-                                    try:
-
-                                        payload = built_message.payload()
-                                    except ValidationError as exc:
-                                        logger.exception(
-                                            "Validation error parsing message %s on topic %s",
-                                            aio_pika_message.message_id or "unknown",
-                                            routing_key,
-                                        )
-                                        aio_pika_message.headers["x-last-error"] = (
-                                            "Validation error parsing message payload"
-                                        )
-                                        await aio_pika_message.reject(requeue=False)
-                                        record_exception(
-                                            exc,
-                                        )
-                                        set_span_status("ERROR")
-                                        return
-                                    future = handler(payload)
+                                    future = handler(built_message.payload())
 
                                 await future
 
@@ -1751,6 +1740,44 @@ class MessageHandlerCallback:
                                     message_category=message_type.MESSAGE_CATEGORY,
                                     success=False,
                                 )
+                            except MessagePayloadValidationError as validation_exc:
+                                # The body will not validate on a redelivery either, so
+                                # the message is dead-lettered instead of consuming the
+                                # retry budget.
+                                successfully = False
+                                set_span_status("ERROR")
+                                logger.exception(
+                                    "Validation error parsing message %s on topic %s",
+                                    aio_pika_message.message_id or "unknown",
+                                    routing_key,
+                                )
+                                record_exception(
+                                    validation_exc,
+                                    {
+                                        "message_id": aio_pika_message.message_id
+                                        or "unknown",
+                                        "routing_key": routing_key,
+                                    },
+                                )
+                                record_message_processed(
+                                    topic=message_type.MESSAGE_TOPIC,
+                                    broker_topic=routing_key,
+                                    handler_name=handler_data.spec.name
+                                    or handler_method.__qualname__,
+                                    handler_method_name=handler_method.__name__,
+                                    message_type=message_type.MESSAGE_TYPE,
+                                    message_category=message_type.MESSAGE_CATEGORY,
+                                    success=False,
+                                )
+                                if controller.disposition is None:
+                                    try:
+                                        await aio_pika_message.reject(requeue=False)
+                                    except Exception as reject_error:
+                                        logger.error(
+                                            "Failed to reject unparseable message %s: %s",
+                                            aio_pika_message.message_id or "unknown",
+                                            reject_error,
+                                        )
                             except Exception as base_exc:
                                 set_span_status("ERROR")
                                 record_exception(

@@ -2,6 +2,6 @@
 #
 # SPDX-License-Identifier: GPL-3.0-or-later
 
-from .message import MessageOf
+from .message import MessageOf, MessagePayloadValidationError
 
-__all__ = ["MessageOf"]
+__all__ = ["MessageOf", "MessagePayloadValidationError"]
