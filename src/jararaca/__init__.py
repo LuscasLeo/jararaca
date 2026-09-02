@@ -63,6 +63,11 @@ if TYPE_CHECKING:
     from jararaca.observability.interceptor import ObservabilityInterceptor
     from jararaca.observability.providers.otel import OtelObservabilityProvider
     from jararaca.observability.trace_response import TraceResponseHeaderMiddleware
+    from jararaca.persistence.pydantic_helpers import (
+        PydanticJSONB,
+        ValidatedJSON,
+        partition_by_schema_validity,
+    )
     from jararaca.persistence.sort_filter import (
         FILTER_SORT_ENTITY_ATTR_MAP,
         FilterModel,
@@ -238,6 +243,9 @@ if TYPE_CHECKING:
     )
 
 __all__ = [
+    "ValidatedJSON",
+    "PydanticJSONB",
+    "partition_by_schema_validity",
     "const",
     "use_implicit_headers",
     "provide_implicit_headers",
@@ -432,6 +440,13 @@ __all__ = [
 __SPEC_PARENT__: str = __spec__.parent  # type: ignore
 # A mapping of {<member name>: (package, <module name>)} defining dynamic imports
 _dynamic_imports: "dict[str, tuple[str, str, str | None]]" = {
+    "ValidatedJSON": (__SPEC_PARENT__, "persistence.pydantic_helpers", None),
+    "PydanticJSONB": (__SPEC_PARENT__, "persistence.pydantic_helpers", None),
+    "partition_by_schema_validity": (
+        __SPEC_PARENT__,
+        "persistence.pydantic_helpers",
+        None,
+    ),
     "const": (__SPEC_PARENT__, "__module__", None),
     "use_implicit_headers": (
         __SPEC_PARENT__,
