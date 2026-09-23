@@ -346,7 +346,7 @@ class QueryOperations(Generic[QUERY_FILTER_T, QUERY_ENTITY_T]):
             Callable[[Select[Tuple[QUERY_ENTITY_T]]], Select[Tuple[QUERY_ENTITY_T]]]
             | None
         ) = None,
-        total_type: Literal["total_over", "count_subquery"] = "total_over",
+        total_type: Literal["total_over", "count_subquery", "none"] = "total_over",
     ) -> "Paginated[QUERY_ENTITY_T]":
         """
         Executes a query with the provided filter and interceptors.
@@ -426,19 +426,24 @@ class QueryOperations(Generic[QUERY_FILTER_T, QUERY_ENTITY_T]):
             result = self.judge_unique(result)
             result_scalars = list(result.scalars())
 
-            # Always fetch total with separate query
-            tier_two_filtered_query_for_count = tier_two_filtered_query.order_by(None)
-            unpaginated_total = (
-                await self.session.execute(
-                    tier_two_filtered_query_for_count.with_only_columns(
-                        func.count()
-                    ).select_from(self.entity_type)
-                    if issubclass(self.entity_type, IdentifiableEntity)
-                    else select(func.count()).select_from(
-                        tier_two_filtered_query_for_count.subquery()
-                    )
+            if total_type == "count_subquery":
+                # Always fetch total with separate query
+                tier_two_filtered_query_for_count = tier_two_filtered_query.order_by(
+                    None
                 )
-            ).scalar_one()
+                unpaginated_total = (
+                    await self.session.execute(
+                        tier_two_filtered_query_for_count.with_only_columns(
+                            func.count()
+                        ).select_from(self.entity_type)
+                        if issubclass(self.entity_type, IdentifiableEntity)
+                        else select(func.count()).select_from(
+                            tier_two_filtered_query_for_count.subquery()
+                        )
+                    )
+                ).scalar_one()
+            else:
+                unpaginated_total = -1
 
         return Paginated(
             items=result_scalars,
