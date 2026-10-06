@@ -42,7 +42,13 @@ def write_controller_hooks(
         for name in sorted(methods_with_both)
     ]
 
-    controller_hooks_builder.write(f"export const {pascal_to_camel(class_name)} = {{\n")
+    # The whole object is wrapped in a pure-annotated IIFE: bundlers cannot drop an
+    # object built from spreads of function calls (spreading an unknown value may
+    # trigger getters), so without it every controller stays in the final bundle even
+    # when nothing imports it. Annotating only the calls is not enough.
+    controller_hooks_builder.write(
+        f"export const {pascal_to_camel(class_name)} = /*#__PURE__*/ (() => ({{\n"
+    )
 
     # Hooks for methods with only query decorator
     if query_only:
@@ -106,6 +112,6 @@ def write_controller_hooks(
         controller_hooks_builder.write("\t\t}),\n")
         controller_hooks_builder.write("\t},\n")
 
-    controller_hooks_builder.write("};\n")
+    controller_hooks_builder.write("}))();\n")
 
     return controller_hooks_builder

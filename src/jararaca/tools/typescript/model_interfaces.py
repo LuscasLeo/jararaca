@@ -12,6 +12,7 @@ from pydantic import BaseModel
 
 from jararaca.tools.typescript.decorators import SplitInputOutput
 from jararaca.tools.typescript.naming import is_constant, snake_to_camel
+from jararaca.tools.typescript.parse_context import use_parse_context
 from jararaca.tools.typescript.type_introspection import (
     extract_all_envolved_types,
     get_generic_args,
@@ -105,9 +106,19 @@ def parse_single_typescript_interface(
     if Enum in inherited_classes:
         enum_casted = cast(Type[Enum], basemodel_type)
         enum_values = sorted([(x._name_, x.value) for x in enum_casted])
+        enum_name = f"{basemodel_type.__name__}{interface_suffix}"
+        if use_parse_context().enum_style == "const":
+            enum_members = "".join(
+                f'\t{name}: "{value}",\n' for name, value in enum_values
+            )
+            return (
+                set(),
+                f"export const {enum_name} = {{\n{enum_members}}} as const;\n"
+                f"export type {enum_name} = (typeof {enum_name})[keyof typeof {enum_name}];\n",
+            )
         return (
             set(),
-            f"export enum {basemodel_type.__name__}{interface_suffix} {{\n"
+            f"export enum {enum_name} {{\n"
             + "\n ".join([f'\t{name} = "{value}",' for name, value in enum_values])
             + "\n}\n",
         )

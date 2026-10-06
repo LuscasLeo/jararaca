@@ -238,7 +238,7 @@ export class ItemsController extends HttpService {
 		return response;
 	}
 }
-export const itemsController = {
+export const itemsController = /*#__PURE__*/ (() => ({
 	...createClassQueryHooks(ItemsController,
 		"getItem",
 		"searchItems",
@@ -259,7 +259,7 @@ export const itemsController = {
 			"bothItem",
 		),
 	},
-};
+}))();
 export class WsController extends HttpService {
 	async status(): Promise<"ok"> {
 		const response = await this.httpBackend.request<"ok">({ 
@@ -280,12 +280,11 @@ export interface Ping extends Omit<WebSocketMessageBase, "MESSAGE_ID"> {
   seq: number;
 }
 export class RichController extends HttpService {
-	async mixed(tenant: string, trace: string, upload: File, payload: CreateItem, search: string, scope_id: number, plain_path: number, plain_query: string, plain_path: number, profile: ProfileInput, item: CreateItem, q: string, flag: boolean, files: Array<File>, token: string, session: string, cookie_value: string, header_value: string, profile_query: Profile, profile_path: Profile, profile_body: Profile, form_value: number): Promise<Array<ProfileOutput>> {
+	async mixed(tenant: string, trace: string, upload: File, payload: CreateItem, search: string, scope_id: number, plain_path: number, plain_query: string, profile: ProfileInput, item: CreateItem, q: string, flag: boolean, files: Array<File>, token: string, session: string, cookie_value: string, header_value: string, profile_query: Profile, profile_path: Profile, profile_body: Profile, form_value: number): Promise<Array<ProfileOutput>> {
 		const response = await this.httpBackend.request<Array<ProfileOutput>>({ 
 			method: "POST",
 			path: `/rich/:scope_id/:plain_path/mixed`,
 			pathParams: {
-				"plain_path": plain_path,
 				"plain_path": plain_path,
 				"profile_path": profile_path,
 				"scope_id": scope_id,

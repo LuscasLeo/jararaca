@@ -1,5 +1,20 @@
 # Changelog
 
+## [Unreleased]
+
+### Added
+- `jararaca gen-tsi --enum-style const` (env `ENUM_STYLE`) emits Python enums as an `as const` object plus a type alias instead of a TypeScript `enum`, which is considerably smaller in the final frontend bundle. The default (`enum`) is unchanged
+
+### Changed
+- TypeScript generation: the hooks object of each controller is now wrapped in a `/*#__PURE__*/` IIFE, so bundlers can drop controllers that are never imported
+- TypeScript generation: parameters declared with the same name and definition by a middleware and its handler are merged into a single argument
+
+### Fixed
+- TypeScript generation: `Annotated[...]` parameters without a FastAPI marker are now detected as path parameters when named in the route (`{name}`), and middleware parameters follow the same rules as handler parameters, including `Depends`
+- TypeScript generation: conflicting duplicated parameters now raise `ConflictingParametersError` instead of producing a duplicate identifier (a syntax error in ES modules)
+- `QueryEndpoint.get_last` no longer recurses infinitely
+- Type parse state no longer leaks between generations
+
 ## [Unreleased] - 2025-12-19
 
 ### Added

@@ -47,6 +47,30 @@ class ChildController(BaseController):
         return "child hello"
 ```
 
+### Enum Style
+By default Python enums are generated as TypeScript `enum`s. A TypeScript `enum` compiles to extra runtime code, so projects with many enums can shrink their final bundle by emitting a plain `as const` object plus a type alias instead:
+
+```bash
+jararaca gen-tsi app:app src/client/api.ts --enum-style const
+```
+
+```typescript
+// --enum-style enum (default)
+export enum Status {
+	ACTIVE = "active",
+	INACTIVE = "inactive",
+}
+
+// --enum-style const
+export const Status = {
+	ACTIVE: "active",
+	INACTIVE: "inactive",
+} as const;
+export type Status = (typeof Status)[keyof typeof Status];
+```
+
+`Status` keeps working as both a value (`Status.ACTIVE`) and a type (`const s: Status`), and also in `switch` statements and `Object.values(Status)`. The one difference is that a member can no longer be used directly as a type: write `typeof Status.ACTIVE` instead of `Status.ACTIVE`. The generator already does this for `Literal[Status.ACTIVE]` fields. The option can also be set with the `ENUM_STYLE` environment variable.
+
 ### Explicit Type Exposure
 Use the `@ExposeType` decorator to include types that aren't directly used in endpoints but are needed on the frontend. See [Exposing Types](expose-type.md) for more details.
 

@@ -46,6 +46,7 @@ from jararaca.tools.typescript.naming import (
     snake_to_camel,
 )
 from jararaca.tools.typescript.parse_context import (
+    EnumStyle,
     ParseContext,
     parse_context_ctxvar,
     use_parse_context,
@@ -70,6 +71,7 @@ from jararaca.tools.typescript.type_mapper import (
 
 __all__ = [
     "CONSTANT_PATTERN",
+    "EnumStyle",
     "EXCLUDED_REQUESTS_TYPES",
     "HttpParameterSpec",
     "HttpParemeterSpec",
