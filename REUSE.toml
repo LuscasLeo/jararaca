@@ -42,3 +42,9 @@ path = "src/jararaca/files/project_template/**"
 precedence = "aggregate"
 SPDX-FileCopyrightText = "2025 Lucas S"
 SPDX-License-Identifier = "GPL-3.0-or-later"
+
+[[annotations]]
+path = "src/jararaca/tools/typescript/templates/**"
+precedence = "aggregate"
+SPDX-FileCopyrightText = "2025 Lucas S"
+SPDX-License-Identifier = "GPL-3.0-or-later"
