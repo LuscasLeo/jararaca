@@ -23,8 +23,8 @@ logger_extra_attrubutes_ctxvar: "ContextVar[LoggerExtraAttributeMap]" = ContextV
 
 def _is_forbidden_extra_key(key: str) -> bool:
     return (
-        not key.isidentifier()
-        or key.startswith("_")
+        # not key.isidentifier()
+        key.startswith("_")
         or key in _RESERVED_LOGRECORD_ATTRS
     )
 
