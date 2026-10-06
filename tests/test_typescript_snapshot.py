@@ -32,6 +32,7 @@ from jararaca.tools.typescript.decorators import (
     QueryEndpoint,
     SplitInputOutput,
 )
+from jararaca.tools.typescript.http.parameters import ConflictingParametersError
 from jararaca.tools.typescript.interface_parser import (
     write_microservice_to_typescript_interface,
     write_rest_controller_to_typescript_interface,
@@ -289,3 +290,61 @@ def test_middleware_unmarked_annotated_and_dependencies() -> None:
     assert '"token": token' in output.split("headers: {")[1].split("}")[0]
     assert "bearer" not in output
     assert '"upload": upload' in output.split("makeFormData({")[1].split("}")[0]
+
+
+def test_hooks_object_is_wrapped_for_tree_shaking() -> None:
+    output = write_microservice_to_typescript_interface(
+        Microservice(controllers=[ItemsController])
+    )
+
+    assert "export const itemsController = /*#__PURE__*/ (() => ({" in output
+    assert "}))();" in output
+
+
+def test_duplicated_parameters_are_merged() -> None:
+    """Same name and definition in middleware and handler yields a single argument."""
+
+    class HeaderMiddleware:
+        async def intercept(
+            self, tenant: Annotated[str, Header()]
+        ) -> AsyncGenerator[None, None]:
+            yield
+
+    @UseMiddleware(HeaderMiddleware)
+    @RestController("/dup")
+    class DuplicatedController:
+        @Get("/")
+        async def read(self, tenant: Annotated[str, Header()]) -> None:
+            raise NotImplementedError
+
+    rest_controller = RestController.get_last(DuplicatedController)
+    assert rest_controller is not None
+    output = write_rest_controller_to_typescript_interface(
+        rest_controller, DuplicatedController
+    )[0].getvalue()
+
+    assert "async read(tenant: string)" in output
+    assert output.count('"tenant": tenant') == 1
+
+
+def test_conflicting_duplicated_parameters_raise() -> None:
+    class HeaderMiddleware:
+        async def intercept(
+            self, tenant: Annotated[str, Header()]
+        ) -> AsyncGenerator[None, None]:
+            yield
+
+    @UseMiddleware(HeaderMiddleware)
+    @RestController("/dup")
+    class ConflictingController:
+        @Get("/")
+        async def read(self, tenant: Annotated[int, Query()]) -> None:
+            raise NotImplementedError
+
+    rest_controller = RestController.get_last(ConflictingController)
+    assert rest_controller is not None
+
+    with pytest.raises(ConflictingParametersError, match="ConflictingController.read"):
+        write_rest_controller_to_typescript_interface(
+            rest_controller, ConflictingController
+        )

@@ -272,6 +272,7 @@ Generates TypeScript interfaces from your Python models to ensure type safety be
 - `--src-dir`: Source directory to watch for changes (default: "src") [env: SRC_DIR]
 - `--stdout`: Print generated interfaces to stdout instead of writing to a file [env: STDOUT]
 - `--post-process`: Command to run after generating the interfaces, {file} will be replaced with the output file path [env: POST_PROCESS]
+- `--enum-style`: How Python enums are emitted, `enum` (default) or `const` (see [TypeScript Interface Generation](typescript-generation.md#enum-style)) [env: ENUM_STYLE]
 
 **Environment Variables:**
 - `APP_PATH`: The application module path

@@ -19,6 +19,7 @@ from jararaca.tools.typescript.model_interfaces import (
     parse_type_to_typescript_interface,
 )
 from jararaca.tools.typescript.parse_context import (
+    EnumStyle,
     use_parse_context,
     with_parse_context,
 )
@@ -58,9 +59,10 @@ def write_type_interfaces(root_types: set[Any]) -> str:
 
 def write_microservice_to_typescript_interface(
     microservice: Microservice,
+    enum_style: EnumStyle = "enum",
 ) -> str:
     # Isolate parse state so types mapped in one generation never leak into another
-    with with_parse_context():
+    with with_parse_context(enum_style):
         return _write_microservice(microservice)
 
 

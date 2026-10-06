@@ -39,6 +39,7 @@ from jararaca.reflect.controller_inspect import (
 from jararaca.scheduler.beat_worker import BeatWorker
 from jararaca.scheduler.decorators import ScheduledAction
 from jararaca.tools.typescript.interface_parser import (
+    EnumStyle,
     write_microservice_to_typescript_interface,
 )
 from jararaca.utils.rabbitmq_utils import RabbitmqUtils
@@ -620,10 +621,11 @@ def generate_interfaces(
     file_path: str | None = None,
     stdout: bool = False,
     post_process_cmd: str | None = None,
+    enum_style: EnumStyle = "enum",
 ) -> str:
     try:
         app = find_microservice_by_module_path(app_path)
-        content = write_microservice_to_typescript_interface(app)
+        content = write_microservice_to_typescript_interface(app, enum_style)
 
         if stdout:
             return content
@@ -703,6 +705,18 @@ def generate_interfaces(
     envvar="POST_PROCESS",
     help="Command to run after generating the interfaces, {file} will be replaced with the output file path",
 )
+@click.option(
+    "--enum-style",
+    type=click.Choice(["enum", "const"]),
+    default="enum",
+    show_default=True,
+    envvar="ENUM_STYLE",
+    help=(
+        "How Python enums are emitted. 'enum' generates TypeScript enums; 'const' "
+        "generates an `as const` object plus a type alias, which is much smaller in the "
+        "final bundle (but `Color.RED` can no longer be used as a type)"
+    ),
+)
 def gen_tsi(
     app_path: str,
     file_path: str | None,
@@ -710,6 +724,7 @@ def gen_tsi(
     src_dir: str,
     stdout: bool,
     post_process: str | None,
+    enum_style: EnumStyle,
 ) -> None:
     """Generate TypeScript interfaces from a Python microservice."""
 
@@ -734,7 +749,7 @@ def gen_tsi(
         return
 
     # Initial generation
-    content = generate_interfaces(app_path, file_path, stdout, post_process)
+    content = generate_interfaces(app_path, file_path, stdout, post_process, enum_style)
 
     if stdout:
         click.echo(content)
@@ -767,7 +782,7 @@ def gen_tsi(
                 # Create a completely detached process to ensure classes are reloaded
                 process = multiprocessing.get_context("spawn").Process(
                     target=generate_interfaces,
-                    args=(app_path, file_path, False, post_process),
+                    args=(app_path, file_path, False, post_process, enum_style),
                     daemon=False,  # Non-daemon to ensure it completes
                 )
                 process.start()

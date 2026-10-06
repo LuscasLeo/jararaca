@@ -20,6 +20,7 @@ from jararaca.tools.typescript.http.middleware_extractor import (
     collect_middleware_parameters,
 )
 from jararaca.tools.typescript.http.parameter_extractor import extract_parameters
+from jararaca.tools.typescript.http.parameters import merge_duplicate_parameters
 from jararaca.tools.typescript.type_introspection import extract_all_envolved_types
 from jararaca.tools.typescript.type_mapper import (
     get_field_type_for_ts,
@@ -96,7 +97,9 @@ def write_rest_controller_to_typescript_interface(
         parameters_mapped_types.update(middleware_mapped_types)
 
         # Middleware params first, then controller params
-        arg_params_spec = middleware_params + arg_params_spec
+        arg_params_spec = merge_duplicate_parameters(
+            middleware_params + arg_params_spec, f"{class_name}.{name}"
+        )
 
         for param in parameters_mapped_types:
             mapped_types.update(extract_all_envolved_types(param))

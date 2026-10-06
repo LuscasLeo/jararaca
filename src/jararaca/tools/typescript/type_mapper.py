@@ -26,8 +26,11 @@ def parse_literal_value(value: Any) -> str:
     if value is None:
         return "null"
     if isinstance(value, Enum):
-        use_parse_context().mapped_types.add(value.__class__)
-        return f"{value.__class__.__name__}.{value.name}"
+        context = use_parse_context()
+        context.mapped_types.add(value.__class__)
+        member = f"{value.__class__.__name__}.{value.name}"
+        # An ``as const`` object member is a value, not a type
+        return f"typeof {member}" if context.enum_style == "const" else member
     if isinstance(value, str):
         # Properly escape quotes for TypeScript string literals
         escaped_value = value.replace("\\", "\\\\").replace('"', '\\"')
