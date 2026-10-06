@@ -312,3 +312,44 @@ export class RichController extends HttpService {
 		return response;
 	}
 }
+export class AliasPathController extends HttpService {
+	async getUser(org_id: number, user_id: number, legacy_id: string, page: number): Promise<null> {
+		const response = await this.httpBackend.request<null>({ 
+			method: "GET",
+			path: `/orgs/:org_id/users/:user_id/:legacy_id`,
+			pathParams: {
+				"legacy_id": legacy_id,
+				"org_id": org_id,
+				"user_id": user_id,
+			},
+			headers: {
+			},
+			query: {
+				"page": page,
+			},
+			body: undefined
+		});
+		return response;
+	}
+}
+export class GuardedController extends HttpService {
+	async ping(tenant_id: number, limit: number, token: string, session: string, upload: File): Promise<null> {
+		const response = await this.httpBackend.request<null>({ 
+			method: "GET",
+			path: `/guarded/:tenant_id/ping`,
+			pathParams: {
+				"tenant_id": tenant_id,
+			},
+			headers: {
+				"token": token,
+			},
+			query: {
+				"limit": limit,
+			},
+			body: makeFormData({
+				"upload": upload,
+			})
+		});
+		return response;
+	}
+}
