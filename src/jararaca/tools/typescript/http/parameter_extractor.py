@@ -3,7 +3,6 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 
 import inspect
-import re
 from types import UnionType
 from typing import Annotated, Any, get_origin
 
@@ -18,6 +17,7 @@ from jararaca.tools.typescript.http.parameter_builders import (
     build_parameter_spec,
     build_unmarked_parameter,
     is_annotated,
+    is_path_parameter,
     resolve_annotated_marker,
 )
 from jararaca.tools.typescript.http.parameters import (
@@ -112,10 +112,9 @@ def extract_parameters(
                             parameter_name,
                             annotated_type,
                             type_mapping,
-                            is_path=re.search(
-                                f":{parameter_name}(?:/|$)", controller.path
-                            )
-                            is not None,
+                            is_path=is_path_parameter(
+                                parameter_name, controller, mapping
+                            ),
                         )
                     )
 
@@ -147,13 +146,7 @@ def extract_parameters(
                         parameter_name,
                         parameter_type,
                         type_mapping,
-                        is_path=(
-                            # Match both simple parameters {param} and parameters with converters {param:converter}
-                            re.search(f"{{{parameter_name}(:.*?)?}}", controller.path)
-                            is not None
-                            or re.search(f"{{{parameter_name}(:.*?)?}}", mapping.path)
-                            is not None
-                        ),
+                        is_path=is_path_parameter(parameter_name, controller, mapping),
                     )
                 )
 

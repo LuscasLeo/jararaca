@@ -16,7 +16,10 @@ from pydantic import PlainValidator, RootModel
 
 from jararaca.tools.typescript.decorators import SplitInputOutput
 from jararaca.tools.typescript.parse_context import use_parse_context
-from jararaca.tools.typescript.type_introspection import unwrap_annotated_type
+from jararaca.tools.typescript.type_introspection import (
+    get_type_args,
+    unwrap_annotated_type,
+)
 
 
 def parse_literal_value(value: Any) -> str:
@@ -128,16 +131,16 @@ def get_field_type_for_ts(
         return "string"
     if get_origin(field_type) == ClassVar:
         return get_field_type_for_ts(
-            field_type.__args__[0], context_suffix, type_mapping
+            get_type_args(field_type)[0], context_suffix, type_mapping
         )
     if get_origin(field_type) == tuple:
-        return f"[{', '.join([get_field_type_for_ts(field, context_suffix, type_mapping) for field in field_type.__args__])}]"
+        return f"[{', '.join([get_field_type_for_ts(field, context_suffix, type_mapping) for field in get_type_args(field_type)])}]"
     if get_origin(field_type) == list or get_origin(field_type) == frozenset:
-        return f"Array<{get_field_type_for_ts(field_type.__args__[0], context_suffix, type_mapping)}>"
+        return f"Array<{get_field_type_for_ts(get_type_args(field_type)[0], context_suffix, type_mapping)}>"
     if get_origin(field_type) == set:
-        return f"Array<{get_field_type_for_ts(field_type.__args__[0], context_suffix, type_mapping)}> // Set"
+        return f"Array<{get_field_type_for_ts(get_type_args(field_type)[0], context_suffix, type_mapping)}> // Set"
     if get_origin(field_type) == dict:
-        return f"{{[key: {get_field_type_for_ts(field_type.__args__[0], context_suffix, type_mapping)}]: {get_field_type_for_ts(field_type.__args__[1], context_suffix, type_mapping)}}}"
+        return f"{{[key: {get_field_type_for_ts(get_type_args(field_type)[0], context_suffix, type_mapping)}]: {get_field_type_for_ts(get_type_args(field_type)[1], context_suffix, type_mapping)}}}"
     if inspect.isclass(field_type):
         if not hasattr(field_type, "__pydantic_generic_metadata__"):
             # Check if this is a split model and use appropriate suffix
@@ -174,15 +177,15 @@ def get_field_type_for_ts(
     if hasattr(field_type, "__class__") and field_type.__class__ is TypeVar:
         return field_type.__name__
     if get_origin(field_type) == Literal:
-        return " | ".join([parse_literal_value(x) for x in field_type.__args__])
+        return " | ".join([parse_literal_value(x) for x in get_type_args(field_type)])
     if get_origin(field_type) == UnionType or get_origin(field_type) == typing.Union:
         return " | ".join(
             [
                 get_field_type_for_ts(x, context_suffix, type_mapping)
-                for x in field_type.__args__
+                for x in get_type_args(field_type)
             ]
         )
-    if (get_origin(field_type) == Annotated) and (len(field_type.__args__) > 0):
+    if (get_origin(field_type) == Annotated) and (len(get_type_args(field_type)) > 0):
         unwrapped_type, all_metadata = unwrap_annotated_type(field_type)
 
         if (

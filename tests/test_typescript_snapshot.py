@@ -15,9 +15,11 @@ from typing import Annotated, AsyncGenerator, Generic, Literal, Optional, TypeVa
 from uuid import UUID
 
 import pytest
+from annotated_types import Gt
 from fastapi import Depends, Header, Query, Request, UploadFile
 from fastapi.params import Body, Cookie, Form
 from fastapi.params import Path as PathParam
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel
 
 from jararaca import Delete, Get, Microservice, Patch, Post, Put, RestController
@@ -32,6 +34,7 @@ from jararaca.tools.typescript.decorators import (
 )
 from jararaca.tools.typescript.interface_parser import (
     write_microservice_to_typescript_interface,
+    write_rest_controller_to_typescript_interface,
 )
 
 SNAPSHOT_PATH = Path(__file__).parent / "snapshots" / "microservice.ts"
@@ -189,11 +192,55 @@ class RichController:
         raise NotImplementedError
 
 
+PositiveId = Annotated[int, Gt(0)]
+
+
+@RestController("/orgs/{org_id}")
+class AliasPathController:
+    """Path parameters declared with Annotated types that carry no FastAPI marker."""
+
+    @Get("/users/{user_id}/{legacy_id}")
+    async def get_user(
+        self, org_id: PositiveId, user_id: PositiveId, legacy_id: UUID, page: PositiveId
+    ) -> None:
+        raise NotImplementedError
+
+
+class GuardMiddleware:
+    """Middleware using unmarked Annotated aliases and dependencies."""
+
+    async def intercept(
+        self,
+        tenant_id: PositiveId,
+        limit: PositiveId,
+        session: Annotated[None, Depends(_dependency_params)],
+        bearer: Annotated[HTTPAuthorizationCredentials, Depends(HTTPBearer())],
+        upload: Annotated[UploadFile, Gt(0)],
+    ) -> AsyncGenerator[None, None]:
+        yield
+
+
+@UseMiddleware(GuardMiddleware)
+@RestController("/guarded/{tenant_id}")
+class GuardedController:
+    @Get("/ping")
+    async def ping(self) -> None:
+        raise NotImplementedError
+
+
 def test_microservice_typescript_snapshot(monkeypatch: pytest.MonkeyPatch) -> None:
     # Other tests register types globally; keep only the ones declared in this module
     monkeypatch.setattr(ExposeType, "_exposed_types", {Exposed})
     output = write_microservice_to_typescript_interface(
-        Microservice(controllers=[ItemsController, WsController, RichController])
+        Microservice(
+            controllers=[
+                ItemsController,
+                WsController,
+                RichController,
+                AliasPathController,
+                GuardedController,
+            ]
+        )
     )
 
     if os.environ.get("UPDATE_SNAPSHOTS") or not SNAPSHOT_PATH.exists():
@@ -204,3 +251,41 @@ def test_microservice_typescript_snapshot(monkeypatch: pytest.MonkeyPatch) -> No
     assert "export class ItemsController" in output
     assert "export class WsController" in output
     assert "Exposed" in output
+
+
+def test_annotated_path_parameters_without_fastapi_marker() -> None:
+    """Annotated aliases named in the route are path params, not query params."""
+    rest_controller = RestController.get_last(AliasPathController)
+    assert rest_controller is not None
+
+    class_buffer, _, _ = write_rest_controller_to_typescript_interface(
+        rest_controller, AliasPathController
+    )
+    output = class_buffer.getvalue()
+
+    path_params = output.split("pathParams: {")[1].split("}")[0]
+    query_params = output.split("query: {")[1].split("}")[0]
+
+    for name in ("org_id", "user_id", "legacy_id"):
+        assert f'"{name}": {name}' in path_params
+        assert f'"{name}"' not in query_params
+    assert '"page": page' in query_params
+
+
+def test_middleware_unmarked_annotated_and_dependencies() -> None:
+    """Middleware params follow the same rules as handler params."""
+    rest_controller = RestController.get_last(GuardedController)
+    assert rest_controller is not None
+
+    class_buffer, _, _ = write_rest_controller_to_typescript_interface(
+        rest_controller, GuardedController
+    )
+    output = class_buffer.getvalue()
+
+    assert "path: `/guarded/:tenant_id/ping`" in output
+    assert '"tenant_id": tenant_id' in output.split("pathParams: {")[1].split("}")[0]
+    assert '"limit": limit' in output.split("query: {")[1].split("}")[0]
+    # Depends(_dependency_params) is expanded; Depends(HTTPBearer()) is not
+    assert '"token": token' in output.split("headers: {")[1].split("}")[0]
+    assert "bearer" not in output
+    assert '"upload": upload' in output.split("makeFormData({")[1].split("}")[0]

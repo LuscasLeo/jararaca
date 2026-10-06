@@ -7,10 +7,12 @@ Building blocks shared by the handler and middleware parameter extractors.
 """
 
 import inspect
+import re
 from typing import Annotated, Any, Literal, get_origin
 
 from fastapi.params import Body, Cookie, Depends, Form, Header, Path, Query
 
+from jararaca.presentation.decorators import HttpMapping, RestController
 from jararaca.tools.typescript.decorators import SplitInputOutput
 from jararaca.tools.typescript.http.parameters import HttpParameterSpec
 from jararaca.tools.typescript.type_introspection import (
@@ -23,6 +25,21 @@ from jararaca.tools.typescript.type_mapper import get_field_type_for_ts
 ParameterKind = Literal["query", "path", "body", "header", "cookie", "form"]
 
 FASTAPI_PARAMETER_MARKERS = (Header, Cookie, Form, Body, Query, Path, Depends)
+
+
+def is_path_parameter(
+    name: str, controller: RestController, mapping: HttpMapping
+) -> bool:
+    """
+    Whether the parameter is a path parameter of the route, i.e. ``{name}`` (or
+    ``{name:converter}``) appears in the controller path or in the method path.
+    """
+    # Match both simple parameters {param} and parameters with converters {param:converter}
+    pattern = f"{{{name}(:.*?)?}}"
+    return (
+        re.search(pattern, controller.path) is not None
+        or re.search(pattern, mapping.path) is not None
+    )
 
 
 def input_suffix(python_type: Any) -> str:

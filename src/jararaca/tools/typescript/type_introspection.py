@@ -229,6 +229,17 @@ def is_generic_type(field_type: Any) -> bool:
     return hasattr(field_type, "__parameters__") and len(field_type.__parameters__) > 0
 
 
+def get_type_args(field_type: Any) -> tuple[Any, ...]:
+    """
+    ``__args__`` of a typing construct (``list[int]``, ``A | B``, ``Literal[...]``...).
+
+    Static checkers narrow ``field_type`` to ``type[object]`` after equality checks and
+    then reject ``__args__``; going through ``Any`` keeps the dynamic access explicit.
+    """
+    args: tuple[Any, ...] = getattr(field_type, "__args__")
+    return args
+
+
 def get_generic_args(field_type: Any) -> Any:
     return field_type.__parameters__
 
@@ -306,7 +317,10 @@ def extract_all_envolved_types(field_type: Any) -> set[Any]:
                     return mapped_types
             else:
                 mapped_types.update(
-                    *[extract_all_envolved_types(arg) for arg in field_type.__args__]
+                    *[
+                        extract_all_envolved_types(arg)
+                        for arg in get_type_args(field_type)
+                    ]
                 )
                 return mapped_types
 
@@ -327,7 +341,7 @@ def extract_all_envolved_types(field_type: Any) -> set[Any]:
                 mapped_types.update(extract_all_envolved_types(member))
 
     if hasattr(field_type, "__args__"):
-        for arg in field_type.__args__:
+        for arg in get_type_args(field_type):
             mapped_types.update(extract_all_envolved_types(arg))
 
     return mapped_types

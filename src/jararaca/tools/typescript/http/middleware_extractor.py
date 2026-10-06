@@ -3,17 +3,22 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 
 import inspect
-import re
 from typing import Any
+
+from fastapi.params import Depends
+from fastapi.security.http import HTTPBase
 
 from jararaca.presentation.decorators import HttpMapping, RestController, UseMiddleware
 from jararaca.reflect.decorators import resolve_method_decorators
 from jararaca.tools.typescript.http.parameter_builders import (
     build_marked_parameter,
     build_parameter_spec,
+    build_unmarked_parameter,
     is_annotated,
+    is_path_parameter,
     resolve_annotated_marker,
 )
+from jararaca.tools.typescript.http.parameter_extractor import extract_parameters
 from jararaca.tools.typescript.http.parameters import (
     EXCLUDED_REQUESTS_TYPES,
     HttpParameterSpec,
@@ -61,20 +66,34 @@ def extract_middleware_parameters(
                     spec, referenced_types = built
                     parameters_list.append(spec)
                     mapped_types.update(referenced_types)
-                # Dependencies (Depends) are not expanded for middlewares, to avoid
-                # infinite recursion
+                elif isinstance(marker, Depends):
+                    depends_hook = marker.dependency or parameter_type.__args__[0]
+
+                    # HTTP authentication dependencies carry no parameters
+                    if not isinstance(depends_hook, HTTPBase):
+                        rec_parameters, rec_mapped_types = extract_parameters(
+                            depends_hook, controller, mapping
+                        )
+                        mapped_types.update(rec_mapped_types)
+                        parameters_list.extend(rec_parameters)
+                else:
+                    mapped_types.add(annotated_type)
+                    parameters_list.append(
+                        build_unmarked_parameter(
+                            parameter_name,
+                            annotated_type,
+                            None,
+                            is_path=is_path_parameter(
+                                parameter_name, controller, mapping
+                            ),
+                        )
+                    )
             else:
                 # Non-annotated parameters: path parameter when named in the paths,
                 # otherwise query parameter if it is a simple type
                 mapped_types.add(parameter_type)
 
-                if (
-                    # Match both simple parameters {param} and parameters with converters {param:converter}
-                    re.search(f"{{{parameter_name}(:.*?)?}}", controller.path)
-                    is not None
-                    or re.search(f"{{{parameter_name}(:.*?)?}}", mapping.path)
-                    is not None
-                ):
+                if is_path_parameter(parameter_name, controller, mapping):
                     parameters_list.append(
                         build_parameter_spec("path", parameter_name, parameter_type)
                     )
