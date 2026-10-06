@@ -29,13 +29,6 @@ class QueryEndpoint(StackableDecorator):
         """
         self.has_infinite_query = has_infinite_query
 
-    @classmethod
-    def get_last(cls, subject: Any) -> "QueryEndpoint | None":
-        """
-        Check if the function is marked as a query endpoint.
-        """
-        return QueryEndpoint.get_last(subject)
-
 
 class MutationEndpoint(StackableDecorator):
     """

@@ -12,14 +12,22 @@ class ParseContext:
         self.mapped_types: set[Any] = set()
 
 
+# Fallback used when no ``with_parse_context`` block is active (e.g. direct calls to
+# the type mapper). A generation run should always use its own context instead.
 parse_context_ctxvar = ContextVar("parse_context", default=ParseContext())
 
 
 @contextmanager
 def with_parse_context() -> Generator[ParseContext, None, None]:
-    parse_context = parse_context_ctxvar.get()
-    yield parse_context
-    parse_context_ctxvar.set(parse_context)
+    """
+    Run the block with a fresh ``ParseContext``, restoring the previous one on exit.
+    """
+    parse_context = ParseContext()
+    token = parse_context_ctxvar.set(parse_context)
+    try:
+        yield parse_context
+    finally:
+        parse_context_ctxvar.reset(token)
 
 
 def use_parse_context() -> ParseContext:

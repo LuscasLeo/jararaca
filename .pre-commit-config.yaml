@@ -10,7 +10,9 @@ repos:
     rev: v3.2.0
     hooks:
       - id: trailing-whitespace
+        exclude: "^(tests/snapshots/|src/jararaca/tools/typescript/templates/)"
       - id: end-of-file-fixer
+        exclude: "^(tests/snapshots/|src/jararaca/tools/typescript/templates/)"
       - id: check-added-large-files
 
   # autofake
@@ -58,6 +60,7 @@ repos:
         entry: bash -c 'poetry run isort "$@" || true' -- #poetry run isort --profile black
         stages: [commit, merge-commit, push, manual]
         language: system
+        types: [python]
 
         # args:
         #   - --settings-path=pyproject.toml

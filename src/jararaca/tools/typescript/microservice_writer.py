@@ -18,7 +18,10 @@ from jararaca.tools.typescript.http.controller_writer import (
 from jararaca.tools.typescript.model_interfaces import (
     parse_type_to_typescript_interface,
 )
-from jararaca.tools.typescript.parse_context import with_parse_context
+from jararaca.tools.typescript.parse_context import (
+    use_parse_context,
+    with_parse_context,
+)
 from jararaca.tools.typescript.prelude import read_typescript_prelude
 from jararaca.tools.typescript.type_introspection import is_primitive
 from jararaca.tools.typescript.websocket_writer import (
@@ -37,16 +40,16 @@ def write_type_interfaces(root_types: set[Any]) -> str:
 
     unordered_types_buffer: list[tuple[type, str]] = []
 
+    parse_context = use_parse_context()
+
     while len(backlog) > 0:
         t = backlog.pop()
         if not is_primitive(t):
-            with with_parse_context() as parse_context:
-
-                identified_types, text = parse_type_to_typescript_interface(t)
-                processed_types.add(t)
-                unordered_types_buffer.append((t, text))
-                identified_types.update(parse_context.mapped_types)
-                backlog.update(identified_types - processed_types)
+            identified_types, text = parse_type_to_typescript_interface(t)
+            processed_types.add(t)
+            unordered_types_buffer.append((t, text))
+            identified_types.update(parse_context.mapped_types)
+            backlog.update(identified_types - processed_types)
 
     ordered_types_buffer = sorted(unordered_types_buffer, key=lambda x: x[0].__name__)
 
@@ -56,6 +59,12 @@ def write_type_interfaces(root_types: set[Any]) -> str:
 def write_microservice_to_typescript_interface(
     microservice: Microservice,
 ) -> str:
+    # Isolate parse state so types mapped in one generation never leak into another
+    with with_parse_context():
+        return _write_microservice(microservice)
+
+
+def _write_microservice(microservice: Microservice) -> str:
     rest_controller_buffer = StringIO()
     mapped_types_set: set[Any] = set()
 
