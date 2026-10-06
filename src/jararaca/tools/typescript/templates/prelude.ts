@@ -5,16 +5,7 @@
 
 // noinspection JSUnusedGlobalSymbols
 
-import "@jararaca/core"
-import createClassInfiniteQueryHooks
-import createClassMutationHooks
-import createClassQueryHooks
-import HttpBackend
-import HttpBackendRequest
-import paginationModelByFirstArgPaginationFilter
-import recursiveCamelToSnakeCase }
-import ResponseType
-import { HttpService
+import { HttpService, HttpBackend, HttpBackendRequest, ResponseType, createClassQueryHooks , createClassMutationHooks, createClassInfiniteQueryHooks, paginationModelByFirstArgPaginationFilter, recursiveCamelToSnakeCase } from "@jararaca/core";
 
 function makeFormData(data: Record<string, any>): FormData {
   const formData = new FormData();
@@ -45,3 +36,4 @@ function* genFormDataValue(value: any): any {
     yield value;
   }
 }
+

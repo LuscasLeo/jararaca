@@ -15,8 +15,9 @@ from typing import Annotated, AsyncGenerator, Generic, Literal, Optional, TypeVa
 from uuid import UUID
 
 import pytest
-from fastapi import Header, Query, UploadFile
-from fastapi.params import Form
+from fastapi import Depends, Header, Query, Request, UploadFile
+from fastapi.params import Body, Cookie, Form
+from fastapi.params import Path as PathParam
 from pydantic import BaseModel
 
 from jararaca import Delete, Get, Microservice, Patch, Post, Put, RestController
@@ -143,11 +144,56 @@ class WsController:
         raise NotImplementedError
 
 
+def _dependency_params(
+    token: Annotated[str, Header()], session: Annotated[str, Cookie()]
+) -> None:
+    raise NotImplementedError
+
+
+class RichMiddleware:
+    async def intercept(
+        self,
+        request: Request,
+        tenant: Annotated[str, Header()],
+        trace: Annotated[str, Cookie()],
+        upload: Annotated[UploadFile, Form()],
+        payload: Annotated[CreateItem, Body()],
+        search: Annotated[str, Query()],
+        scope_id: Annotated[int, PathParam()],
+        plain_path: int,
+        plain_query: str,
+    ) -> AsyncGenerator[None, None]:
+        yield
+
+
+@UseMiddleware(RichMiddleware)
+@RestController("/rich/{scope_id}")
+class RichController:
+    @Post("/{plain_path}/mixed")
+    async def mixed(
+        self,
+        plain_path: int,
+        profile: Profile,
+        item: CreateItem,
+        q: str,
+        flag: bool = False,
+        files: list[UploadFile] = [],
+        dep: Annotated[None, Depends(_dependency_params)] = None,
+        cookie_value: Annotated[str, Cookie()] = "",
+        header_value: Annotated[str, Header()] = "",
+        profile_query: Annotated[Profile, Query()] = Profile(name="x"),
+        profile_path: Annotated[Profile, PathParam()] = Profile(name="x"),
+        profile_body: Annotated[Profile, Body()] = Profile(name="x"),
+        form_value: Annotated[int, Form()] = 0,
+    ) -> list[Profile]:
+        raise NotImplementedError
+
+
 def test_microservice_typescript_snapshot(monkeypatch: pytest.MonkeyPatch) -> None:
     # Other tests register types globally; keep only the ones declared in this module
     monkeypatch.setattr(ExposeType, "_exposed_types", {Exposed})
     output = write_microservice_to_typescript_interface(
-        Microservice(controllers=[ItemsController, WsController])
+        Microservice(controllers=[ItemsController, WsController, RichController])
     )
 
     if os.environ.get("UPDATE_SNAPSHOTS") or not SNAPSHOT_PATH.exists():
