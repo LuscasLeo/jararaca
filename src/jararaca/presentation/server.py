@@ -24,6 +24,7 @@ from jararaca.microservice import (
     provide_shutdown_state,
     providing_app_type,
 )
+from jararaca.presentation.client_cancellation import ClientDisconnected
 from jararaca.presentation.decorators import RestController
 from jararaca.presentation.exceptions import PresentationException
 from jararaca.presentation.http_microservice import HttpMicroservice
@@ -161,7 +162,9 @@ class HttpUowContextProviderDependency:
             ):
                 try:
                     yield
-                except HTTPException:
+                except (HTTPException, ClientDisconnected):
+                    # ClientDisconnected only exists when the opt-in cancellation guard
+                    # is in use; it has its own handler and must not become a 500.
                     raise
 
                 except Exception as e:

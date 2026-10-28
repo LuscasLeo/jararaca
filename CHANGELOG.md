@@ -3,6 +3,7 @@
 ## [Unreleased]
 
 ### Added
+- Opt-in cancellation of HTTP requests whose client disconnected (`jararaca.presentation.client_cancellation`): `ClientCancellationGuardFor`, `ResponseStartedMarker`, `QueryGuard`/`ClientDisconnectionGuard`, a 499 `client_disconnected_exception_handler` and `install_client_cancellation`. Nothing is enabled by default; see `docs/client-cancellation.md`
 - `jararaca gen-tsi --enum-style const` (env `ENUM_STYLE`) emits Python enums as an `as const` object plus a type alias instead of a TypeScript `enum`, which is considerably smaller in the final frontend bundle. The default (`enum`) is unchanged
 
 ### Changed
