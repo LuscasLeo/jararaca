@@ -53,6 +53,7 @@ nav:
   - HTTP:
     - Middleware: http-middleware.md
     - HTTP RPC: http-rpc.md
+    - Client Cancellation: client-cancellation.md
   - WebSocket: websocket.md
   - Message Bus:
     - Overview: messagebus.md
