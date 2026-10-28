@@ -2,6 +2,7 @@
 #
 # SPDX-License-Identifier: GPL-3.0-or-later
 
+import asyncio
 import logging
 from contextlib import asynccontextmanager, contextmanager, suppress
 from contextvars import ContextVar
@@ -75,6 +76,8 @@ from jararaca.observability.trace_context import format_traceparent
 if TYPE_CHECKING:
     from opentelemetry.trace import Span as _Span
     from typing_extensions import TypeIs
+
+logger = logging.getLogger(__name__)
 
 tracer: trace.Tracer = trace.get_tracer(__name__)
 
@@ -689,6 +692,7 @@ class OtelObservabilityProvider(ObservabilityProvider):
         ) = lambda logger_handler: None,
         meter_export_interval: int = 5000,
         attributes: Attributes | None = None,
+        shutdown_flush_timeout_millis: int = 5000,
     ) -> None:
         self.app_name = app_name
         self.logs_exporter = logs_exporter
@@ -698,6 +702,7 @@ class OtelObservabilityProvider(ObservabilityProvider):
         self.meter_export_interval = meter_export_interval
         self.logging_handler_callback = logging_handler_callback
         self.attributes = attributes or {}
+        self.shutdown_flush_timeout_millis = shutdown_flush_timeout_millis
         self.__message_bus_metrics: MessageBusMetrics | None = None
 
     @property
@@ -757,8 +762,41 @@ class OtelObservabilityProvider(ObservabilityProvider):
         meter = metrics.get_meter(__name__)
         self.__message_bus_metrics = MessageBusMetrics(meter)
 
-        with provide_message_bus_metrics(self.__message_bus_metrics):
-            yield
+        try:
+            with provide_message_bus_metrics(self.__message_bus_metrics):
+                yield
+        finally:
+            # The SDK only flushes via `atexit`, which does not run when the
+            # process dies by signal (e.g. uvicorn re-raising SIGTERM after a
+            # graceful shutdown), so buffered telemetry must be flushed here.
+            await asyncio.to_thread(
+                self._flush_and_shutdown_providers,
+                provider,
+                logger_provider,
+                meter_provider,
+            )
+
+    def _flush_and_shutdown_providers(
+        self,
+        tracer_provider: TracerProvider,
+        logger_provider: LoggerProvider,
+        meter_provider: MeterProvider,
+    ) -> None:
+        for name, otel_provider in (
+            ("tracer", tracer_provider),
+            ("logger", logger_provider),
+            ("meter", meter_provider),
+        ):
+            try:
+                otel_provider.force_flush(
+                    timeout_millis=self.shutdown_flush_timeout_millis
+                )
+            except Exception:
+                logger.exception("Failed to flush OpenTelemetry %s provider", name)
+            try:
+                otel_provider.shutdown()
+            except Exception:
+                logger.exception("Failed to shut down OpenTelemetry %s provider", name)
 
     @staticmethod
     def from_url(
@@ -770,6 +808,7 @@ class OtelObservabilityProvider(ObservabilityProvider):
         ) = lambda logger_handler: None,
         meter_export_interval: int = 5000,
         attributes: AttributeMap | None = None,
+        shutdown_flush_timeout_millis: int = 5000,
     ) -> "OtelObservabilityProvider":
         """
         Create an instance of OtelObservabilityProvider with Http Exporters from a given URL
@@ -787,6 +826,7 @@ class OtelObservabilityProvider(ObservabilityProvider):
             logging_handler_callback=logging_handler_callback,
             meter_export_interval=meter_export_interval,
             attributes=attributes,
+            shutdown_flush_timeout_millis=shutdown_flush_timeout_millis,
         )
 
     @asynccontextmanager
