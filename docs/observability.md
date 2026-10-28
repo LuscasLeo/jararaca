@@ -26,6 +26,8 @@ app = Microservice(
 
 The `OtelObservabilityProvider.from_url` helper configures the OTLP exporters for traces, metrics, and logs to the specified URL.
 
+When the application shuts down, the provider flushes and then shuts down the trace, log and meter providers, so telemetry still buffered in the batch processors is exported even if the process is later killed by a signal (when the SDK's `atexit` hook never runs). Each flush waits at most `shutdown_flush_timeout_millis` (default `5000`), which both `from_url` and the constructor accept. A provider that fails to flush is logged and does not stop the others from flushing.
+
 ### Trace Span Environment Variables
 
 The way HTTP request spans are recorded can be tuned through environment
