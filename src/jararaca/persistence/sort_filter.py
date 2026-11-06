@@ -5,12 +5,13 @@
 import re
 from datetime import date, datetime
 from functools import reduce
-from typing import Literal, Tuple, TypeVar, Union
+from typing import Any, Literal, Tuple, TypeVar, Union
 from uuid import UUID
 
 from pydantic import BaseModel
 from sqlalchemy import Select
 from sqlalchemy.orm.attributes import InstrumentedAttribute
+from starlette.exceptions import HTTPException
 
 from jararaca import BaseEntity
 
@@ -59,6 +60,36 @@ class FilterModel(BaseModel):
 INHERITS_BASE_ENTITY = TypeVar("INHERITS_BASE_ENTITY", bound=BaseEntity)
 
 
+class InvalidFilterError(HTTPException, ValueError):
+    """
+    A filter sent by the client cannot be applied: unknown field, operator not
+    supported for the field type, or a value that does not parse.
+
+    It is an ``HTTPException`` so FastAPI answers 422 instead of 500, and still a
+    ``ValueError`` so existing ``except ValueError`` code keeps working.
+    """
+
+    def __init__(self, detail: str, status_code: int = 422) -> None:
+        HTTPException.__init__(self, status_code=status_code, detail=detail)
+        ValueError.__init__(self, detail)
+
+    def __str__(self) -> str:
+        return self.detail
+
+
+class InvalidSortError(InvalidFilterError):
+    """A sort sent by the client references a field that is not allowed."""
+
+
+def _parse_uuid(raw: str, field_name: str) -> UUID:
+    try:
+        return UUID(raw.strip())
+    except (ValueError, AttributeError, TypeError):
+        raise InvalidFilterError(
+            f"Invalid UUID value {raw!r} for field {field_name!r}"
+        ) from None
+
+
 class FilterRuleApplier:
     def __init__(
         self,
@@ -71,8 +102,12 @@ class FilterRuleApplier:
     ) -> Select[Tuple[INHERITS_BASE_ENTITY]]:
         field = self.allowed_filters.get(filter.field)
         if field is None:
-            raise ValueError(f"Unsupported field: {filter.field}")
+            raise InvalidFilterError(f"Unsupported field: {filter.field}")
         field_type = field.property.columns[0].type.python_type
+
+        if isinstance(field_type, type) and issubclass(field_type, UUID):
+            return self._create_query_for_uuid_filter(query, field, filter)
+
         if not filter.value:  # Is empty string or empty list
             return query
 
@@ -97,7 +132,9 @@ class FilterRuleApplier:
                 case "isAnyOf":
                     return query.filter(field.in_(filter.value))
                 case _:
-                    raise ValueError(f"Unsupported string operator: {filter.operator}")
+                    raise InvalidFilterError(
+                        f"Unsupported string operator: {filter.operator}"
+                    )
         elif field_type in [date, datetime]:
             match filter.operator:
                 case "isEmpty":
@@ -110,10 +147,16 @@ class FilterRuleApplier:
             )
             if not __value.strip():
                 return query
-            if field_type is date:
-                value = datetime.strptime(__value, "%Y-%m-%d").date()
-            else:
-                value = datetime.strptime(__value, "%Y-%m-%dT%H:%M:%S.%fZ")
+            try:
+                if field_type is date:
+                    value = datetime.strptime(__value, "%Y-%m-%d").date()
+                else:
+                    value = datetime.strptime(__value, "%Y-%m-%dT%H:%M:%S.%fZ")
+            except ValueError:
+                raise InvalidFilterError(
+                    f"Invalid {field_type.__name__} value {__value!r} "
+                    f"for field {filter.field!r}"
+                ) from None
             match filter.operator:
                 case "is":
                     return query.filter(field == value)
@@ -129,7 +172,7 @@ class FilterRuleApplier:
                     return query.filter(field <= value)
 
                 case _:
-                    raise ValueError(
+                    raise InvalidFilterError(
                         f"Unsupported data/datetime operator: {filter.operator}"
                     )
         elif field_type is bool:
@@ -142,7 +185,9 @@ class FilterRuleApplier:
                         return query.filter(field.is_not(None))
                     return query.filter(field == (__value == "true"))
                 case _:
-                    raise ValueError(f"Unsupported bool operator: {filter.operator}")
+                    raise InvalidFilterError(
+                        f"Unsupported bool operator: {filter.operator}"
+                    )
         elif field_type is int:
 
             if isinstance(filter.value, list):
@@ -156,13 +201,13 @@ class FilterRuleApplier:
                         ]
                         return query.filter(field.in_(number_values))
                     case _:
-                        raise ValueError(
+                        raise InvalidFilterError(
                             f"Unsupported int operator: {filter.operator} for list"
                         )
 
             if not re.match(r"^-?\d+$", filter.value):
-                raise ValueError(
-                    f"Invalid integer value: {filter.value} for field {field}"
+                raise InvalidFilterError(
+                    f"Invalid integer value: {filter.value} for field {filter.field}"
                 )
 
             number_value = int(filter.value)
@@ -185,11 +230,51 @@ class FilterRuleApplier:
                 case "isNotEmpty":
                     return query.filter(field != None)  # noqa
                 case _:
-                    raise ValueError(
+                    raise InvalidFilterError(
                         f"Unsupported int operator: {filter.operator} for single value"
                     )
 
+        # Server-side misconfiguration (a column type registered in allowed_filters
+        # that the applier does not know), so it intentionally stays a 500.
         raise ValueError(f"Unsupported field type: {field_type}")
+
+    def _create_query_for_uuid_filter(
+        self,
+        query: Select[Tuple[INHERITS_BASE_ENTITY]],
+        field: InstrumentedAttribute[Any],
+        filter: FilterModel,
+    ) -> Select[Tuple[INHERITS_BASE_ENTITY]]:
+        # isEmpty / isNotEmpty do not take a value, so they are handled before the
+        # "no value means no filter" shortcut.
+        match filter.operator:
+            case "isEmpty":
+                return query.filter(field.is_(None))
+            case "isNotEmpty":
+                return query.filter(field.is_not(None))
+
+        if not filter.value:  # Is empty string or empty list
+            return query
+
+        match filter.operator:
+            case "isAnyOf":
+                raw_values = (
+                    filter.value if isinstance(filter.value, list) else [filter.value]
+                )
+                return query.filter(
+                    field.in_([_parse_uuid(v, filter.field) for v in raw_values])
+                )
+            case "equals" | "is" | "doesNotEqual" | "not":
+                raw = (
+                    filter.value[0] if isinstance(filter.value, list) else filter.value
+                )
+                value = _parse_uuid(raw, filter.field)
+                if filter.operator in ("equals", "is"):
+                    return query.filter(field == value)
+                return query.filter(field != value)
+            case _:
+                raise InvalidFilterError(
+                    f"Unsupported uuid operator: {filter.operator}"
+                )
 
     def create_query_for_filter_list(
         self, query: Select[Tuple[INHERITS_BASE_ENTITY]], filters: list[FilterModel]
@@ -209,7 +294,7 @@ class SortRuleApplier:
     ) -> Select[Tuple[INHERITS_BASE_ENTITY]]:
         field = self.allowed_sorts.get(sort.field)
         if field is None:
-            raise ValueError(f"Unsupported field: {sort.field}")
+            raise InvalidSortError(f"Unsupported field: {sort.field}")
         return query.order_by(field.asc() if sort.direction == "asc" else field.desc())
 
     def create_query_for_sorting_list(
@@ -254,6 +339,10 @@ __all__ = [
     "SortFilterRunner",
     "FilterModel",
     "SortModel",
+    "FilterRuleApplier",
+    "SortRuleApplier",
+    "InvalidFilterError",
+    "InvalidSortError",
     "FILTER_SORT_ENTITY_ATTR_MAP",
     "INHERITS_BASE_ENTITY",
 ]
