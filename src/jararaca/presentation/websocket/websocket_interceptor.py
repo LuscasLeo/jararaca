@@ -11,7 +11,7 @@ from fastapi import APIRouter
 from fastapi import Depends as DependsF
 from fastapi import WebSocketDisconnect
 from fastapi.params import Depends
-from fastapi.websockets import WebSocket, WebSocketState
+from fastapi.websockets import WebSocket
 from pydantic import BaseModel
 
 from jararaca.core.uow import UnitOfWorkContextProvider
@@ -39,6 +39,7 @@ from jararaca.presentation.websocket.decorators import (
 )
 
 from .base_types import WebSocketMessageBase
+from .utils import is_ws_connected
 
 
 class WebSocketMessageWrapper(BaseModel, Generic[INHERITS_WS_MESSAGE]):
@@ -93,21 +94,12 @@ class WebSocketConnectionManagerImpl(WebSocketConnectionManager):
         async with self.lock:
             websockets_to_send = list(self.all_websockets)
 
-        disconnected_websockets: list[WebSocket] = []
-
-        for websocket in websockets_to_send:
-            try:
-                if websocket.client_state == WebSocketState.CONNECTED:
-                    await websocket.send_bytes(message)
-            except (WebSocketDisconnect, RuntimeError):
-                # RuntimeError is raised when sending after close message
-                disconnected_websockets.append(websocket)
-
-        # Clean up disconnected websockets in a single lock acquisition
-        if disconnected_websockets:
-            async with self.lock:
-                for websocket in disconnected_websockets:
-                    self.all_websockets.discard(websocket)
+        dropped = [
+            websocket
+            for websocket in websockets_to_send
+            if not await self._try_send(websocket, message)
+        ]
+        await self._forget(dropped)
 
     async def send(self, rooms: list[str], message: WebSocketMessageBase) -> None:
 
@@ -119,29 +111,52 @@ class WebSocketConnectionManagerImpl(WebSocketConnectionManager):
         )
 
     async def _send_from_backend(self, rooms: list[str], message: bytes) -> None:
-        # Create a copy of room memberships to avoid modification during iteration
+        # Snapshot room memberships to avoid modification during iteration
         async with self.lock:
-            room_websockets: dict[str, list[WebSocket]] = {
-                room: list(self.rooms.get(room, set())) for room in rooms
-            }
+            targets: list[WebSocket] = []
+            seen: set[WebSocket] = set()
+            for room in rooms:
+                for websocket in self.rooms.get(room, ()):
+                    if websocket not in seen:
+                        seen.add(websocket)
+                        targets.append(websocket)
 
-        disconnected_by_room: dict[str, list[WebSocket]] = {room: [] for room in rooms}
+        dropped = [
+            websocket
+            for websocket in targets
+            if not await self._try_send(websocket, message)
+        ]
+        await self._forget(dropped)
 
-        for room, websockets in room_websockets.items():
+    @staticmethod
+    async def _try_send(websocket: WebSocket, message: bytes) -> bool:
+        """
+        Send to one socket; False when it is no longer usable.
+
+        Both states are checked: when a send fails because the client is gone,
+        starlette marks ``application_state`` DISCONNECTED while ``client_state``
+        stays CONNECTED until the endpoint reads the disconnect. The endpoint should
+        receive through ``jararaca.presentation.websocket.utils`` (or check
+        ``application_state``) so that this shows up as ``WebSocketDisconnect``.
+        """
+        if not is_ws_connected(websocket):
+            return False
+        try:
+            await websocket.send_bytes(message)
+        except (WebSocketDisconnect, RuntimeError):
+            # WebSocketDisconnect: transport failed (starlette wraps the OSError).
+            # RuntimeError: the socket was closed concurrently.
+            return False
+        return True
+
+    async def _forget(self, websockets: list[WebSocket]) -> None:
+        if not websockets:
+            return
+        async with self.lock:
             for websocket in websockets:
-                try:
-                    if websocket.client_state == WebSocketState.CONNECTED:
-                        await websocket.send_bytes(message)
-                except (WebSocketDisconnect, RuntimeError):
-                    # RuntimeError is raised when sending after close message
-                    disconnected_by_room[room].append(websocket)
-
-        # Clean up disconnected websockets in a single lock acquisition
-        async with self.lock:
-            for room, disconnected_websockets in disconnected_by_room.items():
-                if room in self.rooms:
-                    for websocket in disconnected_websockets:
-                        self.rooms[room].discard(websocket)
+                self.all_websockets.discard(websocket)
+                for members in self.rooms.values():
+                    members.discard(websocket)
 
     async def join(self, rooms: list[str], websocket: WebSocket) -> None:
         for room in rooms:
@@ -151,7 +166,7 @@ class WebSocketConnectionManagerImpl(WebSocketConnectionManager):
         self.all_websockets.add(websocket)
 
     async def remove_websocket(self, websocket: WebSocket) -> None:
-        self.all_websockets.remove(websocket)
+        self.all_websockets.discard(websocket)
         for room in self.rooms.values():
             room.discard(websocket)
 

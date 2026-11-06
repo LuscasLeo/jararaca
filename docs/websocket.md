@@ -186,8 +186,13 @@ app = Microservice(
 Define WebSocket endpoints using the `@WebSocketEndpoint` decorator:
 
 ```python
-from jararaca import WebSocketEndpoint, RestController, use_ws_manager
-from fastapi import WebSocket, APIRouter
+from jararaca import (
+    RestController,
+    WebSocketEndpoint,
+    receive_ws_text,
+    use_ws_manager,
+)
+from fastapi import WebSocket, WebSocketDisconnect, APIRouter
 from pydantic import BaseModel
 
 # Model for client-to-server REST communication
@@ -233,14 +238,27 @@ class ChatController:
             # Note: We don't process messages from the client via WebSocket
             # Clients should use the REST endpoints for sending messages
             while True:
-                # This only keeps the connection alive
                 # Any data received is ignored as client should use REST API
-                await websocket.receive()
-
-        except:
-            # Handle disconnection
+                await receive_ws_text(websocket)
+        except WebSocketDisconnect:
+            pass
+        finally:
             await ws_manager.remove_websocket(websocket)
 ```
+
+#### Receiving on a socket the manager also sends to
+
+If the client drops while the endpoint is busy, a push from the manager can be the
+first thing to hit the dead connection. Starlette then marks the socket's
+`application_state` as `DISCONNECTED` before the endpoint has read the disconnect,
+and starlette's own `websocket.receive_text()` raises
+`RuntimeError: WebSocket is not connected` instead of `WebSocketDisconnect`.
+
+Use `receive_ws_text`, `receive_ws_bytes` or `receive_ws_json` (from `jararaca`)
+instead: they raise `WebSocketDisconnect(1006)` in that case. Or check
+`is_ws_connected(websocket)` before each receive. The manager drops the socket from
+every room as soon as a send fails, and `remove_websocket` is safe to call
+afterwards.
 
 ### Client Implementation Example
 

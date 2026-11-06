@@ -243,6 +243,12 @@ if TYPE_CHECKING:
     )
     from .presentation.websocket.redis import RedisWebSocketConnectionBackend
     from .presentation.websocket.types import WebSocketMessage
+    from .presentation.websocket.utils import (
+        is_ws_connected,
+        receive_ws_bytes,
+        receive_ws_json,
+        receive_ws_text,
+    )
     from .presentation.websocket.websocket_interceptor import WebSocketInterceptor
     from .scheduler.decorators import ScheduledAction
     from .tools.app_config.interceptor import AppConfigurationInterceptor
@@ -368,6 +374,10 @@ __all__ = [
     "BaseEntity",
     "use_ws_manager",
     "WebSocketEndpoint",
+    "is_ws_connected",
+    "receive_ws_text",
+    "receive_ws_bytes",
+    "receive_ws_json",
     "CriteriaBasedAttributeQueryInjector",
     "Identifiable",
     "IdentifiableEntity",
@@ -684,6 +694,10 @@ _dynamic_imports: "dict[str, tuple[str, str, str | None]]" = {
     "DatedEntity": (__SPEC_PARENT__, "persistence.utilities", None),
     "BaseEntity": (__SPEC_PARENT__, "persistence.base", None),
     "use_ws_manager": (__SPEC_PARENT__, "presentation.websocket.context", None),
+    "is_ws_connected": (__SPEC_PARENT__, "presentation.websocket.utils", None),
+    "receive_ws_text": (__SPEC_PARENT__, "presentation.websocket.utils", None),
+    "receive_ws_bytes": (__SPEC_PARENT__, "presentation.websocket.utils", None),
+    "receive_ws_json": (__SPEC_PARENT__, "presentation.websocket.utils", None),
     "WebSocketEndpoint": (__SPEC_PARENT__, "presentation.websocket.decorators", None),
     "CriteriaBasedAttributeQueryInjector": (
         __SPEC_PARENT__,
