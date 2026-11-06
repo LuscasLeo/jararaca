@@ -11,6 +11,8 @@
 - TypeScript generation: parameters declared with the same name and definition by a middleware and its handler are merged into a single argument
 
 ### Fixed
+- Persistence: `FilterRuleApplier` now supports UUID columns (`equals`/`is`, `doesNotEqual`/`not`, `isAnyOf`, `isEmpty`, `isNotEmpty`) instead of raising `ValueError("Unsupported field type: <class 'uuid.UUID'>")`. For UUID fields `isEmpty`/`isNotEmpty` apply even when the value is empty
+- Persistence: invalid client filters and sorts (unknown field, unsupported operator, unparsable UUID/int/date value) raise `InvalidFilterError`/`InvalidSortError`, which FastAPI answers with 422 instead of 500. Both still subclass `ValueError`
 - WebSocket: a push from `WebSocketConnectionManagerImpl` to a client that dropped before the endpoint read the disconnect no longer leaves the endpoint stuck with `RuntimeError: WebSocket is not connected`. The manager now sends only when both `application_state` and `client_state` are CONNECTED, forgets a failed socket in every room and in the broadcast set, and `remove_websocket` no longer raises `KeyError` for a socket the manager already dropped. New receive helpers `receive_ws_text`/`receive_ws_bytes`/`receive_ws_json` and `is_ws_connected` (`jararaca.presentation.websocket.utils`) raise `WebSocketDisconnect(1006)` in that state
 - TypeScript generation: `Annotated[...]` parameters without a FastAPI marker are now detected as path parameters when named in the route (`{name}`), and middleware parameters follow the same rules as handler parameters, including `Depends`
 - TypeScript generation: conflicting duplicated parameters now raise `ConflictingParametersError` instead of producing a duplicate identifier (a syntax error in ES modules)
