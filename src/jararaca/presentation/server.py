@@ -51,6 +51,15 @@ class HttpAppLifecycle:
         with providing_app_type("http"):
             async with self.lifecycle():
 
+                # App-wide middlewares apply to every controller route, once.
+                for middleware in self.http_app.middlewares:
+                    middleware_instance = self.lifecycle.container.get_by_type(
+                        middleware
+                    )
+                    api.router.dependencies.append(
+                        Depends(middleware_instance.intercept)
+                    )
+
                 for controller_t in self.lifecycle.app.controllers:
                     controller = RestController.get_last(controller_t)
 
@@ -59,17 +68,7 @@ class HttpAppLifecycle:
 
                     instance: Any = self.lifecycle.container.get_by_type(controller_t)
 
-                    router = controller.get_router_factory()(self.lifecycle, instance)
-
-                    api.include_router(router)
-
-                    for middleware in self.http_app.middlewares:
-                        middleware_instance = self.lifecycle.container.get_by_type(
-                            middleware
-                        )
-                        api.router.dependencies.append(
-                            Depends(middleware_instance.intercept)
-                        )
+                    controller.register_routes(self.lifecycle, instance, api.router)
 
                 yield
 

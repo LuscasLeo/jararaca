@@ -10,6 +10,7 @@ from typing import Any, Awaitable, Callable, Literal, Mapping, Protocol, TypeVar
 
 from fastapi import APIRouter
 from fastapi import Depends as DependsF
+from fastapi.datastructures import DefaultPlaceholder
 from fastapi.exceptions import FastAPIError
 from fastapi.params import Depends
 
@@ -32,6 +33,53 @@ ControllerOptions = Mapping[str, Any]
 class RouterFactory(Protocol):
 
     def __call__(self, lifecycle: AppLifecycle, instance: Any) -> APIRouter: ...
+
+
+def _first_non_default(*values: Any) -> Any:
+    """Same resolution FastAPI applies to ``Default(...)`` placeholders."""
+    for value in values:
+        if not isinstance(value, DefaultPlaceholder):
+            return value
+    return values[0]
+
+
+def _router_kwargs_inheriting(
+    parent: APIRouter,
+    prefix: str,
+    dependencies: list[Depends],
+    options: Mapping[str, Any],
+) -> dict[str, Any]:
+    """
+    Build the ``APIRouter`` kwargs for a controller router whose routes go
+    straight into ``parent``, merging the parent's settings the same way
+    ``parent.include_router(router)`` would. Each route is then built once,
+    instead of once here and again by ``include_router``.
+    """
+    kwargs: dict[str, Any] = dict(options)
+    kwargs["prefix"] = parent.prefix + prefix
+    kwargs["dependencies"] = [*parent.dependencies, *dependencies]
+    kwargs["tags"] = [*parent.tags, *(options.get("tags") or [])]
+    kwargs["responses"] = {**parent.responses, **(options.get("responses") or {})}
+    kwargs["callbacks"] = [*parent.callbacks, *(options.get("callbacks") or [])]
+    kwargs["deprecated"] = options.get("deprecated") or parent.deprecated
+    kwargs["include_in_schema"] = (
+        options.get("include_in_schema", True) and parent.include_in_schema
+    )
+    if "default_response_class" in options:
+        kwargs["default_response_class"] = _first_non_default(
+            options["default_response_class"], parent.default_response_class
+        )
+    else:
+        kwargs["default_response_class"] = parent.default_response_class
+    if "generate_unique_id_function" in options:
+        kwargs["generate_unique_id_function"] = _first_non_default(
+            options["generate_unique_id_function"],
+            parent.generate_unique_id_function,
+        )
+    else:
+        kwargs["generate_unique_id_function"] = parent.generate_unique_id_function
+    kwargs["dependency_overrides_provider"] = parent.dependency_overrides_provider
+    return kwargs
 
 
 class RestController(StackableDecorator):
@@ -61,11 +109,38 @@ class RestController(StackableDecorator):
             raise Exception("Router factory is not set")
         return self.router_factory
 
+    def register_routes(
+        self, lifecycle: AppLifecycle, instance: Any, target: APIRouter
+    ) -> None:
+        """
+        Add this controller's routes to ``target`` (usually ``FastAPI.router``).
+
+        The built-in factory builds each ``APIRoute`` already merged with the
+        target's prefix, dependencies, tags, responses and defaults, so the
+        routes are appended as they are. ``include_router`` would rebuild every
+        route (signature and dependency analysis, response TypeAdapters) a
+        second time. A custom ``router_factory`` still goes through
+        ``include_router``.
+        """
+        factory = self.get_router_factory()
+        if getattr(factory, "accepts_parent", False):
+            router = factory(lifecycle, instance, parent=target)  # type: ignore[call-arg]
+            for route in router.routes:
+                if getattr(route, "path", None) == "":
+                    raise FastAPIError(
+                        "Prefix and path cannot be both empty (path operation: "
+                        f"{getattr(route, 'name', 'unknown')})"
+                    )
+            target.routes.extend(router.routes)
+        else:
+            target.include_router(factory(lifecycle, instance))
+
     def post_decorated(self, subject: FUNC_OR_TYPE_T) -> None:
 
         def router_factory(
             lifecycle: AppLifecycle,
             instance: FUNC_OR_TYPE_T,
+            parent: APIRouter | None = None,
         ) -> APIRouter:
             assert inspect.isclass(
                 subject
@@ -93,11 +168,18 @@ class RestController(StackableDecorator):
             for dependency in class_dependencies:
                 dependencies.append(DependsF(dependency.dependency))
 
-            router = APIRouter(
-                prefix=self.path,
-                dependencies=dependencies,
-                **(self.options or {}),
-            )
+            if parent is None:
+                router = APIRouter(
+                    prefix=self.path,
+                    dependencies=dependencies,
+                    **(self.options or {}),
+                )
+            else:
+                router = APIRouter(
+                    **_router_kwargs_inheriting(
+                        parent, self.path, dependencies, self.options or {}
+                    )
+                )
 
             controller, members = inspect_controller(subject)
 
@@ -172,6 +254,7 @@ class RestController(StackableDecorator):
 
             return router
 
+        setattr(router_factory, "accepts_parent", True)
         self.router_factory = router_factory
 
 
