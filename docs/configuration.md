@@ -131,6 +131,19 @@ const.MESSAGEBUS_CONNECTION_HEALTH_CHECK_INTERVAL   # Default: 10.0
 - `JARARACA_MESSAGEBUS_CONNECTION_HEARTBEAT_INTERVAL`
 - `JARARACA_MESSAGEBUS_CONNECTION_HEALTH_CHECK_INTERVAL`
 
+**Shutdown semantics:**
+
+On `SIGTERM`/`SIGINT` the worker stops its consumers, waits for the in-flight handlers
+and then closes its channels and connection, so anything still unacknowledged goes
+back to the queue.
+
+- Message handlers are **at-least-once**: a delivery is acknowledged only after its
+  handler finishes, so one interrupted by the process being killed is redelivered.
+  Keep handlers idempotent.
+- Scheduled actions are **at-most-once**: they consume with `no_ack=True`, so a run
+  in progress when the process is killed is lost. The next trigger from `jararaca beat`
+  runs normally.
+
 #### Scheduler
 
 Scheduler configuration:

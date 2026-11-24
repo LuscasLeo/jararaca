@@ -97,6 +97,10 @@ logger = logging.getLogger(__name__)
 # is saturated and its prefetch is actively shaping throughput.
 SLOT_WAIT_WARNING_THRESHOLD_SECONDS = 1.0
 
+# Upper bound for each channel and connection close on shutdown, so an unresponsive
+# broker cannot hold the process past the pod's termination grace period.
+CLOSE_TIMEOUT_SECONDS = 5.0
+
 
 @dataclass
 class AioPikaWorkerConfig:
@@ -653,7 +657,26 @@ class AioPikaMicroserviceConsumer(MessageBusConsumer):
     async def close_channels_and_connection(self) -> None:
         """Close all channels and then the connection"""
         logger.warning("Closing channels and connection...")
-        # await self._cleanup_connection()
+        # Closing explicitly, after the drain, makes the broker requeue whatever is
+        # still unacked right away and with a clean close-ok, instead of waiting for
+        # the TCP connection to drop when the process exits.
+        for channel_id, channel in list(self.channels.items()):
+            if channel.is_closed:
+                continue
+            try:
+                await asyncio.wait_for(channel.close(), timeout=CLOSE_TIMEOUT_SECONDS)
+            except Exception as e:
+                logger.warning("Error closing channel %s: %s", channel_id, e)
+        self.channels.clear()
+
+        connection, self.connection = self.connection, None
+        if connection is not None and not connection.is_closed:
+            try:
+                await asyncio.wait_for(
+                    connection.close(), timeout=CLOSE_TIMEOUT_SECONDS
+                )
+            except Exception as e:
+                logger.warning("Error closing connection: %s", e)
 
     def shutdown(self) -> None:
         """Signal for shutdown"""

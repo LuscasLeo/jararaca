@@ -40,34 +40,42 @@ class AppLifecycle:
         self.container.fill_providers(False)
         lifecycle_ctxs: list[AsyncContextManager[None]] = []
 
-        logger.debug("Initializing interceptors lifecycle")
-        for interceptor_dep in self.app.interceptors:
-            interceptor: AppInterceptor
-            if not isinstance(interceptor_dep, AppInterceptor):
-                interceptor = self.container.get_or_register_token_or_type(
-                    interceptor_dep
-                )
+        try:
+            logger.debug("Initializing interceptors lifecycle")
+            for interceptor_dep in self.app.interceptors:
+                interceptor: AppInterceptor
+                if not isinstance(interceptor_dep, AppInterceptor):
+                    interceptor = self.container.get_or_register_token_or_type(
+                        interceptor_dep
+                    )
 
-            else:
-                interceptor = interceptor_dep
-            self.__real_interceptors.append(interceptor)
+                else:
+                    interceptor = interceptor_dep
+                self.__real_interceptors.append(interceptor)
 
-            if not is_interceptor_with_lifecycle(interceptor):
-                continue
+                if not is_interceptor_with_lifecycle(interceptor):
+                    continue
 
-            ctx = interceptor.lifecycle(self.app, self.container)
-            lifecycle_ctxs.append(ctx)
+                ctx = interceptor.lifecycle(self.app, self.container)
+                await ctx.__aenter__()
+                # Only a context that entered owns resources to release.
+                lifecycle_ctxs.append(ctx)
 
-            await ctx.__aenter__()
+            self.container.fill_providers(True)
 
-        self.container.fill_providers(True)
+            if self.app.startup_complete_event is not None:
+                if not self.app.startup_complete_event.is_set():
+                    self.app.startup_complete_event.set()
 
-        if self.app.startup_complete_event is not None:
-            if not self.app.startup_complete_event.is_set():
-                self.app.startup_complete_event.set()
-
-        yield
-
-        logger.debug("Finalizing interceptors lifecycle")
-        for ctx in lifecycle_ctxs:
-            await ctx.__aexit__(None, None, None)
+            yield
+        finally:
+            # Runs on the error path too (a failing startup or body), so interceptors
+            # that already opened connections release them. Same order as before.
+            logger.debug("Finalizing interceptors lifecycle")
+            for ctx in lifecycle_ctxs:
+                try:
+                    await ctx.__aexit__(None, None, None)
+                except Exception as e:
+                    logger.error(
+                        "Error finalizing interceptor lifecycle: %s", e, exc_info=e
+                    )
