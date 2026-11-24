@@ -163,6 +163,31 @@ SCHEDULED_ACTION_DATA_SET = set[ScheduledActionData]
 MESSAGE_HANDLER_DATA_SET = set[MessageHandlerData]
 
 
+def get_messagebus_member_specs(
+    controller_type: type[Any],
+) -> list[tuple[str, ControllerMemberReflect, MessageHandler | ScheduledAction]]:
+    """
+    The message handler and scheduled action specs declared on a controller class,
+    read from the class alone, without instantiating it. A member carrying both
+    decorators counts as a message handler, as in the messagebus factory, which is
+    built on this same reading.
+    """
+    _, members = inspect_controller(controller_type)
+
+    specs: list[
+        tuple[str, ControllerMemberReflect, MessageHandler | ScheduledAction]
+    ] = []
+    for name, member in members.items():
+        message_handler = MessageHandler.get_last(member.member_function)
+        if message_handler is not None:
+            specs.append((name, member, message_handler))
+            continue
+        scheduled_action = ScheduledAction.get_last(member.member_function)
+        if scheduled_action is not None:
+            specs.append((name, member, scheduled_action))
+    return specs
+
+
 class MessageBusController(StackableDecorator):
 
     def __init__(
@@ -201,17 +226,8 @@ class MessageBusController(StackableDecorator):
                 subject
             ), "MessageBusController can only be applied to classes"
 
-            _, members = inspect_controller(subject)
-
-            for name, member in members.items():
-                message_handler_decoration = MessageHandler.get_last(
-                    member.member_function
-                )
-                scheduled_action_decoration = ScheduledAction.get_last(
-                    member.member_function
-                )
-
-                if message_handler_decoration is not None:
+            for name, member, decoration in get_messagebus_member_specs(subject):
+                if isinstance(decoration, MessageHandler):
 
                     if not inspect.iscoroutinefunction(member.member_function):
                         raise Exception(
@@ -221,13 +237,13 @@ class MessageBusController(StackableDecorator):
 
                     handlers.add(
                         MessageHandlerData(
-                            message_type=message_handler_decoration.message_type,
-                            spec=message_handler_decoration,
+                            message_type=decoration.message_type,
+                            spec=decoration,
                             instance_callable=getattr(instance, name),
                             controller_member=member,
                         )
                     )
-                elif scheduled_action_decoration is not None:
+                else:
                     if not inspect.iscoroutinefunction(member.member_function):
                         raise Exception(
                             "Scheduled action handler '%s' from '%s.%s' must be a coroutine function"
@@ -238,7 +254,7 @@ class MessageBusController(StackableDecorator):
                     schedulers.add(
                         ScheduledActionData(
                             controller_member=member,
-                            spec=scheduled_action_decoration,
+                            spec=decoration,
                             callable=instance_callable,
                         )
                     )

@@ -59,6 +59,7 @@ from jararaca.messagebus.decorators import (
     MessageHandler,
     MessageHandlerData,
     ScheduleDispatchData,
+    get_messagebus_member_specs,
 )
 from jararaca.messagebus.implicit_headers import (
     provide_implicit_headers,
@@ -86,7 +87,7 @@ from jararaca.observability.hooks import (
     record_message_slot_wait,
     set_span_status,
 )
-from jararaca.scheduler.decorators import ScheduledActionData
+from jararaca.scheduler.decorators import ScheduledAction, ScheduledActionData
 from jararaca.scheduler.types import DelayedMessageData
 from jararaca.utils.env_parse_utils import get_env_bool
 from jararaca.utils.rabbitmq_utils import RabbitmqUtils
@@ -2106,6 +2107,31 @@ class MessageBusWorker:
             raise RuntimeError("Consumer not started")
         return self._consumer
 
+    def _is_selected(self, spec: MessageHandler | ScheduledAction) -> bool:
+        """
+        Whether this worker runs a handler or scheduled action, by `--handlers`
+        (names; an unnamed one is skipped when names are given) and `--groups`.
+        """
+        if self.handler_names is not None:
+            if spec.name is None or spec.name not in self.handler_names:
+                return False
+        if self.handler_groups is not None:
+            if spec.group not in self.handler_groups:
+                return False
+        return True
+
+    def _controller_has_selected_member(self, controller_type: type[Any]) -> bool:
+        """
+        Whether a controller declares at least one handler or scheduled action this
+        worker runs, read from the class so the controller need not be instantiated.
+        """
+        if self.handler_names is None and self.handler_groups is None:
+            return True
+        return any(
+            self._is_selected(spec)
+            for _, _, spec in get_messagebus_member_specs(controller_type)
+        )
+
     async def start_async(self) -> None:
         all_message_handlers_set: MESSAGE_HANDLER_DATA_SET = set()
         all_scheduled_actions_set: SCHEDULED_ACTION_DATA_SET = set()
@@ -2117,6 +2143,16 @@ class MessageBusWorker:
                     if controller is None:
                         continue
 
+                    # Resolving a controller builds its whole dependency tree, so
+                    # one with nothing this worker runs is not instantiated at all.
+                    if not self._controller_has_selected_member(instance_class):
+                        logger.debug(
+                            "Skipping controller %s: no handler or scheduled action "
+                            "matches the worker filters",
+                            instance_class.__qualname__,
+                        )
+                        continue
+
                     instance: Any = self.container.get_by_type(instance_class)
 
                     factory = controller.get_messagebus_factory()
@@ -2125,24 +2161,8 @@ class MessageBusWorker:
                     message_handler_data_map: dict[str, MessageHandlerData] = {}
 
                     for scheduler_data in schedulers:
-                        # Filter scheduled actions by name if specified
-                        if (
-                            self.handler_names is not None
-                            and scheduler_data.spec.name is not None
-                        ):
-                            if scheduler_data.spec.name not in self.handler_names:
-                                continue
-                        elif (
-                            self.handler_names is not None
-                            and scheduler_data.spec.name is None
-                        ):
-                            # Skip scheduled actions without names when filtering is requested
+                        if not self._is_selected(scheduler_data.spec):
                             continue
-
-                        # Filter scheduled actions by group if specified
-                        if self.handler_groups is not None:
-                            if scheduler_data.spec.group not in self.handler_groups:
-                                continue
 
                         all_scheduled_actions_set.add(scheduler_data)
 
@@ -2150,24 +2170,8 @@ class MessageBusWorker:
                         message_type = handler_data.spec.message_type
                         topic = message_type.MESSAGE_TOPIC
 
-                        # Filter handlers by name if specified
-                        if (
-                            self.handler_names is not None
-                            and handler_data.spec.name is not None
-                        ):
-                            if handler_data.spec.name not in self.handler_names:
-                                continue
-                        elif (
-                            self.handler_names is not None
-                            and handler_data.spec.name is None
-                        ):
-                            # Skip handlers without names when filtering is requested
+                        if not self._is_selected(handler_data.spec):
                             continue
-
-                        # Filter handlers by group if specified
-                        if self.handler_groups is not None:
-                            if handler_data.spec.group not in self.handler_groups:
-                                continue
 
                         if (
                             topic in message_handler_data_map
