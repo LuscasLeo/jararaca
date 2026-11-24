@@ -137,6 +137,27 @@ On `SIGTERM`/`SIGINT` the worker stops its consumers, waits for the in-flight ha
 and then closes its channels and connection, so anything still unacknowledged goes
 back to the queue.
 
+In order:
+
+1. The readiness file, if configured, is removed.
+2. Every consumer is cancelled (`basic.cancel`), and the worker waits for the broker to
+   confirm, up to 5s per queue, all queues at once.
+3. In-flight handlers are awaited, up to `JARARACA_WORKER_DRAIN_TIMEOUT` if set. When it
+   expires, the handlers still running are cancelled and their deliveries, never
+   acknowledged, are redelivered.
+4. Channels and the connection are closed.
+
+**Readiness and drain** (all off by default; unset keeps the previous behaviour):
+
+| Variable | Default | Effect |
+|----------|---------|--------|
+| `JARARACA_WORKER_READY_FILE` | unset (no file) | Path written once every consumer is registered (`basic.consume` ok on every queue the worker runs) and removed as soon as shutdown starts. A leftover file is removed on boot. Use it in an exec readiness probe: `test -f <path>`. |
+| `JARARACA_WORKER_FAIL_ON_CONSUMER_SETUP_ERROR` | `false` | When a consumer still fails after its retries, stop the worker and exit with code 1 instead of running with fewer queues. Without it, the readiness file is simply never written. |
+| `JARARACA_WORKER_DRAIN_TIMEOUT` | unset (waits for as long as handlers take) | Seconds to wait for in-flight handlers on shutdown. Must be greater than zero. |
+
+On Kubernetes, keep `terminationGracePeriodSeconds` above the `preStop` hook (if any)
+plus `JARARACA_WORKER_DRAIN_TIMEOUT` plus about 10s for the cancel and close steps.
+
 - Message handlers are **at-least-once**: a delivery is acknowledged only after its
   handler finishes, so one interrupted by the process being killed is redelivered.
   Keep handlers idempotent.

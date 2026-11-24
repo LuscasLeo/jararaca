@@ -146,12 +146,12 @@ class TestScheduledActionDelivery:
         queue.consume = AsyncMock(return_value="consumer-tag")
         queue.cancel = AsyncMock()
         consumer.retrieve_channel = AsyncMock(return_value=MagicMock())  # type: ignore[method-assign]
-        # Shutdown already requested: setup registers the consumer and returns.
-        consumer.shutdown_event.set()
 
         with patch.object(RabbitmqUtils, "get_queue", AsyncMock(return_value=queue)):
             assert await consumer._setup_scheduled_action_consumer(scheduled_action)
 
         assert queue.consume.await_args is not None
         assert queue.consume.await_args.kwargs["no_ack"] is True
-        queue.cancel.assert_awaited_once_with("consumer-tag")
+        assert consumer.active_consumers == {
+            "app.jobs.Jobs.tick": (queue, "consumer-tag")
+        }

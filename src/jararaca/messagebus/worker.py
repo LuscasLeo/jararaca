@@ -14,6 +14,7 @@ from abc import ABC
 from contextlib import asynccontextmanager, suppress
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import (
     Any,
     AsyncContextManager,
@@ -101,6 +102,14 @@ SLOT_WAIT_WARNING_THRESHOLD_SECONDS = 1.0
 # broker cannot hold the process past the pod's termination grace period.
 CLOSE_TIMEOUT_SECONDS = 5.0
 
+# How long cancellation of in-flight handlers may take to unwind (unit of work
+# rollback, for instance) once the drain timeout is exceeded.
+DRAIN_CANCEL_GRACE_SECONDS = 5.0
+
+
+class WorkerStartupError(RuntimeError):
+    """Raised when the worker could not start every consumer it was asked to run."""
+
 
 @dataclass
 class AioPikaWorkerConfig:
@@ -132,6 +141,19 @@ class AioPikaWorkerConfig:
     # Connection health monitoring settings
     connection_heartbeat_interval: float = 30.0  # seconds
     connection_health_check_interval: float = 10.0  # seconds
+    # File written once every consumer is registered (basic.consume ok on every
+    # queue) and removed as soon as shutdown starts. Meant for an exec readiness
+    # probe such as `test -f <path>`. None disables it.
+    ready_file: str | None = None
+    # True stops the worker with an error when a consumer still fails after its
+    # retries, instead of letting it run with fewer queues.
+    fail_on_consumer_setup_error: bool = False
+    # Upper bound, in seconds, for waiting in-flight handlers on shutdown. Past it
+    # they are cancelled and their unacked deliveries go back to the queue. None
+    # waits for as long as they take.
+    drain_timeout: float | None = None
+    # Upper bound for each basic.cancel round trip on shutdown.
+    consumer_cancel_timeout: float = 5.0
 
 
 class AioPikaMessage(MessageOf[Message]):
@@ -232,6 +254,23 @@ class AioPikaMicroserviceConsumer(MessageBusConsumer):
         self.health_check_task: asyncio.Task[Any] | None = None
         self.retrieve_channel_lock = asyncio.Lock()
         self.processing_slots: dict[str, asyncio.Semaphore] = {}
+        # Registered consumers, cancelled (basic.cancel) before the drain on shutdown.
+        self.active_consumers: dict[str, tuple[aio_pika.abc.AbstractQueue, str]] = {}
+        self.startup_failed = False
+
+    def _mark_ready(self) -> None:
+        if self.config.ready_file is None:
+            return
+        path = Path(self.config.ready_file)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(f"{os.getpid()}\n")
+        logger.info("Worker ready, every consumer is registered (%s)", path)
+
+    def _mark_not_ready(self) -> None:
+        if self.config.ready_file is None:
+            return
+        with suppress(FileNotFoundError):
+            Path(self.config.ready_file).unlink()
 
     def get_channel_prefetch_count(self, channel_id: str) -> int:
         return self.config.prefetch_by_channel_id.get(
@@ -384,30 +423,13 @@ class AioPikaMicroserviceConsumer(MessageBusConsumer):
 
             # Store consumer tag for cleanup
             self.consumer_tags[queue_name] = consumer_tag
+            self.active_consumers[queue_name] = (queue, consumer_tag)
 
             logger.info(
                 "Consuming message handler %s on channel %s",
                 queue_name,
                 handler.spec.channel_id,
             )
-
-            await self.shutdown_event.wait()
-
-            try:
-                logger.warning(
-                    "Shutdown event received, stopping consumer for %s", queue_name
-                )
-                await queue.cancel(consumer_tag)
-            except (ChannelClosed,) as e:
-                logger.warning(
-                    "Channel closed while stopping consumer for %s: %s. this may cause issues like in-progress messages to be repeated",
-                    queue_name,
-                    e,
-                )
-            except Exception as e:
-                logger.error(
-                    "Error occurred while stopping consumer for %s: %s", queue_name, e
-                )
 
         try:
             # Setup with retry
@@ -465,26 +487,13 @@ class AioPikaMicroserviceConsumer(MessageBusConsumer):
 
             # Store consumer tag for cleanup
             self.consumer_tags[queue_name] = consumer_tag
+            self.active_consumers[queue_name] = (queue, consumer_tag)
 
             logger.info(
                 "Consuming scheduler %s on channel %s",
                 queue_name,
                 scheduled_action.spec.channel_id,
             )
-
-            await self.shutdown_event.wait()
-
-            logger.warning(
-                "Shutdown event received, stopping consumer for %s", queue_name
-            )
-            try:
-                await queue.cancel(consumer_tag)
-            except (ChannelClosed,) as e:
-                logger.warning(
-                    "Channel closed while stopping consumer for %s: %s. This may cause issues like in-progress messages to be repeated",
-                    queue_name,
-                    e,
-                )
 
         try:
             # Setup with retry
@@ -575,29 +584,17 @@ class AioPikaMicroserviceConsumer(MessageBusConsumer):
                         )
                     )
 
-                async def handle_task_results() -> None:
-                    for task in asyncio.as_completed(tasks):
-                        type, name, success = await task
-                        if success:
-                            logger.debug(
-                                "Successfully set up %s consumer for %s", type, name
-                            )
-                        else:
-                            logger.warning(
-                                "Failed to set up %s consumer for %s, will not process messages from this queue",
-                                type,
-                                name,
-                            )
-
-                handle_task_results_task = asyncio.create_task(
-                    handle_task_results(), name="HandleSetupTaskResults"
-                )
+                # A file left by a previous run must not report this one as ready.
+                self._mark_not_ready()
+                await self._await_consumers_setup(tasks)
 
                 # Wait for shutdown signal
                 await self.shutdown_event.wait()
                 logger.debug("Shutdown event received, stopping consumers")
 
-                # await self.cancel_queue_consumers()
+                # Stop deliveries before draining, and wait for it: done concurrently,
+                # the cancel could be cut short or race with closing the channels.
+                await self.cancel_consumers()
 
                 # Cancel health monitoring
                 if self.health_check_task:
@@ -605,13 +602,9 @@ class AioPikaMicroserviceConsumer(MessageBusConsumer):
                     with suppress(asyncio.CancelledError):
                         await self.health_check_task
 
-                handle_task_results_task.cancel()
-                with suppress(asyncio.CancelledError):
-                    await handle_task_results_task
-
                 logger.debug("Worker shutting down")
-                # Wait for all tasks to complete
-                await self.wait_all_tasks_done()
+                # Wait for in-flight handlers, bounded by the drain timeout if set
+                await self.wait_all_tasks_done(timeout=self.config.drain_timeout)
 
                 # Close all channels and the connection
                 await self.close_channels_and_connection()
@@ -621,7 +614,99 @@ class AioPikaMicroserviceConsumer(MessageBusConsumer):
             # Re-raise the exception so it can be caught by the caller
             raise
 
-    async def wait_all_tasks_done(self) -> None:
+        if self.startup_failed:
+            raise WorkerStartupError(
+                "One or more consumers could not be set up after their retries"
+            )
+
+    async def _await_consumers_setup(
+        self, tasks: set[asyncio.Task[tuple[str, str, bool]]]
+    ) -> None:
+        """
+        Wait until every consumer is registered, then report the worker as ready.
+        A shutdown requested meanwhile abandons the setups still retrying.
+        """
+        setup: asyncio.Future[list[tuple[str, str, bool]]] = asyncio.gather(*tasks)
+        shutdown_wait = asyncio.create_task(
+            self.shutdown_event.wait(), name="ConsumersSetupShutdownWait"
+        )
+        waiters: set[asyncio.Future[Any]] = {setup, shutdown_wait}
+        try:
+            await asyncio.wait(waiters, return_when=asyncio.FIRST_COMPLETED)
+        finally:
+            shutdown_wait.cancel()
+
+        if not setup.done():
+            logger.warning("Shutdown requested while consumers were being set up")
+            setup.cancel()
+            with suppress(asyncio.CancelledError):
+                await setup
+            return
+
+        failed = [
+            (type_, name) for type_, name, success in setup.result() if not success
+        ]
+        for type_, name in failed:
+            logger.critical(
+                "Failed to set up %s consumer for %s, will not process messages from this queue",
+                type_,
+                name,
+            )
+
+        if not failed:
+            logger.debug("Every consumer is registered")
+            if not self.shutdown_event.is_set():
+                self._mark_ready()
+        elif self.config.fail_on_consumer_setup_error:
+            logger.critical(
+                "%s consumer(s) failed to start and fail_on_consumer_setup_error is "
+                "set, stopping the worker",
+                len(failed),
+            )
+            self.startup_failed = True
+            self.shutdown()
+        elif self.config.ready_file is not None:
+            logger.critical(
+                "%s consumer(s) failed to start, the worker will not report itself ready",
+                len(failed),
+            )
+
+    async def cancel_consumers(self) -> None:
+        """Stop deliveries on every registered queue (basic.cancel), all at once."""
+
+        async def cancel_one(
+            queue_name: str, queue: aio_pika.abc.AbstractQueue, consumer_tag: str
+        ) -> None:
+            try:
+                await asyncio.wait_for(
+                    queue.cancel(consumer_tag),
+                    timeout=self.config.consumer_cancel_timeout,
+                )
+                logger.warning("Stopped consumer for %s", queue_name)
+            except (ChannelClosed, asyncio.TimeoutError) as e:
+                logger.warning(
+                    "Could not cancel the consumer for %s cleanly: %r. Its unacked "
+                    "deliveries are requeued when the channel closes",
+                    queue_name,
+                    e,
+                )
+            except Exception as e:
+                logger.error("Error cancelling the consumer for %s: %s", queue_name, e)
+
+        consumers, self.active_consumers = self.active_consumers, {}
+        await asyncio.gather(
+            *(
+                cancel_one(queue_name, queue, consumer_tag)
+                for queue_name, (queue, consumer_tag) in consumers.items()
+            )
+        )
+
+    async def wait_all_tasks_done(self, timeout: float | None = None) -> None:
+        """
+        Wait for the in-flight handlers. With a timeout, the ones still running when
+        it expires are cancelled: their deliveries stay unacked and go back to the
+        queue once the channel closes. None waits for as long as they take.
+        """
         if not self.tasks:
             return
 
@@ -635,18 +720,35 @@ class AioPikaMicroserviceConsumer(MessageBusConsumer):
         # even if some raise exceptions
         # results = await asyncio.gather(*self.tasks, return_exceptions=True)
         pending_tasks = [task for task in self.tasks if not task.done()]
-        while len(pending_tasks) > 0:
-            if not pending_tasks:
-                break
-            await asyncio.wait(pending_tasks, return_when=asyncio.FIRST_COMPLETED)
+        try:
+            async with asyncio.timeout(timeout):
+                while len(pending_tasks) > 0:
+                    await asyncio.wait(
+                        pending_tasks, return_when=asyncio.FIRST_COMPLETED
+                    )
 
+                    pending_tasks = [task for task in pending_tasks if not task.done()]
+                    if len(pending_tasks) > 0:
+                        logger.warning(
+                            "Waiting for (%s) in-flight tasks to complete: %s",
+                            len(pending_tasks),
+                            ", ".join((task.get_name()) for task in pending_tasks),
+                        )
+        except TimeoutError:
             pending_tasks = [task for task in pending_tasks if not task.done()]
-            if len(pending_tasks) > 0:
-                logger.warning(
-                    "Waiting for (%s) in-flight tasks to complete: %s",
-                    len(pending_tasks),
-                    ", ".join((task.get_name()) for task in pending_tasks),
-                )
+            logger.error(
+                "Drain timeout of %ss exceeded, cancelling (%s) in-flight tasks: %s. "
+                "Their deliveries were not acknowledged and will be redelivered",
+                timeout,
+                len(pending_tasks),
+                ", ".join((task.get_name()) for task in pending_tasks),
+            )
+            for task in pending_tasks:
+                task.cancel()
+            # Let the cancellation unwind (unit of work rollback) before the
+            # channels close.
+            await asyncio.wait(pending_tasks, timeout=DRAIN_CANCEL_GRACE_SECONDS)
+            return
 
         logger.warning("All in-flight tasks have completed.")
         # Log any exceptions that occurred
@@ -681,12 +783,15 @@ class AioPikaMicroserviceConsumer(MessageBusConsumer):
     def shutdown(self) -> None:
         """Signal for shutdown"""
         logger.warning("Initiating graceful shutdown")
+        # First thing, so a readiness probe fails while the worker drains.
+        self._mark_not_ready()
         self.shutdown_event.set()
 
     async def close(self) -> None:
         """Implement MessageBusConsumer.close for cleanup"""
         logger.warning("Closing consumer...")
         self.shutdown()
+        await self.cancel_consumers()
 
         # Cancel health monitoring
         if self.health_check_task:
@@ -694,7 +799,7 @@ class AioPikaMicroserviceConsumer(MessageBusConsumer):
             with suppress(asyncio.CancelledError):
                 await self.health_check_task
 
-        await self.wait_all_tasks_done()
+        await self.wait_all_tasks_done(timeout=self.config.drain_timeout)
         await self.close_channels_and_connection()
 
     async def _establish_channel(self, channel_id: str) -> aio_pika.abc.AbstractChannel:
@@ -896,6 +1001,29 @@ PREFETCH_COUNT_BY_CHANNEL_ENV_VAR = "AMQP_PREFETCH_COUNT_BY_CHANNEL"
 
 QOS_GLOBAL_ENV_VAR = "AMQP_QOS_GLOBAL"
 
+READY_FILE_ENV_VAR = "JARARACA_WORKER_READY_FILE"
+FAIL_ON_CONSUMER_SETUP_ERROR_ENV_VAR = "JARARACA_WORKER_FAIL_ON_CONSUMER_SETUP_ERROR"
+DRAIN_TIMEOUT_ENV_VAR = "JARARACA_WORKER_DRAIN_TIMEOUT"
+
+
+def _parse_drain_timeout(raw: str | None) -> float | None:
+    if raw is None or not raw.strip():
+        return None
+    try:
+        value = float(raw)
+    except ValueError:
+        raise ValueError(
+            f"Environment variable '{DRAIN_TIMEOUT_ENV_VAR}' must be a number of "
+            f"seconds, got '{raw}'"
+        ) from None
+    if value <= 0:
+        raise ValueError(
+            f"Environment variable '{DRAIN_TIMEOUT_ENV_VAR}' must be greater than "
+            f"zero, got '{raw}'"
+        )
+    return value
+
+
 CONNECTION_RETRY_MAX_QUERY_PARAMETER = "connection_retry_max"
 CONNECTION_RETRY_DELAY_QUERY_PARAMETER = "connection_retry_delay"
 CONNECTION_RETRY_MAX_DELAY_QUERY_PARAMETER = "connection_retry_max_delay"
@@ -998,6 +1126,13 @@ def create_message_bus_consumer(
 
         # Whether the prefetch count is applied channel wide or per consumer.
         qos_global = get_env_bool(QOS_GLOBAL_ENV_VAR, default=True)
+
+        # Readiness and drain settings, all off unless set.
+        ready_file = os.environ.get(READY_FILE_ENV_VAR) or None
+        fail_on_consumer_setup_error = get_env_bool(
+            FAIL_ON_CONSUMER_SETUP_ERROR_ENV_VAR, default=False
+        )
+        drain_timeout = _parse_drain_timeout(os.environ.get(DRAIN_TIMEOUT_ENV_VAR))
 
         # Parse optional retry configuration parameters
         connection_retry_config = RetryPolicy()
@@ -1103,6 +1238,9 @@ def create_message_bus_consumer(
             consumer_retry_policy=consumer_retry_config,
             connection_heartbeat_interval=connection_heartbeat_interval,
             connection_health_check_interval=connection_health_check_interval,
+            ready_file=ready_file,
+            fail_on_consumer_setup_error=fail_on_consumer_setup_error,
+            drain_timeout=drain_timeout,
         )
 
         return AioPikaMicroserviceConsumer(
@@ -2080,6 +2218,10 @@ class MessageBusWorker:
                 import sys
 
                 sys.exit(1)
+            finally:
+                # Whatever stopped the worker, it must not keep reporting ready.
+                if isinstance(self._consumer, AioPikaMicroserviceConsumer):
+                    self._consumer._mark_not_ready()
 
     async def _graceful_shutdown(self) -> None:
         """Handles graceful shutdown process"""
