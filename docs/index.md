@@ -335,12 +335,16 @@ jararaca gen-entity
 
 ```bash
 jararaca declare APP_PATH [OPTIONS]
+jararaca declare --from-plan PLAN_FILE [OPTIONS]
 ```
 
 Declares RabbitMQ infrastructure (exchanges and queues) for message handlers and schedulers without starting the actual consumption processes.
 
+The main exchange name comes from the `exchange` query parameter of the broker URL. Host, vhost and credentials come from the URL too. The URL printed by the command has its password replaced by `***`.
+
 **Options:**
-- `--broker-url`: Broker URL (e.g., amqp://guest:guest@localhost/) [env: BROKER_URL]
+- `--broker-url`: Broker URL (e.g., `amqp://guest:guest@localhost/?exchange=my_exchange`) [env: BROKER_URL]
+- `--from-plan`: Apply a plan written by `jararaca declare-plan` instead of importing the application; `APP_PATH` is then ignored
 - `-i, --interactive-mode`: Enable interactive mode for queue declaration [env: INTERACTIVE_MODE]
 - `-f, --force`: Force recreation by deleting existing exchanges and queues [env: FORCE]
 
@@ -354,16 +358,45 @@ Declares RabbitMQ infrastructure (exchanges and queues) for message handlers and
 
 ```bash
 # Declare infrastructure
-jararaca declare myapp:app --broker-url amqp://guest:guest@localhost/
+jararaca declare myapp:app --broker-url "amqp://guest:guest@localhost/?exchange=my_exchange"
 
 # Force recreation of queues and exchanges
-jararaca declare myapp:app --broker-url amqp://guest:guest@localhost/ --force
+jararaca declare myapp:app --broker-url "amqp://guest:guest@localhost/?exchange=my_exchange" --force
 
 # Using environment variables
 export APP_PATH="myapp:app"
-export BROKER_URL="amqp://guest:guest@localhost/"
+export BROKER_URL="amqp://guest:guest@localhost/?exchange=my_exchange"
 export FORCE="true"
 jararaca declare
+```
+
+### `declare-plan` - Declare Without Importing the Application
+
+```bash
+jararaca declare-plan APP_PATH [-o FILE]
+```
+
+Writes everything `declare` would declare for the application as JSON, without connecting to the broker. Apply it later with `jararaca declare --from-plan FILE`, which does not import the application. This moves the cost of importing the application (time and memory) from the step that talks to the broker to build time.
+
+- The output is deterministic: sorted, with no timestamps. A Docker layer that generates it stays cached until a queue or the jararaca version changes.
+- `-o -` (the default) writes to stdout. Prefer `-o FILE` in builds, since the application may log while it is imported.
+- The plan holds what comes from code:
+  - queue names and kinds;
+  - routing keys;
+  - queue arguments;
+  - the dead letter exchange and queue.
+- It never holds what comes from the environment: the main exchange name, host, vhost and credentials. Those come from `--broker-url` when the plan is applied.
+- A plan is applied by the same jararaca that wrote it. An unknown `schema_version` is rejected before connecting, and a plan written by another jararaca version prints a warning.
+- If a `MESSAGE_TOPIC`, or the list of controllers, depends on environment variables read at import time, the plan freezes the values of the build environment.
+
+```dockerfile
+# Build time: no broker, no secrets needed
+RUN jararaca declare-plan app.main:app -o /app/declare-plan.json
+```
+
+```bash
+# Migration job: the application is not imported
+jararaca declare --from-plan /app/declare-plan.json --broker-url "$AMQP_URL"
 ```
 
 ## Quick Start

@@ -3,6 +3,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 
 import logging
+from typing import Any
 
 from aio_pika.abc import AbstractChannel, AbstractExchange, AbstractQueue
 from aio_pika.exceptions import AMQPError, ChannelClosed, ChannelNotFoundEntity
@@ -15,10 +16,30 @@ class RabbitmqUtils:
     DEAD_LETTER_EXCHANGE = "dlx"
     DEAD_LETTER_QUEUE = "dlq"
 
-    # Note: get_worker_v1_queue method is already defined above
+    MAIN_EXCHANGE_TYPE = "topic"
+    DEAD_LETTER_EXCHANGE_TYPE = "direct"
 
-    DEAD_LETTER_EXCHANGE = "dlx"
-    DEAD_LETTER_QUEUE = "dlq"
+    # The declaration properties below are the single source for both the
+    # declare_* methods and the declare plan (jararaca.messagebus.declare_plan).
+
+    @classmethod
+    def dead_letter_queue_arguments(cls) -> dict[str, Any]:
+        return {
+            "x-dead-letter-exchange": "",
+            "x-dead-letter-routing-key": cls.DEAD_LETTER_EXCHANGE,
+        }
+
+    @classmethod
+    def worker_queue_arguments(cls) -> dict[str, Any]:
+        return {
+            "x-dead-letter-exchange": cls.DEAD_LETTER_EXCHANGE,
+            "x-dead-letter-routing-key": cls.DEAD_LETTER_EXCHANGE,
+        }
+
+    @classmethod
+    def scheduled_action_queue_arguments(cls) -> dict[str, Any]:
+        # A max length of 1 keeps a single pending trigger per scheduled action.
+        return {"x-max-length": 1}
 
     @classmethod
     async def get_dl_exchange(cls, channel: AbstractChannel) -> AbstractExchange:
@@ -63,7 +84,7 @@ class RabbitmqUtils:
         return await channel.declare_exchange(
             cls.DEAD_LETTER_EXCHANGE,
             passive=passive,
-            type="direct",
+            type=cls.DEAD_LETTER_EXCHANGE_TYPE,
             durable=True,
             auto_delete=False,
         )
@@ -112,10 +133,7 @@ class RabbitmqUtils:
             cls.DEAD_LETTER_QUEUE,
             durable=True,
             passive=passive,
-            arguments={
-                "x-dead-letter-exchange": "",
-                "x-dead-letter-routing-key": cls.DEAD_LETTER_EXCHANGE,
-            },
+            arguments=cls.dead_letter_queue_arguments(),
         )
 
     @classmethod
@@ -204,7 +222,7 @@ class RabbitmqUtils:
         return await channel.declare_exchange(
             exchange_name,
             passive=passive,
-            type="topic",
+            type=cls.MAIN_EXCHANGE_TYPE,
             durable=True,
             auto_delete=False,
         )
@@ -254,10 +272,7 @@ class RabbitmqUtils:
             queue_name,
             passive=passive,
             durable=True,
-            arguments={
-                "x-dead-letter-exchange": cls.DEAD_LETTER_EXCHANGE,
-                "x-dead-letter-routing-key": cls.DEAD_LETTER_EXCHANGE,
-            },
+            arguments=cls.worker_queue_arguments(),
         )
 
     @classmethod
@@ -310,9 +325,7 @@ class RabbitmqUtils:
             name=queue_name,
             durable=True,
             passive=passive,
-            arguments={
-                "x-max-length": 1,
-            },
+            arguments=cls.scheduled_action_queue_arguments(),
         )
 
     @classmethod

@@ -26,23 +26,27 @@ import uvicorn
 import uvloop
 from mako.template import Template
 
-import jararaca.messagebus.aiopika
 from jararaca.messagebus import worker as worker_mod
-from jararaca.messagebus.decorators import MessageBusController, MessageHandler
+from jararaca.messagebus.declare_plan import (
+    DeclarePlan,
+    DeclarePlanError,
+    ExchangeSpec,
+    QueueSpec,
+    build_declare_plan,
+    dump_declare_plan,
+    jararaca_version,
+    load_declare_plan,
+)
 from jararaca.microservice import Microservice
 from jararaca.presentation.http_microservice import HttpMicroservice
 from jararaca.presentation.server import create_http_server
-from jararaca.reflect.controller_inspect import (
-    ControllerMemberReflect,
-    inspect_controller,
-)
 from jararaca.scheduler.beat_worker import BeatWorker
-from jararaca.scheduler.decorators import ScheduledAction
 from jararaca.tools.typescript.interface_parser import (
     EnumStyle,
     write_microservice_to_typescript_interface,
 )
 from jararaca.utils.rabbitmq_utils import RabbitmqUtils
+from jararaca.utils.url_redact import redact_url
 
 if TYPE_CHECKING:
     from watchdog.observers.api import BaseObserver
@@ -103,6 +107,13 @@ async def declare_worker_infrastructure(
     """
     Declare the infrastructure (exchanges and queues) for worker.
     """
+    await apply_declare_plan(
+        broker_url, build_declare_plan(app), force, interactive_mode
+    )
+
+
+def main_exchange_from_broker_url(broker_url: str) -> str:
+    """The main exchange name, which always comes from the broker URL."""
     parsed_url = urlparse(broker_url)
     if parsed_url.scheme not in ["amqp", "amqps"]:
         raise ValueError(f"Unsupported broker URL scheme: {parsed_url.scheme}")
@@ -115,7 +126,20 @@ async def declare_worker_infrastructure(
     if "exchange" not in query_params or not query_params["exchange"]:
         raise ValueError("Exchange must be set in the query string")
 
-    exchange = query_params["exchange"][0]
+    return query_params["exchange"][0]
+
+
+async def apply_declare_plan(
+    broker_url: str,
+    plan: DeclarePlan,
+    force: bool = False,
+    interactive_mode: bool = False,
+) -> None:
+    """
+    Declare on the broker everything a plan describes. The main exchange name,
+    host, vhost and credentials come from the broker URL, never from the plan.
+    """
+    exchange = main_exchange_from_broker_url(broker_url)
 
     # Create a connection that will be used to create channels for each operation
     connection = await aio_pika.connect(broker_url)
@@ -123,21 +147,61 @@ async def declare_worker_infrastructure(
     try:
         # Step 1: Setup infrastructure (exchanges and dead letter queues)
         # Creating a dedicated channel for infrastructure setup
-        await setup_infrastructure(connection, exchange, force, interactive_mode)
+        await setup_infrastructure(connection, exchange, plan, force, interactive_mode)
 
         # Step 2: Declare all message handlers and scheduled actions queues
-        # Creating a dedicated channel for controller queues
-        await declare_controller_queues(
-            connection, app, exchange, force, interactive_mode
-        )
+        # Creating a dedicated channel per queue
+        for queue in plan.queues:
+            await declare_and_bind_queue(
+                connection, queue, exchange, force, interactive_mode
+            )
     finally:
         # Always close the connection in the finally block
         await connection.close()
 
 
+async def _declare_exchange(
+    channel: aio_pika.abc.AbstractChannel,
+    name: str,
+    spec: ExchangeSpec,
+    passive: bool,
+) -> aio_pika.abc.AbstractExchange:
+    return await channel.declare_exchange(
+        name,
+        passive=passive,
+        type=spec.type,
+        durable=spec.durable,
+        auto_delete=spec.auto_delete,
+    )
+
+
+async def _declare_dead_letter_queue(
+    channel: aio_pika.abc.AbstractChannel, plan: DeclarePlan, passive: bool
+) -> aio_pika.abc.AbstractQueue:
+    return await channel.declare_queue(
+        plan.dead_letter.queue_name,
+        durable=plan.dead_letter.queue_durable,
+        passive=passive,
+        arguments=plan.dead_letter.queue_arguments,
+    )
+
+
+async def _declare_infrastructure_on(
+    channel: aio_pika.abc.AbstractChannel, exchange: str, plan: DeclarePlan
+) -> None:
+    dead_letter = plan.dead_letter
+    await _declare_exchange(channel, exchange, plan.main_exchange, passive=False)
+    dlx = await _declare_exchange(
+        channel, dead_letter.exchange_name, dead_letter.exchange, passive=False
+    )
+    dlq = await _declare_dead_letter_queue(channel, plan, passive=False)
+    await dlq.bind(dlx, routing_key=dead_letter.binding_routing_key)
+
+
 async def setup_infrastructure(
     connection: aio_pika.abc.AbstractConnection,
     exchange: str,
+    plan: DeclarePlan,
     force: bool = False,
     interactive_mode: bool = False,
 ) -> None:
@@ -145,7 +209,9 @@ async def setup_infrastructure(
     Setup the basic infrastructure (exchanges and dead letter queues).
     """
     # Check if infrastructure exists
-    infrastructure_exists = await check_infrastructure_exists(connection, exchange)
+    infrastructure_exists = await check_infrastructure_exists(
+        connection, exchange, plan
+    )
 
     # If it exists and force or user confirms, delete it
     if not infrastructure_exists and should_recreate_infrastructure(
@@ -153,14 +219,14 @@ async def setup_infrastructure(
         interactive_mode,
         f"Existing infrastructure found for exchange '{exchange}'. Delete and recreate?",
     ):
-        await delete_infrastructure(connection, exchange)
+        await delete_infrastructure(connection, exchange, plan)
 
     # Try to declare required infrastructure
-    await declare_infrastructure(connection, exchange, force, interactive_mode)
+    await declare_infrastructure(connection, exchange, plan, force, interactive_mode)
 
 
 async def check_infrastructure_exists(
-    connection: aio_pika.abc.AbstractConnection, exchange: str
+    connection: aio_pika.abc.AbstractConnection, exchange: str, plan: DeclarePlan
 ) -> bool:
     """
     Check if the infrastructure exists by trying passive declarations.
@@ -168,13 +234,12 @@ async def check_infrastructure_exists(
     # Create a dedicated channel for checking infrastructure existence using async context manager
     async with connection.channel() as channel:
         try:
-            await RabbitmqUtils.declare_main_exchange(
-                channel=channel,
-                exchange_name=exchange,
-                passive=True,
+            dead_letter = plan.dead_letter
+            await _declare_exchange(channel, exchange, plan.main_exchange, passive=True)
+            await _declare_exchange(
+                channel, dead_letter.exchange_name, dead_letter.exchange, passive=True
             )
-            await RabbitmqUtils.declare_dl_exchange(channel=channel, passive=True)
-            await RabbitmqUtils.declare_dl_queue(channel=channel, passive=True)
+            await _declare_dead_letter_queue(channel, plan, passive=True)
             return True
         except Exception:
             # Infrastructure doesn't exist, which is fine for fresh setup
@@ -191,7 +256,7 @@ def should_recreate_infrastructure(
 
 
 async def delete_infrastructure(
-    connection: aio_pika.abc.AbstractConnection, exchange: str
+    connection: aio_pika.abc.AbstractConnection, exchange: str, plan: DeclarePlan
 ) -> None:
     """
     Delete existing infrastructure (exchanges and queues).
@@ -200,13 +265,14 @@ async def delete_infrastructure(
     async with connection.channel() as channel:
         click.echo(f"→ Deleting existing infrastructure for exchange: {exchange}")
         await RabbitmqUtils.delete_exchange(channel, exchange)
-        await RabbitmqUtils.delete_exchange(channel, RabbitmqUtils.DEAD_LETTER_EXCHANGE)
-        await RabbitmqUtils.delete_queue(channel, RabbitmqUtils.DEAD_LETTER_QUEUE)
+        await RabbitmqUtils.delete_exchange(channel, plan.dead_letter.exchange_name)
+        await RabbitmqUtils.delete_queue(channel, plan.dead_letter.queue_name)
 
 
 async def declare_infrastructure(
     connection: aio_pika.abc.AbstractConnection,
     exchange: str,
+    plan: DeclarePlan,
     force: bool,
     interactive_mode: bool,
 ) -> None:
@@ -216,19 +282,8 @@ async def declare_infrastructure(
     # Using async context manager for channel creation
     async with connection.channel() as channel:
         try:
-            # Declare main exchange
-            await RabbitmqUtils.declare_main_exchange(
-                channel=channel,
-                exchange_name=exchange,
-                passive=False,
-            )
-
-            # Declare dead letter exchange and queue
-            dlx = await RabbitmqUtils.declare_dl_exchange(
-                channel=channel, passive=False
-            )
-            dlq = await RabbitmqUtils.declare_dl_queue(channel=channel, passive=False)
-            await dlq.bind(dlx, routing_key=RabbitmqUtils.DEAD_LETTER_EXCHANGE)
+            # Declare main exchange, dead letter exchange and queue
+            await _declare_infrastructure_on(channel, exchange, plan)
 
         except Exception as e:
             click.echo(f"Error during exchange declaration: {e}")
@@ -238,23 +293,11 @@ async def declare_infrastructure(
                 force, interactive_mode, "Delete existing infrastructure and recreate?"
             ):
                 # Delete infrastructure with a new channel
-                await delete_infrastructure(connection, exchange)
+                await delete_infrastructure(connection, exchange, plan)
 
                 # Try again with a new channel
                 async with connection.channel() as new_channel:
-                    # Try again after deletion
-                    await RabbitmqUtils.declare_main_exchange(
-                        channel=new_channel,
-                        exchange_name=exchange,
-                        passive=False,
-                    )
-                    dlx = await RabbitmqUtils.declare_dl_exchange(
-                        channel=new_channel, passive=False
-                    )
-                    dlq = await RabbitmqUtils.declare_dl_queue(
-                        channel=new_channel, passive=False
-                    )
-                    await dlq.bind(dlx, routing_key=RabbitmqUtils.DEAD_LETTER_EXCHANGE)
+                    await _declare_infrastructure_on(new_channel, exchange, plan)
             elif force:
                 # If force is true but recreation failed, propagate the error
                 raise
@@ -262,157 +305,56 @@ async def declare_infrastructure(
                 click.echo("Skipping main exchange declaration due to error")
 
 
-async def declare_controller_queues(
-    connection: aio_pika.abc.AbstractConnection,
-    app: Microservice,
-    exchange: str,
-    force: bool,
-    interactive_mode: bool,
+async def _declare_and_bind_on(
+    channel: aio_pika.abc.AbstractChannel, queue: QueueSpec, exchange: str
 ) -> None:
-    """
-    Declare all message handler and scheduled action queues for controllers.
-    """
-    for instance_type in app.controllers:
-        controller_spec = MessageBusController.get_last(instance_type)
-        if controller_spec is None:
-            continue
-
-        _, members = inspect_controller(instance_type)
-
-        # Process each member (method) in the controller
-        for _, member in members.items():
-            # Check if it's a message handler
-            await declare_message_handler_queue(
-                connection, member, exchange, force, interactive_mode, controller_spec
-            )
-
-            # Check if it's a scheduled action
-            await declare_scheduled_action_queue(
-                connection, member, exchange, force, interactive_mode
-            )
-
-
-async def declare_message_handler_queue(
-    connection: aio_pika.abc.AbstractConnection,
-    member: ControllerMemberReflect,
-    exchange: str,
-    force: bool,
-    interactive_mode: bool,
-    controller_spec: MessageBusController,
-) -> None:
-    """
-    Declare a queue for a message handler if the member is one.
-    """
-    message_handler = MessageHandler.get_last(member.member_function)
-    if message_handler is not None:
-        queue_name = jararaca.messagebus.aiopika.gen_queue_name(
-            message_handler.message_type, member.member_function
-        )
-        routing_key = jararaca.messagebus.aiopika.gen_routing_key(
-            message_handler.message_type
-        )
-
-        await declare_and_bind_queue(
-            connection,
-            queue_name,
-            routing_key,
-            exchange,
-            force,
-            interactive_mode,
-            is_scheduled_action=False,
-        )
-
-
-async def declare_scheduled_action_queue(
-    connection: aio_pika.abc.AbstractConnection,
-    member: ControllerMemberReflect,
-    exchange: str,
-    force: bool,
-    interactive_mode: bool,
-) -> None:
-    """
-    Declare a queue for a scheduled action if the member is one.
-    """
-    scheduled_action = ScheduledAction.get_last(member.member_function)
-    if scheduled_action is not None:
-        queue_name = (
-            f"{member.member_function.__module__}.{member.member_function.__qualname__}"
-        )
-        routing_key = queue_name
-
-        await declare_and_bind_queue(
-            connection,
-            queue_name,
-            routing_key,
-            exchange,
-            force,
-            interactive_mode,
-            is_scheduled_action=True,
-        )
+    declared = await channel.declare_queue(
+        queue.name,
+        durable=queue.durable,
+        passive=False,
+        arguments=queue.arguments,
+    )
+    await declared.bind(exchange=exchange, routing_key=queue.routing_key)
 
 
 async def declare_and_bind_queue(
     connection: aio_pika.abc.AbstractConnection,
-    queue_name: str,
-    routing_key: str,
+    queue: QueueSpec,
     exchange: str,
     force: bool,
     interactive_mode: bool,
-    is_scheduled_action: bool,
 ) -> None:
     """
     Declare and bind a queue to the exchange with the given routing key.
     """
-    queue_type = "scheduled action" if is_scheduled_action else "message handler"
+    queue_type = (
+        "scheduled action" if queue.kind == "scheduled_action" else "message handler"
+    )
 
     # Using async context manager for channel creation
     async with connection.channel() as channel:
         try:
-            # Try to declare queue using the appropriate method
-            if is_scheduled_action:
-                queue = await RabbitmqUtils.declare_scheduled_action_queue(
-                    channel=channel, queue_name=queue_name, passive=False
-                )
-            else:
-                queue = await RabbitmqUtils.declare_worker_queue(
-                    channel=channel, queue_name=queue_name, passive=False
-                )
-
-            # Bind the queue to the exchange
-            await queue.bind(exchange=exchange, routing_key=routing_key)
+            await _declare_and_bind_on(channel, queue, exchange)
             click.echo(
-                f"✓ Declared {queue_type} queue: {queue_name} (routing key: {routing_key})"
+                f"✓ Declared {queue_type} queue: {queue.name} (routing key: {queue.routing_key})"
             )
         except Exception as e:
-            click.echo(f"⚠ Error declaring {queue_type} queue {queue_name}: {e}")
+            click.echo(f"⚠ Error declaring {queue_type} queue {queue.name}: {e}")
 
             # If interactive mode and user confirms, or if forced, recreate the queue
             if force or (
                 interactive_mode
-                and click.confirm(f"Delete and recreate queue {queue_name}?")
+                and click.confirm(f"Delete and recreate queue {queue.name}?")
             ):
                 # Create a new channel for deletion and recreation
                 async with connection.channel() as new_channel:
-                    # Delete the queue
-                    await RabbitmqUtils.delete_queue(new_channel, queue_name)
-
-                    # Try to declare queue again using the appropriate method
-                    if is_scheduled_action:
-                        queue = await RabbitmqUtils.declare_scheduled_action_queue(
-                            channel=new_channel, queue_name=queue_name, passive=False
-                        )
-                    else:
-                        queue = await RabbitmqUtils.declare_worker_queue(
-                            channel=new_channel, queue_name=queue_name, passive=False
-                        )
-
-                    # Bind the queue to the exchange
-                    await queue.bind(exchange=exchange, routing_key=routing_key)
+                    await RabbitmqUtils.delete_queue(new_channel, queue.name)
+                    await _declare_and_bind_on(new_channel, queue, exchange)
                     click.echo(
-                        f"✓ Recreated {queue_type} queue: {queue_name} (routing key: {routing_key})"
+                        f"✓ Recreated {queue_type} queue: {queue.name} (routing key: {queue.routing_key})"
                     )
             else:
-                click.echo(f"⚠ Skipping {queue_type} queue {queue_name}")
+                click.echo(f"⚠ Skipping {queue_type} queue {queue.name}")
 
 
 @click.group()
@@ -1045,12 +987,23 @@ def new(
     "app_path",
     type=str,
     envvar="APP_PATH",
+    required=False,
 )
 @click.option(
     "--broker-url",
     type=str,
     envvar="BROKER_URL",
     help="Broker URL (e.g., amqp://guest:guest@localhost/) [env: BROKER_URL]",
+)
+@click.option(
+    "--from-plan",
+    "plan_path",
+    type=click.Path(exists=True, dir_okay=False, readable=True),
+    default=None,
+    help=(
+        "Apply a plan written by `jararaca declare-plan` instead of importing the "
+        "application. APP_PATH is then ignored."
+    ),
 )
 @click.option(
     "-i",
@@ -1069,8 +1022,9 @@ def new(
     help="Force recreation by deleting existing exchanges and queues before declaring them",
 )
 def declare(
-    app_path: str,
+    app_path: str | None,
     broker_url: str,
+    plan_path: str | None,
     force: bool,
     interactive_mode: bool,
 ) -> None:
@@ -1080,28 +1034,42 @@ def declare(
     This command pre-declares the necessary exchanges and queues for message handlers and schedulers,
     without starting the actual consumption processes.
 
+    The main exchange name comes from the `exchange` query parameter of the broker
+    URL; host, vhost and credentials come from the URL too.
+
     Environment variables:
-    - BROKER_URL: Broker URL (e.g., amqp://guest:guest@localhost/)
-    - EXCHANGE: Exchange name (defaults to 'jararaca_ex')
+    - BROKER_URL: Broker URL (e.g., amqp://guest:guest@localhost/?exchange=my_exchange)
+    - APP_PATH: Application path, when not given as an argument
 
     Examples:
 
     \b
     # Declare infrastructure
-    jararaca declare myapp:app --broker-url amqp://guest:guest@localhost/
+    jararaca declare myapp:app --broker-url "amqp://guest:guest@localhost/?exchange=my_exchange"
 
     \b
     # Force recreation of queues and exchanges
-    jararaca declare myapp:app --broker-url amqp://guest:guest@localhost/ --force
+    jararaca declare myapp:app --broker-url "amqp://guest:guest@localhost/?exchange=my_exchange" --force
 
     \b
-    # Use environment variables
-    export BROKER_URL="amqp://guest:guest@localhost/"
-    export EXCHANGE="my_exchange"
-    jararaca declare myapp:app
+    # Apply a plan generated at build time, without importing the application
+    jararaca declare-plan myapp:app -o declare-plan.json
+    jararaca declare --from-plan declare-plan.json --broker-url "amqp://guest:guest@localhost/?exchange=my_exchange"
     """
 
-    app = find_microservice_by_module_path(app_path)
+    if plan_path is not None:
+        if app_path:
+            click.echo(
+                f"WARNING: --from-plan is set, ignoring the application path '{app_path}'",
+                err=True,
+            )
+        plan = _read_declare_plan(plan_path)
+    elif app_path:
+        plan = build_declare_plan(find_microservice_by_module_path(app_path), app_path)
+    else:
+        raise click.UsageError(
+            "Missing the application path (APP_PATH) or --from-plan <file>"
+        )
 
     async def run_declarations() -> None:
         if not broker_url:
@@ -1112,12 +1080,10 @@ def declare(
             return
 
         try:
-            # Create the broker URL with exchange parameter
-
-            click.echo(f"→ Declaring worker infrastructure (URL: {broker_url})")
-            await declare_worker_infrastructure(
-                broker_url, app, force, interactive_mode
+            click.echo(
+                f"→ Declaring worker infrastructure (URL: {redact_url(broker_url)})"
             )
+            await apply_declare_plan(broker_url, plan, force, interactive_mode)
 
             click.echo("✓ Workers infrastructure declared successfully!")
         except Exception as e:
@@ -1125,6 +1091,68 @@ def declare(
             raise
 
     asyncio.run(run_declarations())
+
+
+def _read_declare_plan(plan_path: str) -> DeclarePlan:
+    try:
+        plan = load_declare_plan(Path(plan_path).read_text(encoding="utf-8"))
+    except DeclarePlanError as e:
+        raise click.ClickException(f"{plan_path}: {e}") from None
+
+    current_version = jararaca_version()
+    if plan.generated_by_version != current_version:
+        click.echo(
+            f"WARNING: {plan_path} was generated by jararaca "
+            f"{plan.generated_by_version}, applying with {current_version}",
+            err=True,
+        )
+    click.echo(f"→ Applying declare plan {plan_path} ({len(plan.queues)} queues)")
+    return plan
+
+
+@cli.command(name="declare-plan")
+@click.argument(
+    "app_path",
+    type=str,
+    envvar="APP_PATH",
+)
+@click.option(
+    "-o",
+    "--output",
+    type=click.Path(dir_okay=False, writable=True, allow_dash=True),
+    default="-",
+    show_default=True,
+    help="File to write the plan to; '-' writes to stdout",
+)
+def declare_plan(app_path: str, output: str) -> None:
+    """
+    Write what `jararaca declare` would declare for an application, as JSON.
+
+    It imports the application but never connects to the broker, so it can run at
+    build time. Apply the file with `jararaca declare --from-plan <file>`, which
+    does not import the application. The output is deterministic (sorted, no
+    timestamps). The main exchange name, host, vhost and credentials are not in
+    it: they come from the broker URL when the plan is applied.
+
+    \b
+    Example (Dockerfile):
+    RUN jararaca declare-plan myapp:app -o /app/declare-plan.json
+    """
+    plan = build_declare_plan(find_microservice_by_module_path(app_path), app_path)
+    content = dump_declare_plan(plan)
+
+    if output == "-":
+        click.echo(content, nl=False)
+        return
+
+    destination = Path(output)
+    temporary = destination.with_name(f".{destination.name}.tmp")
+    temporary.write_text(content, encoding="utf-8")
+    temporary.replace(destination)
+    click.echo(
+        f"✓ Wrote declare plan for {app_path} ({len(plan.queues)} queues) to {output}",
+        err=True,
+    )
 
 
 def run_worker_process(
