@@ -352,3 +352,72 @@ def test_declare_worker_infrastructure_api_is_kept(app_path: str) -> None:
         asyncio.run(cli.declare_worker_infrastructure(BROKER_URL, app, False, False))
 
     assert normalized(broker) == snapshot("fresh")
+
+
+class TestForceRecreatesExistingInfrastructure:
+    """--force (or a confirmed --interactive prompt) deletes the main exchange and
+    the dead letter exchange and queue when they exist, before declaring them."""
+
+    INFRA_DELETE = [
+        ["exchange_delete", "main_ex"],
+        ["exchange_delete", "dlx"],
+        ["queue_delete", "dlq"],
+    ]
+
+    def infra_deleted(self, broker: FakeBroker) -> bool:
+        return self.INFRA_DELETE in broker.channels
+
+    def apply(
+        self, broker: FakeBroker, plan_file: Path, *flags: str, input: str = ""
+    ) -> Result:
+        with patch("aio_pika.connect", broker.connect):
+            return CliRunner().invoke(
+                cli.cli,
+                [
+                    "declare",
+                    "--from-plan",
+                    str(plan_file),
+                    "--broker-url",
+                    BROKER_URL,
+                    *flags,
+                ],
+                input=input,
+            )
+
+    def test_force_deletes_existing_infrastructure(self, plan_file: Path) -> None:
+        broker = FakeBroker(infra_exists=True)
+
+        result = self.apply(broker, plan_file, "--force")
+
+        assert result.exit_code == 0, result.output
+        assert self.infra_deleted(broker)
+
+    def test_force_on_a_fresh_broker_deletes_nothing(self, plan_file: Path) -> None:
+        broker = FakeBroker(infra_exists=False)
+
+        result = self.apply(broker, plan_file, "--force")
+
+        assert result.exit_code == 0, result.output
+        assert not self.infra_deleted(broker)
+
+    def test_without_force_existing_infrastructure_is_kept(
+        self, plan_file: Path
+    ) -> None:
+        broker = FakeBroker(infra_exists=True)
+
+        result = self.apply(broker, plan_file)
+
+        assert result.exit_code == 0, result.output
+        assert not self.infra_deleted(broker)
+
+    @pytest.mark.parametrize(("answer", "deleted"), [("y\n", True), ("n\n", False)])
+    def test_interactive_asks_before_deleting_existing_infrastructure(
+        self, plan_file: Path, answer: str, deleted: bool
+    ) -> None:
+        broker = FakeBroker(infra_exists=True)
+
+        result = self.apply(broker, plan_file, "--interactive-mode", input=answer)
+
+        assert result.exit_code == 0, result.output
+        assert "Existing infrastructure found for exchange 'main_ex'" in result.output
+        assert self.infra_deleted(broker) is deleted

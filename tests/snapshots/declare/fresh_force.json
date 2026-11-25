@@ -12,20 +12,6 @@
     ],
     [
       [
-        "exchange_delete",
-        "main_ex"
-      ],
-      [
-        "exchange_delete",
-        "dlx"
-      ],
-      [
-        "queue_delete",
-        "dlq"
-      ]
-    ],
-    [
-      [
         "declare_exchange",
         "main_ex",
         "topic",

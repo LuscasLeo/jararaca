@@ -214,7 +214,7 @@ async def setup_infrastructure(
     )
 
     # If it exists and force or user confirms, delete it
-    if not infrastructure_exists and should_recreate_infrastructure(
+    if infrastructure_exists and should_recreate_infrastructure(
         force,
         interactive_mode,
         f"Existing infrastructure found for exchange '{exchange}'. Delete and recreate?",

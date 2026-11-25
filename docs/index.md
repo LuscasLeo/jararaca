@@ -346,7 +346,7 @@ The main exchange name comes from the `exchange` query parameter of the broker U
 - `--broker-url`: Broker URL (e.g., `amqp://guest:guest@localhost/?exchange=my_exchange`) [env: BROKER_URL]
 - `--from-plan`: Apply a plan written by `jararaca declare-plan` instead of importing the application; `APP_PATH` is then ignored
 - `-i, --interactive-mode`: Enable interactive mode for queue declaration [env: INTERACTIVE_MODE]
-- `-f, --force`: Force recreation by deleting existing exchanges and queues [env: FORCE]
+- `-f, --force`: Force recreation by deleting existing exchanges and queues [env: FORCE]. When the main exchange and the dead letter exchange and queue already exist, they are deleted and declared again. **This drops the messages waiting in the dead letter queue (`dlq`)**, and the bindings of every queue are recreated in the same run. With `--interactive-mode`, the same deletion is asked for confirmation.
 
 **Environment Variables:**
 - `APP_PATH`: The application module path
